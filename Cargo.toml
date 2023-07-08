@@ -1,8 +1,14 @@
 [package]
 name = "system_info_collector"
 version = "0.1.0"
+authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2021"
 rust-version = "1.70.0"
+description = "Simple and fast application to collect os information and create graphs based on it"
+license = "MIT"
+homepage = "https://github.com/qarmin/system-info-collector"
+repository = "https://github.com/qarmin/system-info-collector"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,7 +22,6 @@ log = "0.4"
 crossbeam-channel = "0.5"
 csv = "1.2"
 serde = { version = "1.0", features = ["derive"] }
-reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "cookies", "rustls-tls"] }
 open = "5.0"
 plotly = "0.8"
 anyhow = "1.0"

@@ -11,7 +11,7 @@ I needed a simple and fast application to collect basic information about the am
 I looked at a few applications, i.e. grafana, but they are usually too heavy or work in a client server architecture which in this case I would prefer to avoid.
 
 ## How to use it?
-Just run app, without any arguments and close app after while with ctrl+c, results will be collected inside `data.svg` file and then `out.html` file will be produced and opened automatically in web browser.
+Just run app, without any arguments and close app after while with ctrl+c, results will be collected inside readable `data.csv` file and then `out.html` file will be produced and opened automatically in web browser.
 
 ## Plans
 - CLI - with multiple options like choosing output file, time of collecting data, etc.
