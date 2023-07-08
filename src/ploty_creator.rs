@@ -33,6 +33,7 @@ pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
 }
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<(), Error> {
+    info!("Trying to create html file...");
     let dates = loaded_results
         .unix_timestamp
         .iter()

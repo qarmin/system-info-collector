@@ -35,9 +35,6 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
         save_system_info_to_file(sys, &mut csv_file);
 
         if crx.try_recv().is_ok() {
-            info!("Trying to create html file...");
-            // Both save csv file and then load it from disk, to test if it works
-            // For now it is not necessary to have the best performance
             drop(csv_file);
             if settings.app_mode == crate::enums::AppMode::COLLECT_AND_CONVERT {
                 load_results_and_save_plot(settings)?;
