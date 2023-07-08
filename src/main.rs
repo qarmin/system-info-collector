@@ -1,8 +1,11 @@
+mod cli;
 mod collector;
 mod csv_file_loader;
+mod enums;
 mod model;
 mod ploty_creator;
 
+use crate::cli::parse_cli;
 use crate::collector::save_system_info_to_file;
 use crate::csv_file_loader::load_csv_results;
 use crate::ploty_creator::save_plot_into_file;
@@ -22,12 +25,14 @@ const RESULTS_HTML: &str = "results.html";
 
 #[tokio::main]
 async fn main() {
+    parse_cli();
+
     TermLogger::init(Config::default(), TerminalMode::Mixed, ColorChoice::Auto).unwrap();
 
     let mut sys = System::new_all();
     sys.refresh_memory();
     sys.refresh_cpu();
-    // sys.refresh_processes();
+    sys.refresh_processes();
 
     let csv_file = OpenOptions::new().write(true).create(true).truncate(true).open(CSV_FILE_NAME).unwrap();
     let mut csv_file = BufWriter::new(csv_file);
@@ -70,10 +75,10 @@ async fn main() {
                     Ok(file) => {
                         info!("Creating plot took {:?}", time_start.elapsed().unwrap());
                         info!("Opening file {file}");
-                        if let Err(e) = open::that(&file) {
-                            error!("Failed to open {file}, reason - {e}");
-                            process::exit(1);
-                        }
+                        // if let Err(e) = open::that(&file) {
+                        //     error!("Failed to open {file}, reason - {e}");
+                        //     process::exit(1);
+                        // }
                     }
                     Err(e) => {
                         error!("{e}");
