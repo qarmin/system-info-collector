@@ -1,19 +1,20 @@
-use crate::model::{CollectedItemModels, SingleItemModel};
-use crate::CSV_FILE_NAME;
-use anyhow::{Context, Error, Result};
-use log::info;
 use std::fs::metadata;
 
-pub fn load_csv_results() -> Result<CollectedItemModels, Error> {
+use anyhow::{Context, Error, Result};
+use log::info;
+
+use crate::model::{CollectedItemModels, Settings, SingleItemModel};
+
+pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Error> {
     info!(
         "Data csv file is {} in size",
         humansize::format_size(
-            metadata(CSV_FILE_NAME).context("Failed to get metadata of CSV file")?.len(),
+            metadata(&settings.data_path).context("Failed to get metadata of CSV file")?.len(),
             humansize::BINARY,
         )
     );
 
-    let loaded_items = csv::Reader::from_path(CSV_FILE_NAME)
+    let loaded_items = csv::Reader::from_path(&settings.data_path)
         .unwrap()
         .deserialize()
         .collect::<Result<Vec<SingleItemModel>, _>>()?;

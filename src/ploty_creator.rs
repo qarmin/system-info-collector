@@ -1,14 +1,38 @@
-use crate::model::CollectedItemModels;
+use std::fs;
+use std::time::SystemTime;
+
 use anyhow::{Context, Error};
 use chrono::NaiveDateTime;
-use std::fs;
-
+use log::info;
 use plotly::common::Title;
 use plotly::layout::themes::PLOTLY_DARK;
 use plotly::layout::{Axis, GridPattern, Layout, LayoutGrid};
 use plotly::{Plot, Scatter};
 
-pub fn save_plot_into_file(loaded_results: &CollectedItemModels) -> Result<String, Error> {
+use crate::csv_file_loader::load_csv_results;
+use crate::model::{CollectedItemModels, Settings};
+
+pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
+    let time_start = SystemTime::now();
+    let loaded_results = load_csv_results(settings)?;
+    info!("Loading data from csv took {:?}", time_start.elapsed().unwrap());
+    if loaded_results.memory_total.is_empty() {
+        info!("There is nothing to save");
+        return Ok(());
+    }
+
+    let time_start = SystemTime::now();
+    save_plot_into_file(&loaded_results, settings)?;
+    info!("Creating plot took {:?}", time_start.elapsed().unwrap());
+    if settings.open_plot_file {
+        info!("Opening file {}", settings.plot_path);
+        open::that(&settings.plot_path).context(format!("Failed to open {}", settings.plot_path))?;
+    }
+
+    Ok(())
+}
+
+pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<(), Error> {
     let dates = loaded_results
         .unix_timestamp
         .iter()
@@ -27,8 +51,8 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels) -> Result<Strin
     let html = plot
         .to_html()
         .replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
-    fs::write("out.html", html).context("Failed to write html file")?;
-    Ok("out.html".to_string())
+    fs::write(&settings.plot_path, html).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
+    Ok(())
 }
 
 pub fn create_plot_layout(memory_total: u64) -> Layout {

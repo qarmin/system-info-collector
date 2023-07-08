@@ -1,10 +1,53 @@
-use crate::model::SingleItemModel;
-use log::debug;
-use std::io::BufWriter;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
+use std::time::{Duration, SystemTime};
 
-use std::io::Write;
-use std::time::SystemTime;
+use anyhow::Error;
+use crossbeam_channel::unbounded;
+use log::{debug, info};
 use sysinfo::{CpuExt, System, SystemExt};
+use tokio::time::interval;
+
+use crate::model::{Settings, SingleItemModel};
+use crate::ploty_creator::load_results_and_save_plot;
+use crate::set_ctrl_c_handler;
+
+pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), Error> {
+    let csv_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&settings.data_path)
+        .unwrap();
+    let mut csv_file = BufWriter::new(csv_file);
+    let string_header = "unix_timestamp,memory_used,memory_available,memory_free,memory_total,cpu_total,cpu_usage_per_core".to_string();
+    writeln!(csv_file, "{string_header}").unwrap();
+
+    let time_interval_miliseconds = 1000;
+    let mut interv = interval(Duration::from_millis(time_interval_miliseconds));
+    interv.tick().await; // This will instantly finish, so next time will take required amount of seconds
+
+    let (ctx, crx) = unbounded::<()>();
+    set_ctrl_c_handler(ctx);
+
+    info!("Started collecting data...");
+    loop {
+        save_system_info_to_file(sys, &mut csv_file);
+
+        if crx.try_recv().is_ok() {
+            info!("Trying to create html file...");
+            // Both save csv file and then load it from disk, to test if it works
+            // For now it is not necessary to have the best performance
+            drop(csv_file);
+            if settings.app_mode == crate::enums::AppMode::COLLECT_AND_CONVERT {
+                load_results_and_save_plot(settings)?;
+            }
+            return Ok(());
+        }
+
+        interv.tick().await;
+    }
+}
 
 pub fn save_system_info_to_file(sys: &mut System, buf_file: &mut BufWriter<std::fs::File>) {
     let current_time = SystemTime::now();
