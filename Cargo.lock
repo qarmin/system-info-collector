@@ -464,9 +464,9 @@ checksum = "b6c80984affa11d98d1b88b66ac8853f143217b399d3c74116778ff8fdb4ed2e"
 
 [[package]]
 name = "handsome_logger"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e74590e881e0a5042bdba08345bc45dac00a104ead42fdfec3b8d0ce84be56e"
+checksum = "c5b7a3b593547996cdd87bf01e391366fb1b033ed6d6aeee4723a27cbd4d986e"
 dependencies = [
  "log",
  "termcolor",

@@ -9,15 +9,25 @@ After collecting results into csv file, html file can be created with plot.
 ## Why?
 
 I needed a simple and fast application to collect basic information about the amount of RAM used and CPU consumption on
-a slow(4x1Ghz) 32 bit ARM computer which uses custom OS.
+a slow(4x1Ghz) 32 bit ARM computer which uses custom Linux OS build with Yocto.
 
-I looked at a few applications, i.e. grafana, but they are usually too heavy or work in a client server architecture
+I looked at a few applications like grafana, but they are too heavy or work in a client server architecture
 which in this case I would prefer to avoid.
 
 ## How to use it?
 
-Just run app, without any arguments and close app after while with ctrl+c, results will be collected inside
-readable `data.csv` file and then `out.html` file will be produced and opened automatically in web browser.
+This is console app, so that means that you need to use terminal to use it.
+
+```
+./system_info_collector -l debug -a collect-and-convert -o
+```
+
+should once per second print debug message about refreshed CPU and memory usage.
+
+After a while you can click `Ctrl+C` once to stop collecting data and wait for automatic preparing and opening prepared
+html plot data.
+
+https://github.com/qarmin/system-info-collector/assets/41945903/7ac510b5-babf-4d04-9624-34d83b8f1866
 
 ## Performance and memory usage
 
@@ -71,10 +81,21 @@ Convert csv data file into html document with plot and open it in browser
 ./system_info_collector -a convert -d /home/user/data.csv -p /home/user/plot.html -o
 ```
 
+Collect all possible data(at this moment) with interval of 0.2 seconds
+
+```
+./system_info_collector -l debug -a collect-and-convert -o -m memory-used -m memory-free -m memory-available -m cpu-usage-total -m cpu-usage-per-core -c 0.2
+
+```
+
 Shows help about available arguments
 
 ```
-./system_info_collector 
+./system_info_collector --help
 ```
 
 ## License
+
+MIT License
+
+Copyright (c) 2023 Rafał Mikrut and contributors
