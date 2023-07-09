@@ -47,7 +47,3 @@ jobs:
       - name: Doc
         run: |
           cargo doc
-
-      - name: Cargo release
-        run: |
-          cargo build --release
