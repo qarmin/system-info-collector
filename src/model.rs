@@ -14,21 +14,6 @@ pub struct SingleItemModel {
     pub cpu_total: f32,
 }
 
-impl SingleItemModel {
-    pub fn to_csv_string(&self) -> String {
-        format!(
-            "{},{},{},{},{},{},{}",
-            self.unix_timestamp,
-            self.memory_used,
-            self.memory_available,
-            self.memory_free,
-            self.memory_total,
-            self.cpu_total,
-            self.cpu_usage_per_core
-        )
-    }
-}
-
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct CollectedItemModels {
     pub unix_timestamp: Vec<f64>,

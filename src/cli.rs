@@ -45,12 +45,12 @@ pub struct Cli {
     pub app_mode: AppMode,
 
     #[arg(
-    short = 'm',
-    long,
-    num_args = 1..,
-    default_values = & ["cpu-usage-total", "cpu-usage-per-core"],
-    value_name = "DATA_TYPE",
-    help = "List data"
+        short = 'm',
+        long,
+        num_args = 1..,
+        default_values = & ["cpu-usage-total", "cpu-usage-per-core"],
+        value_name = "DATA_TYPE",
+        help = "List data"
     )]
     pub collection_mode: Vec<DataCollectionMode>,
 

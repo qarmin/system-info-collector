@@ -2,20 +2,20 @@
 #![allow(clippy::upper_case_acronyms)]
 
 use clap::ValueEnum;
-use strum::{EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString};
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display)]
 pub enum DataCollectionMode {
     #[default]
     CPU_USAGE_TOTAL,
     CPU_USAGE_PER_CORE,
-    MEMORY_USAGE,
+    MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
     // TODO CustomProcessName, CustomProcessId
 }
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display)]
 pub enum AppMode {
     #[default]
     COLLECT,
