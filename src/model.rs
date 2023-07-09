@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
 use crate::cli::Cli;
 use crate::enums::{AppMode, DataCollectionMode, LogLev};
@@ -16,27 +17,9 @@ pub struct SingleItemModel {
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct CollectedItemModels {
-    pub unix_timestamp: Vec<f64>,
-    pub memory_used: Vec<u64>,
-    pub memory_available: Vec<u64>,
-    pub memory_free: Vec<u64>,
-    pub memory_total: Vec<u64>,
-    pub cpu_core_usage: Vec<Vec<f32>>,
-    pub cpu_total: Vec<f32>,
-}
-
-impl CollectedItemModels {
-    pub fn new_with_reserved_space(space: usize) -> Self {
-        CollectedItemModels {
-            unix_timestamp: Vec::with_capacity(space),
-            memory_used: Vec::with_capacity(space),
-            memory_available: Vec::with_capacity(space),
-            memory_free: Vec::with_capacity(space),
-            memory_total: Vec::with_capacity(space),
-            cpu_core_usage: Vec::with_capacity(space),
-            cpu_total: Vec::with_capacity(space),
-        }
-    }
+    pub collected_data_names: Vec<String>,
+    pub collected_data: Vec<Vec<String>>,
+    pub hashmap_general_info: HashMap<String, String>,
 }
 
 #[derive(Default, Clone, Debug)]

@@ -1,59 +1,75 @@
+use std::collections::HashMap;
 use std::fs::metadata;
+use std::io::{BufRead, BufReader};
 
 use anyhow::{Context, Error, Result};
 use log::info;
 
-use crate::model::{CollectedItemModels, Settings, SingleItemModel};
+use crate::model::{CollectedItemModels, Settings};
 
 pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Error> {
     info!(
         "Data csv file is {} in size",
         humansize::format_size(
-            metadata(&settings.data_path).context("Failed to get metadata of CSV file")?.len(),
+            metadata(&settings.data_path).context("Failed to get metadata of data file")?.len(),
             humansize::BINARY,
         )
     );
 
-    let loaded_items = csv::Reader::from_path(&settings.data_path)
-        .unwrap()
-        .deserialize()
-        .collect::<Result<Vec<SingleItemModel>, _>>()?;
+    let data_file = std::fs::File::open(&settings.data_path).context(format!("Failed to open data file {}", &settings.data_path))?;
+    let mut data_file = BufReader::new(data_file);
 
-    convert_results(loaded_items)
-}
+    let mut lines_iter = data_file.lines();
+    let general_data_info = lines_iter
+        .next()
+        .context("Failed to read first line of data file")?
+        .context("Failed to read first line of data file")?;
 
-pub fn convert_results(loaded_items: Vec<SingleItemModel>) -> Result<CollectedItemModels, Error> {
-    if loaded_items.is_empty() {
-        return Ok(CollectedItemModels::default());
+    // MEMORY_TOTAL, CPU_CORE_COUNT, INTERVAL_SECONDS, etc.
+    let mut general_data_hashmap = HashMap::new();
+    for item in general_data_info.split(',') {
+        let mut split = item.split('=');
+        let key = split.next().context("Failed to get key from general data")?.to_string();
+        let value = split.next().context("Failed to get value from general data")?.to_string();
+        general_data_hashmap.insert(key, value);
     }
 
-    let mut collected_items = CollectedItemModels::new_with_reserved_space(loaded_items.len());
-
-    let number_of_cpus = loaded_items[0].cpu_usage_per_core.split(';').count();
-    collected_items.cpu_core_usage = Vec::with_capacity(number_of_cpus);
-    for _ in 0..number_of_cpus {
-        collected_items.cpu_core_usage.push(Vec::with_capacity(loaded_items.len()));
+    // Header data like UNIX_TIMESTAMP, MEMORY_USED, CPU_TOTAL, etc.
+    let mut collected_data_names: String = lines_iter
+        .next()
+        .context("Failed to read second line of data file")?
+        .context("Failed to read second line of data file")?;
+    let collected_data_names_vec: Vec<String> = collected_data_names.split(',').map(|item| item.to_string()).collect();
+    if collected_data_names_vec.len() <= 1 {
+        return Err(Error::msg("No data to load"));
+    }
+    if collected_data_names_vec[0] != "UNIX_TIMESTAMP" {
+        return Err(Error::msg("First item in data file should be UNIX_TIMESTAMP"));
     }
 
-    for item in loaded_items {
-        collected_items.memory_total.push(item.memory_total);
-        collected_items.memory_used.push(item.memory_used);
-        collected_items.memory_available.push(item.memory_available);
-        collected_items.memory_free.push(item.memory_free);
-        collected_items.cpu_total.push(item.cpu_total);
-        collected_items.unix_timestamp.push(item.unix_timestamp);
+    // TODO here should be added better error handling, if last line is broken, then this should ignore problem and continue
+    // TODO consider to add debug check results type, may be available as option in settings
+    let mut loaded_items: Vec<Vec<String>> = Vec::new();
+    for i in 0..collected_data_names_vec.len() {
+        loaded_items.push(Vec::new());
+    }
 
-        let splits = item.cpu_usage_per_core.split(';');
-        if splits.clone().count() != number_of_cpus {
-            return Err(Error::msg(format!(
-                "Cpu number changed when decoding, requested {} found later {} cpus",
-                number_of_cpus,
-                splits.count()
-            )));
+    for line in lines_iter {
+        let line = line.context("Failed to read line of data file")?;
+        let mut split = line.split(',');
+        if split.clone().count() != collected_data_names_vec.len() {
+            info!("Line \"{line}\" is broken - not enough items, skipping it");
+            continue;
         }
-        for (idx, split) in splits.enumerate() {
-            collected_items.cpu_core_usage[idx].push(split.parse::<f32>().context("Failed to parse cpu usage")?);
+        for i in &mut loaded_items {
+            // Unwrap is safe, because we checked this line earlier
+            i.push(split.next().unwrap().to_string());
         }
     }
-    Ok(collected_items)
+
+    Ok(CollectedItemModels {
+        hashmap_general_info: general_data_hashmap,
+        collected_data_names: collected_data_names_vec,
+        collected_data: loaded_items,
+    })
 }

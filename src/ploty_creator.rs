@@ -15,11 +15,6 @@ use crate::model::{CollectedItemModels, Settings};
 pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
     let time_start = SystemTime::now();
     let loaded_results = load_csv_results(settings)?;
-    info!("Loading data from csv took {:?}", time_start.elapsed().unwrap());
-    if loaded_results.memory_total.is_empty() {
-        info!("There is nothing to save");
-        return Ok(());
-    }
 
     let time_start = SystemTime::now();
     save_plot_into_file(&loaded_results, settings)?;
@@ -34,10 +29,15 @@ pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<(), Error> {
     info!("Trying to create html file...");
-    let dates = loaded_results
-        .unix_timestamp
+    let dates = loaded_results.collected_data[0]
         .iter()
-        .map(|&time| NaiveDateTime::from_timestamp_opt(time as i64, 0))
+        .map(|&str_time| {
+            if let Ok(time) = str_time.parse::<f64>() {
+                NaiveDateTime::from_timestamp_millis((time * 1000.0) as i64)
+            } else {
+                None
+            }
+        })
         .collect::<Option<Vec<NaiveDateTime>>>()
         .context("Failed to parse unix timestamp")?;
 

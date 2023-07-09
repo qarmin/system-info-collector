@@ -47,7 +47,7 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 
 fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
     let general_info = format!(
-        "INTERVAL_SECONDS={};CPU_CORE_COUNT={};MEMORY_TOTAL={}",
+        "INTERVAL_SECONDS={},CPU_CORE_COUNT={},MEMORY_TOTAL={}",
         settings.check_interval,
         sys.cpus().len(),
         convert_bytes_into_mega_bytes(sys.total_memory())
