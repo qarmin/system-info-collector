@@ -8,6 +8,7 @@ use plotly::{Plot, Scatter};
 use regex::Regex;
 use std::fs;
 use std::time::SystemTime;
+use time::UtcOffset;
 
 use crate::csv_file_loader::load_csv_results;
 use crate::enums::{DataType, GeneralInfoGroup};
@@ -31,11 +32,17 @@ pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<(), Error> {
     info!("Trying to create html file...");
+
+    let timezone_millis_offset = match UtcOffset::from_whole_seconds(chrono::offset::Local::now().offset().local_minus_utc()) {
+        Ok(offset) => offset.whole_seconds() as i64 * 1000,
+        Err(_) => 0,
+    };
+
     let dates = loaded_results.collected_data[&DataType::UNIX_TIMESTAMP]
         .iter()
         .map(|str_time| {
             if let Ok(time) = str_time.parse::<f64>() {
-                NaiveDateTime::from_timestamp_millis((time * 1000.0) as i64)
+                NaiveDateTime::from_timestamp_millis((time * 1000.0) as i64 + timezone_millis_offset)
             } else {
                 None
             }
