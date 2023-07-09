@@ -8,11 +8,11 @@ on:
 
 jobs:
   full_ci:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
         toolchain: [ stable, 1.70.0 ]
+    runs-on: {{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
 
