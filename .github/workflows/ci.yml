@@ -51,9 +51,3 @@ jobs:
       - name: Cargo release
         run: |
           cargo build --release
-
-      - name: Store artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: system_info_collector-${{ matrix.os }}-${{ matrix.toolchain }}
-          path: target/release

@@ -71,10 +71,21 @@ Convert csv data file into html document with plot and open it in browser
 ./system_info_collector -a convert -d /home/user/data.csv -p /home/user/plot.html -o
 ```
 
+Collect all possible data(at this moment) with interval of 0.2 seconds
+
+```
+./system_info_collector -l debug -a collect-and-convert -o -m memory-used -m memory-free -m memory-available -m cpu-usage-total -m cpu-usage-per-core -c 0.2
+
+```
+
 Shows help about available arguments
 
 ```
-./system_info_collector 
+./system_info_collector --help
 ```
 
 ## License
+
+MIT License
+
+Copyright (c) 2023 Rafał Mikrut and contributors
