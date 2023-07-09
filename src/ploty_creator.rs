@@ -43,29 +43,39 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
 
     let mut plot = Plot::new();
 
-    plot.set_layout(create_plot_layout(loaded_results.memory_total[0]));
+    plot.set_layout(create_plot_layout(&loaded_results, settings)?);
 
     create_memory_plot(&mut plot, &dates, loaded_results.clone());
     create_cpu_plot(&mut plot, &dates, loaded_results.clone());
 
     // Only replace when using dark theme
-    let html = plot
-        .to_html()
-        .replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
+    let mut html = plot.to_html();
+    if !settings.white_plot_mode {
+        html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>")
+    }
     fs::write(&settings.plot_path, html).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
     Ok(())
 }
 
-pub fn create_plot_layout(memory_total: u64) -> Layout {
+pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<Layout, Error> {
+    let mut layout = Layout::new().width(settings.plot_width as usize).height(settings.plot_height as usize);
+
+    if !settings.white_plot_mode {
+        layout = layout.template(&*PLOTLY_DARK);
+    }
+
     Layout::new()
-        .width(1700)
-        .height(800)
-        .template(&*PLOTLY_DARK)
         .grid(LayoutGrid::new().rows(2).columns(1).pattern(GridPattern::Independent))
         .y_axis2(Axis::new().range(vec![0, 100]).title(Title::new("CPU Usage[%]")))
         .x_axis2(Axis::new().title(Title::new("Time")))
-        .y_axis(Axis::new().range(vec![0, memory_total]).title(Title::new("Memory Usage[MB]")))
-        .x_axis(Axis::new().title(Title::new("Time")))
+        .y_axis(
+            Axis::new()
+                .range(vec![0, loaded_results.memory_total])
+                .title(Title::new("Memory Usage[MB]")),
+        )
+        .x_axis(Axis::new().title(Title::new("Time")));
+
+    Ok(layout)
 }
 
 pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: CollectedItemModels) {

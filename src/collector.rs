@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::time::{Duration, SystemTime};
 
-use crate::enums::DataCollectionMode;
+use crate::enums::{AllDataCollectionMode, DataCollectionMode};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
@@ -55,7 +55,8 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
 
     let data_header = format!(
-        "UNIX_TIMESTAMP,{}",
+        "{},{}",
+        AllDataCollectionMode::UNIX_TIMESTAMP,
         settings
             .collection_mode
             .iter()

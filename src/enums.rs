@@ -2,9 +2,10 @@
 #![allow(clippy::upper_case_acronyms)]
 
 use clap::ValueEnum;
+use serde::Deserialize;
 use strum::{Display, EnumIter, EnumString};
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display)]
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
 pub enum DataCollectionMode {
     #[default]
     CPU_USAGE_TOTAL,
@@ -15,7 +16,35 @@ pub enum DataCollectionMode {
     // TODO CustomProcessName, CustomProcessId
 }
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display)]
+// Must contains same enums as above with additional UNIX_TIMESTAMP and maybe some other
+
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
+pub enum AllDataCollectionMode {
+    #[default]
+    UNIX_TIMESTAMP,
+    CPU_USAGE_TOTAL,
+    CPU_USAGE_PER_CORE,
+    MEMORY_USED,
+    MEMORY_FREE,
+    MEMORY_AVAILABLE,
+}
+
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
+pub enum HeaderValues {
+    #[default]
+    MEMORY_TOTAL,
+    CPU_CORE_COUNT,
+    INTERVAL_SECONDS,
+}
+
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
+pub enum GeneralInfoGroup {
+    #[default]
+    CPU,
+    MEMORY,
+}
+
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
 pub enum AppMode {
     #[default]
     COLLECT,
@@ -23,7 +52,7 @@ pub enum AppMode {
     CONVERT,
 }
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
 pub enum LogLev {
     Off,
     Error,
