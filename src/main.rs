@@ -22,7 +22,7 @@ mod ploty_creator;
 #[tokio::main]
 async fn main() {
     let cli_model = parse_cli();
-    let mut settings: Settings = cli_model.into();
+    let settings: Settings = cli_model.into();
 
     let config = ConfigBuilder::new().set_level(settings.log_level.into()).build();
     TermLogger::init(config, TerminalMode::Mixed, ColorChoice::Auto).unwrap();
@@ -35,8 +35,6 @@ async fn main() {
         sys.refresh_processes();
         info!("Initial refresh took {:?}", refresh_start_time.elapsed().unwrap());
 
-        settings.cpu_core_count = sys.cpus().len();
-        settings.memory_total = sys.total_memory() as usize;
         if let Err(e) = collect_data(&mut sys, &settings).await {
             error!("{e}");
             process::exit(1);
@@ -59,7 +57,7 @@ pub fn set_ctrl_c_handler(ctx: Sender<()>) {
             info!("Closing app due clicking Ctrl-C multiple times");
             process::exit(1);
         } else {
-            info!("Trying to save results, if you don't want to save results, press Ctrl-C one more time",);
+            info!("Trying to close app cleanly, if you don't want to wait, click Ctrl-C again");
         }
     })
     .expect("Error when setting Ctrl-C handler");

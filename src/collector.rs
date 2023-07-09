@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::time::{Duration, SystemTime};
 
-use crate::enums::{DataCollectionMode, DataType};
+use crate::enums::{DataCollectionMode, DataType, HeaderValues};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
@@ -47,9 +47,12 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 
 fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
     let general_info = format!(
-        "INTERVAL_SECONDS={},CPU_CORE_COUNT={},MEMORY_TOTAL={}",
+        "{}={},{}={},{}={}",
+        HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
+        HeaderValues::CPU_CORE_COUNT,
         sys.cpus().len(),
+        HeaderValues::MEMORY_TOTAL,
         convert_bytes_into_mega_bytes(sys.total_memory())
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
@@ -87,7 +90,10 @@ fn save_system_info_to_file(sys: &mut System, data_file: &mut BufWriter<std::fs:
             DataCollectionMode::MEMORY_AVAILABLE => convert_bytes_into_mega_bytes(sys.available_memory()).to_string(),
             DataCollectionMode::MEMORY_FREE => convert_bytes_into_mega_bytes(sys.free_memory()).to_string(),
             DataCollectionMode::CPU_USAGE_TOTAL => {
-                (sys.cpus().iter().map(sysinfo::CpuExt::cpu_usage).sum::<f32>() / sys.cpus().len() as f32).to_string()
+                format!(
+                    "{:.2}",
+                    sys.cpus().iter().map(sysinfo::CpuExt::cpu_usage).sum::<f32>() / sys.cpus().len() as f32
+                )
             }
             DataCollectionMode::CPU_USAGE_PER_CORE => sys.cpus().iter().map(|e| format!("{:.2}", e.cpu_usage())).collect::<Vec<_>>().join(";"),
         };
@@ -98,5 +104,5 @@ fn save_system_info_to_file(sys: &mut System, data_file: &mut BufWriter<std::fs:
 }
 
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {
-    bytes as f64 / 1024.0
+    bytes as f64 / 1024.0 / 1024.0
 }

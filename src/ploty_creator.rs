@@ -85,7 +85,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
         layout = layout
             .y_axis(
                 Axis::new()
-                    .range(vec![0, loaded_results.memory_total])
+                    .range(vec![0, loaded_results.memory_total.ceil() as usize])
                     .title(Title::new("Memory Usage[MB]")),
             )
             .x_axis(Axis::new().title(Title::new("Time")));
@@ -121,10 +121,11 @@ pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results:
         plot.add_trace(trace);
     }
 
-    // TODO not implemented yet, CPU per core uses different way of collecting data
-    if let Some(data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
-        for (idx, _cpu_data) in data.iter().enumerate() {
-            let trace = Scatter::new(dates.to_owned(), data.clone())
+    // CPU per core uses different way of collecting data
+    if let Some(multiple_cpu_data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
+        for (idx, single_cpu_data) in multiple_cpu_data.iter().enumerate() {
+            let single_cpu_data = single_cpu_data.split(";").map(ToString::to_string).collect::<Vec<String>>();
+            let trace = Scatter::new(dates.to_owned(), single_cpu_data)
                 .name(format!("Core {idx}"))
                 .y_axis("y2")
                 .x_axis("x2");

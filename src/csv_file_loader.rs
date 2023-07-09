@@ -25,7 +25,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
 
     let (memory_total, cpu_core_count, check_interval) = parse_file_values_data(&mut lines_iter)?;
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter)?;
-    let collected_data = parse_data(&mut lines_iter, &collected_data_names)?;
+    let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
     Ok(CollectedItemModels {
         collected_data_names,
@@ -39,7 +39,11 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
 
 // TODO here should be added better error handling, if last line is broken, then this should ignore problem and continue
 // TODO consider to add debug check results type, may be available as option in settings
-fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[DataType]) -> Result<HashMap<DataType, Vec<String>>, Error> {
+fn parse_data(
+    lines_iter: &mut Lines<BufReader<File>>,
+    collected_data_names: &[DataType],
+    cpu_core_count: usize,
+) -> Result<HashMap<DataType, Vec<String>>, Error> {
     let mut collected_vec_data: Vec<Vec<String>> = Vec::new();
     for _ in 0..collected_data_names.len() {
         collected_vec_data.push(Vec::new());
@@ -61,6 +65,35 @@ fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[D
     let mut collected_data: HashMap<DataType, Vec<String>> = HashMap::default();
     for (data_name, data) in collected_data_names.iter().zip(collected_vec_data.into_iter()) {
         collected_data.insert(*data_name, data);
+    }
+
+    // Special formatting for CPU usage per core which is really Vec<Vec<String>> instead, Vec<String>
+    if let Some(cpu_per_core_data) = collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
+        let mut cpu_per_core_data_pre_formatted = Vec::new();
+        for _ in 0..cpu_core_count {
+            cpu_per_core_data_pre_formatted.push(Vec::new());
+        }
+
+        for cpu_core_data in cpu_per_core_data {
+            let mut split = cpu_core_data.split(';');
+            let count = split.clone().count();
+            if count != cpu_core_count {
+                return Err(Error::msg(format!(
+                    "Cpu data - \"{cpu_core_data}\" not contains required amount cpu usage results ({count}/{cpu_core_count})"
+                )));
+            }
+            for i in &mut cpu_per_core_data_pre_formatted {
+                // Unwrap is safe, because we checked this line earlier
+                i.push(split.next().unwrap().to_string());
+            }
+        }
+
+        let mut cpu_per_core_data_formatted = Vec::new();
+        for data in cpu_per_core_data_pre_formatted {
+            cpu_per_core_data_formatted.push(data.join(";"));
+        }
+
+        collected_data.insert(DataType::CPU_USAGE_PER_CORE, cpu_per_core_data_formatted);
     }
 
     Ok(collected_data)
@@ -101,7 +134,7 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>) -> Result<(Vec<DataType
     Ok((collected_data_names, collected_groups))
 }
 
-fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(u64, u64, f32), Error> {
+fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f64, usize, f32), Error> {
     let general_data_info = lines_iter
         .next()
         .context("Failed to read first line of data file")?
@@ -122,12 +155,12 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(u6
     let memory_total = general_data_hashmap
         .get(&HeaderValues::MEMORY_TOTAL)
         .context("Failed to get MEMORY_TOTAL from general data")?
-        .parse::<u64>()
+        .parse::<f64>()
         .context("Failed to parse MEMORY_TOTAL from general data")?;
     let cpu_core_count = general_data_hashmap
         .get(&HeaderValues::CPU_CORE_COUNT)
         .context("Failed to get CPU_CORE_COUNT from general data")?
-        .parse::<u64>()
+        .parse::<usize>()
         .context("Failed to parse CPU_CORE_COUNT from general data")?;
     let check_interval = general_data_hashmap
         .get(&HeaderValues::INTERVAL_SECONDS)

@@ -13,7 +13,7 @@ pub struct Cli {
         long,
         default_value = "1.0",
         value_name = "INTERVAL",
-        help = "Interval of checking cpu/memory usage in seconds, using smaller value than 1.0 may not work correctly"
+        help = "Interval of checking cpu/memory usage in seconds"
     )]
     pub check_interval: f32,
 

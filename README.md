@@ -13,9 +13,35 @@ I looked at a few applications, i.e. grafana, but they are usually too heavy or 
 ## How to use it?
 Just run app, without any arguments and close app after while with ctrl+c, results will be collected inside readable `data.csv` file and then `out.html` file will be produced and opened automatically in web browser.
 
+
+
+## Performance and memory usage
+During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lesser than 0.1%.
+
+In collect mode, app only needs to read cpu/ram usage and then save it to file, so that is why it uses so little resources.
+
+Converting csv file to html file is more resource intensive, so should be done on more powerful computer. 
+
+
+```
+12:44:56 [INFO] system_info_collector::csv_file_loader: Data csv file is 19.16 MiB in size
+12:44:57 [INFO] system_info_collector::ploty_creator: Loading data took 1.458324683s
+12:44:57 [INFO] system_info_collector::ploty_creator: Trying to create html file...
+12:45:09 [INFO] system_info_collector::ploty_creator: Creating plot took 11.877464213s
+12:45:09 [INFO] system_info_collector::ploty_creator: Opening file system_data_plot.html
+12:45:09 [INFO] system_info_collector: Closing app successfully
+```
+
+
+
+
+
+
+
+
+
+
+
 ## Plans
-- CLI - with multiple options like choosing output file, time of collecting data, etc.
-- Ability to only produce csv file or to only generate html file
 - Rotating files
-- Choosing which parameters to collect
 - Allow to track certain process memory/cpu usage
