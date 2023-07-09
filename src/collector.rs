@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::time::{Duration, SystemTime};
 
-use crate::enums::{AllDataCollectionMode, DataCollectionMode};
+use crate::enums::{DataCollectionMode, DataType};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
@@ -56,7 +56,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
 
     let data_header = format!(
         "{},{}",
-        AllDataCollectionMode::UNIX_TIMESTAMP,
+        DataType::UNIX_TIMESTAMP,
         settings
             .collection_mode
             .iter()

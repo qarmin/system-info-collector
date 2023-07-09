@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::cli::Cli;
-use crate::enums::{AllDataCollectionMode, AppMode, DataCollectionMode, GeneralInfoGroup, LogLev};
+use crate::enums::{AppMode, DataCollectionMode, DataType, GeneralInfoGroup, LogLev};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SingleItemModel {
@@ -17,8 +17,8 @@ pub struct SingleItemModel {
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct CollectedItemModels {
-    pub collected_data_names: Vec<AllDataCollectionMode>,
-    pub collected_data: Vec<Vec<String>>,
+    pub collected_data_names: Vec<DataType>,
+    pub collected_data: HashMap<DataType, Vec<String>>,
     pub collected_groups: Vec<GeneralInfoGroup>,
     pub memory_total: u64,
     pub cpu_core_count: u64,

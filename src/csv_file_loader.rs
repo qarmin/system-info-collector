@@ -6,7 +6,7 @@ use anyhow::{Context, Error, Result};
 use log::info;
 use strum::IntoEnumIterator;
 
-use crate::enums::{AllDataCollectionMode, GeneralInfoGroup, HeaderValues};
+use crate::enums::{DataType, GeneralInfoGroup, HeaderValues};
 use crate::model::{CollectedItemModels, Settings};
 
 pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Error> {
@@ -19,7 +19,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
     );
 
     let data_file = File::open(&settings.data_path).context(format!("Failed to open data file {}", &settings.data_path))?;
-    let mut data_file = BufReader::new(data_file);
+    let data_file = BufReader::new(data_file);
 
     let mut lines_iter = data_file.lines();
 
@@ -39,10 +39,10 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
 
 // TODO here should be added better error handling, if last line is broken, then this should ignore problem and continue
 // TODO consider to add debug check results type, may be available as option in settings
-fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[AllDataCollectionMode]) -> Result<Vec<Vec<String>>, Error> {
-    let mut collected_data: Vec<Vec<String>> = Vec::new();
-    for i in 0..collected_data_names.len() {
-        collected_data.push(Vec::new());
+fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[DataType]) -> Result<HashMap<DataType, Vec<String>>, Error> {
+    let mut collected_vec_data: Vec<Vec<String>> = Vec::new();
+    for _ in 0..collected_data_names.len() {
+        collected_vec_data.push(Vec::new());
     }
 
     for line in lines_iter {
@@ -52,44 +52,46 @@ fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[A
             info!("Line \"{line}\" is broken - not enough items, skipping it");
             continue;
         }
-        for i in &mut collected_data {
+        for i in &mut collected_vec_data {
             // Unwrap is safe, because we checked this line earlier
             i.push(split.next().unwrap().to_string());
         }
     }
+
+    let mut collected_data: HashMap<DataType, Vec<String>> = Default::default();
+    for (data_name, data) in collected_data_names.iter().zip(collected_vec_data.into_iter()) {
+        collected_data.insert(*data_name, data);
+    }
+
     Ok(collected_data)
 }
 
-fn parse_header(lines_iter: &mut Lines<BufReader<File>>) -> Result<(Vec<AllDataCollectionMode>, Vec<GeneralInfoGroup>), Error> {
+fn parse_header(lines_iter: &mut Lines<BufReader<File>>) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
     // Header data like UNIX_TIMESTAMP, MEMORY_USED, CPU_TOTAL, etc.
-    let mut collected_data_names_str: String = lines_iter
+    let collected_data_names_str: String = lines_iter
         .next()
         .context("Failed to read second line of data file")?
         .context("Failed to read second line of data file")?;
-    let collected_data_names: Vec<AllDataCollectionMode> = collected_data_names_str
+    let collected_data_names: Vec<DataType> = collected_data_names_str
         .split(',')
-        .map(|item| match item.parse::<AllDataCollectionMode>() {
+        .map(|item| match item.parse::<DataType>() {
             Ok(item) => Ok(item),
             Err(_) => Err(Error::msg(format!(
                 "Failed to parse item {item} from data file, allowed values are {:?}",
-                AllDataCollectionMode::iter().map(|e| e.to_string()).collect::<String>()
+                DataType::iter().map(|e| e.to_string()).collect::<String>()
             ))),
         })
         .collect::<Result<_, Error>>()?;
     if collected_data_names.len() <= 1 {
         return Err(Error::msg("No data to load"));
     }
-    if collected_data_names[0] != AllDataCollectionMode::UNIX_TIMESTAMP {
+    if collected_data_names[0] != DataType::UNIX_TIMESTAMP {
         return Err(Error::msg("First item in data file should be UNIX_TIMESTAMP"));
     }
 
     let mut collected_groups = Vec::new();
-    let cpu_collection = [AllDataCollectionMode::CPU_USAGE_TOTAL, AllDataCollectionMode::CPU_USAGE_PER_CORE];
-    let memory_collection = [
-        AllDataCollectionMode::MEMORY_AVAILABLE,
-        AllDataCollectionMode::MEMORY_FREE,
-        AllDataCollectionMode::MEMORY_USED,
-    ];
+    let cpu_collection = [DataType::CPU_USAGE_TOTAL, DataType::CPU_USAGE_PER_CORE];
+    let memory_collection = [DataType::MEMORY_AVAILABLE, DataType::MEMORY_FREE, DataType::MEMORY_USED];
     if collected_data_names.iter().any(|e| cpu_collection.contains(e)) {
         collected_groups.push(GeneralInfoGroup::CPU);
     }
