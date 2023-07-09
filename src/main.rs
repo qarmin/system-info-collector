@@ -24,7 +24,7 @@ async fn main() {
     let cli_model = parse_cli();
     let mut settings: Settings = cli_model.into();
 
-    let config = ConfigBuilder::new().set_level(settings.log_level.clone().into()).build();
+    let config = ConfigBuilder::new().set_level(settings.log_level.into()).build();
     TermLogger::init(config, TerminalMode::Mixed, ColorChoice::Auto).unwrap();
 
     if [AppMode::COLLECT, AppMode::COLLECT_AND_CONVERT].contains(&settings.app_mode) {

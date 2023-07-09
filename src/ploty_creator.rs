@@ -45,25 +45,26 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
 
     let mut plot = Plot::new();
 
-    plot.set_layout(create_plot_layout(&loaded_results, settings)?);
+    plot.set_layout(create_plot_layout(loaded_results, settings));
 
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY) {
-        create_memory_plot(&mut plot, &dates, loaded_results.clone());
+        create_memory_plot(&mut plot, &dates, loaded_results);
     }
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU) {
-        create_cpu_plot(&mut plot, &dates, loaded_results.clone());
+        create_cpu_plot(&mut plot, &dates, loaded_results);
     }
 
     // Only replace when using dark theme
     let mut html = plot.to_html();
     if !settings.white_plot_mode {
-        html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>")
+        html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
     }
+
     fs::write(&settings.plot_path, html).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
     Ok(())
 }
 
-pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<Layout, Error> {
+pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Settings) -> Layout {
     let contains_memory_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY);
     let contains_cpu_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU);
 
@@ -72,7 +73,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
         .height(settings.plot_height as usize)
         .grid(
             LayoutGrid::new()
-                .rows(contains_cpu_group as usize + contains_cpu_group as usize)
+                .rows(contains_cpu_group as usize + contains_memory_group as usize)
                 .columns(1)
                 .pattern(GridPattern::Independent),
         );
@@ -95,15 +96,15 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
             .x_axis2(Axis::new().title(Title::new("Time")));
     }
 
-    Ok(layout)
+    layout
 }
 
-pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: CollectedItemModels) {
+pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_memory() {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.to_owned())
+        let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis("y1")
             .x_axis("x1");
@@ -111,9 +112,9 @@ pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_resul
     }
 }
 
-pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: CollectedItemModels) {
+pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels) {
     if let Some(data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_TOTAL) {
-        let trace = Scatter::new(dates.to_owned(), data.to_owned())
+        let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(DataType::CPU_USAGE_TOTAL.pretty_print())
             .y_axis("y2")
             .x_axis("x2");
@@ -123,7 +124,7 @@ pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results:
     // TODO not implemented yet, CPU per core uses different way of collecting data
     if let Some(data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
         for (idx, _cpu_data) in data.iter().enumerate() {
-            let trace = Scatter::new(dates.to_owned(), data.to_owned())
+            let trace = Scatter::new(dates.to_owned(), data.clone())
                 .name(format!("Core {idx}"))
                 .y_axis("y2")
                 .x_axis("x2");

@@ -58,7 +58,7 @@ fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[D
         }
     }
 
-    let mut collected_data: HashMap<DataType, Vec<String>> = Default::default();
+    let mut collected_data: HashMap<DataType, Vec<String>> = HashMap::default();
     for (data_name, data) in collected_data_names.iter().zip(collected_vec_data.into_iter()) {
         collected_data.insert(*data_name, data);
     }

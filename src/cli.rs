@@ -48,7 +48,7 @@ pub struct Cli {
         short = 'm',
         long,
         num_args = 1..,
-        default_values = & ["cpu-usage-total", "cpu-usage-per-core"],
+        default_values = & ["cpu-usage-total", "cpu-usage-per-core", "memory-used"],
         value_name = "DATA_TYPE",
         help = "List data"
     )]
