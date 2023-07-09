@@ -26,6 +26,7 @@ pub struct Settings {
     pub white_plot_mode: bool,
     pub log_level: LogLev,
     pub open_plot_file: bool,
+    pub use_web_gl: bool,
 }
 
 impl From<Cli> for Settings {
@@ -41,6 +42,7 @@ impl From<Cli> for Settings {
             white_plot_mode: cli.white_plot_mode,
             log_level: cli.log_level,
             open_plot_file: cli.open_plot_file,
+            use_web_gl: true, // TODO: add this to CLI - need to check if this works
         }
     }
 }

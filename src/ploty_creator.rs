@@ -1,6 +1,3 @@
-use std::fs;
-use std::time::SystemTime;
-
 use anyhow::{Context, Error};
 use chrono::NaiveDateTime;
 use log::info;
@@ -8,6 +5,9 @@ use plotly::common::Title;
 use plotly::layout::themes::PLOTLY_DARK;
 use plotly::layout::{Axis, GridPattern, Layout, LayoutGrid};
 use plotly::{Plot, Scatter};
+use regex::Regex;
+use std::fs;
+use std::time::SystemTime;
 
 use crate::csv_file_loader::load_csv_results;
 use crate::enums::{DataType, GeneralInfoGroup};
@@ -48,10 +48,10 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
     plot.set_layout(create_plot_layout(loaded_results, settings));
 
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY) {
-        create_memory_plot(&mut plot, &dates, loaded_results);
+        create_memory_plot(&mut plot, &dates, loaded_results, settings);
     }
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU) {
-        create_cpu_plot(&mut plot, &dates, loaded_results);
+        create_cpu_plot(&mut plot, &dates, loaded_results, settings);
     }
 
     // Only replace when using dark theme
@@ -60,7 +60,11 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
         html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
     }
 
-    fs::write(&settings.plot_path, html).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
+    // Simple minify
+    let regex = Regex::new(r"\n[ ]+").unwrap();
+    let html = regex.replace_all(&html, "");
+    fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
+
     Ok(())
 }
 
@@ -99,12 +103,13 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     layout
 }
 
-pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels) {
+pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_memory() {
             continue;
         }
         let trace = Scatter::new(dates.to_owned(), data.clone())
+            // .web_gl_mode(settings.use_web_gl)
             .name(data_type.pretty_print())
             .y_axis("y1")
             .x_axis("x1");
@@ -112,9 +117,10 @@ pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_resul
     }
 }
 
-pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels) {
+pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings) {
     if let Some(data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_TOTAL) {
         let trace = Scatter::new(dates.to_owned(), data.clone())
+            // .web_gl_mode(settings.use_web_gl)
             .name(DataType::CPU_USAGE_TOTAL.pretty_print())
             .y_axis("y2")
             .x_axis("x2");
@@ -124,8 +130,9 @@ pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results:
     // CPU per core uses different way of collecting data
     if let Some(multiple_cpu_data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
         for (idx, single_cpu_data) in multiple_cpu_data.iter().enumerate() {
-            let single_cpu_data = single_cpu_data.split(";").map(ToString::to_string).collect::<Vec<String>>();
+            let single_cpu_data = single_cpu_data.split(';').map(ToString::to_string).collect::<Vec<String>>();
             let trace = Scatter::new(dates.to_owned(), single_cpu_data)
+                // .web_gl_mode(settings.use_web_gl)
                 .name(format!("Core {idx}"))
                 .y_axis("y2")
                 .x_axis("x2");
