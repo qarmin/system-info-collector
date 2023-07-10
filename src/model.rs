@@ -1,5 +1,6 @@
-use serde::Deserialize;
 use std::collections::HashMap;
+
+use serde::Deserialize;
 
 use crate::cli::Cli;
 use crate::enums::{AppMode, DataCollectionMode, DataType, GeneralInfoGroup, LogLev};

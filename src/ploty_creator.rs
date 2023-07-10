@@ -1,3 +1,6 @@
+use std::fs;
+use std::time::SystemTime;
+
 use anyhow::{Context, Error};
 use chrono::NaiveDateTime;
 use log::info;
@@ -6,8 +9,6 @@ use plotly::layout::themes::PLOTLY_DARK;
 use plotly::layout::{Axis, GridPattern, Layout, LayoutGrid};
 use plotly::{Plot, Scatter};
 use regex::Regex;
-use std::fs;
-use std::time::SystemTime;
 use time::UtcOffset;
 
 use crate::csv_file_loader::load_csv_results;

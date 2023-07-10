@@ -1,3 +1,6 @@
+## Version 0.3.0 - ?
+- Create backup of data file if already exists
+
 ## Version 0.2.0 - 09.07.2023
 - Added CLI
 - Ability to only produce, generate plot or both

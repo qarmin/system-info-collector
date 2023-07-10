@@ -28,6 +28,7 @@ pub enum DataType {
     MEMORY_FREE,
     MEMORY_AVAILABLE,
 }
+
 impl DataType {
     pub fn is_memory(self) -> bool {
         matches!(self, DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE)
@@ -46,6 +47,7 @@ impl DataType {
         }
     }
 }
+
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
 pub enum HeaderValues {
     #[default]

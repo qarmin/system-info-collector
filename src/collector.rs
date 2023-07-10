@@ -1,19 +1,28 @@
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use crate::enums::{DataCollectionMode, DataType, HeaderValues};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
 use sysinfo::{CpuExt, System, SystemExt};
 use tokio::time::interval;
 
+use crate::enums::{DataCollectionMode, DataType, HeaderValues};
 use crate::model::Settings;
 use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
 
 pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), Error> {
+    if Path::new(&settings.data_path).exists() {
+        let addition = chrono::Local::now().format("%Y_%m_%d_%H_%M_%S_%f").to_string();
+        let new_file_name = format_new_name(&settings.data_path, &addition);
+        fs::copy(&settings.data_path, &new_file_name).context(format!("Failed to backup {} into {}", settings.data_path, new_file_name))?;
+        info!("Properly created backup of file {} inside {new_file_name}", settings.data_path);
+    }
+
     let data_file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -42,6 +51,15 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
         }
 
         interv.tick().await;
+    }
+}
+
+fn format_new_name(file_path: &str, item_to_add: &str) -> String {
+    if let Some(index) = file_path.rfind('.') {
+        let (base, extension) = file_path.split_at(index);
+        format!("{base}{item_to_add}{extension}")
+    } else {
+        format!("{file_path}{item_to_add}")
     }
 }
 
