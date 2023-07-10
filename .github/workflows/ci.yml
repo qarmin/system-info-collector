@@ -36,7 +36,7 @@ jobs:
 
       - name: Clippy pedantic
         run: |
-          cargo clippy -- -Wclippy::pedantic -A clippy::cast_lossless -A clippy::cast-sign-loss  -Aclippy::cast-possible-wrap -Aclippy::cast-precision-loss -Aclippy::module-name-repetitions -Aclippy::cast_possible_truncation
+          cargo clippy -- -W clippy::pedantic -A clippy::struct-excessive-bools -A clippy::cast_lossless -A clippy::cast-sign-loss  -Aclippy::cast-possible-wrap -Aclippy::cast-precision-loss -Aclippy::module-name-repetitions -Aclippy::cast_possible_truncation
         if: ${{ matrix.type == 'stable' }}
 
       - name: Test

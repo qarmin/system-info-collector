@@ -16,12 +16,7 @@ use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
 
 pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), Error> {
-    if Path::new(&settings.data_path).exists() {
-        let addition = chrono::Local::now().format("%Y_%m_%d_%H_%M_%S_%f").to_string();
-        let new_file_name = format_new_name(&settings.data_path, &addition);
-        fs::copy(&settings.data_path, &new_file_name).context(format!("Failed to backup {} into {}", settings.data_path, new_file_name))?;
-        info!("Properly created backup of file {} inside {new_file_name}", settings.data_path);
-    }
+    backup_old_file(settings)?;
 
     let data_file = OpenOptions::new()
         .write(true)
@@ -52,6 +47,47 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 
         interv.tick().await;
     }
+}
+
+// Function to create
+fn backup_old_file(settings: &Settings) -> Result<(), Error> {
+    if settings.backup_number == 0 {
+        return Ok(()); // No backup required
+    }
+    let mut backup_file_names = vec![];
+    for i in 1..=settings.backup_number {
+        backup_file_names.push(format_new_name(&settings.data_path, &format!("__{i}")));
+    }
+
+    // Remove last backup file
+    let last_file_name = backup_file_names[backup_file_names.len() - 1].clone();
+    if Path::new(&last_file_name).exists() {
+        fs::remove_file(&last_file_name).context(format!(
+            "Failed to remove backup file {}",
+            &backup_file_names[backup_file_names.len() - 1]
+        ))?;
+    }
+
+    // Rename all backup files
+    for i in (0..backup_file_names.len() - 1).rev() {
+        let old_file_name = backup_file_names[i].clone();
+        if Path::new(&old_file_name).exists() {
+            let new_file_name = backup_file_names[i + 1].clone();
+            fs::rename(&old_file_name, &new_file_name).context(format!("Failed to rename backup file {} into {}", &old_file_name, &new_file_name))?;
+        }
+    }
+
+    // Rename current file into first backup file name
+    if Path::new(&settings.data_path).exists() {
+        fs::rename(&settings.data_path, &backup_file_names[0]).context(format!(
+            "Failed to rename data file {} into {}",
+            &settings.data_path, &backup_file_names[0]
+        ))?;
+    }
+
+    info!("Backup files renamed successfully");
+
+    Ok(())
 }
 
 fn format_new_name(file_path: &str, item_to_add: &str) -> String {

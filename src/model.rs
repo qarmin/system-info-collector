@@ -29,6 +29,7 @@ pub struct Settings {
     pub open_plot_file: bool,
     pub disable_instant_flushing: bool,
     pub use_web_gl: bool,
+    pub backup_number: u32,
 }
 
 impl From<Cli> for Settings {
@@ -46,6 +47,7 @@ impl From<Cli> for Settings {
             open_plot_file: cli.open_plot_file,
             disable_instant_flushing: cli.disable_instant_flushing,
             use_web_gl: true, // TODO: add this to CLI - need to check if this works
+            backup_number: cli.backup_number,
         }
     }
 }

@@ -83,6 +83,15 @@ pub struct Cli {
         help = "Disables automatic flushing when writing to the file. This may cause data loss in case of a system crash. Use with caution."
     )]
     pub disable_instant_flushing: bool,
+
+    #[arg(
+        short,
+        long,
+        default_value = "5",
+        value_name = "BACKUP_NUMBER",
+        help = "Number of file backups to keep. Backup files will be named data__1.csv, data__2.csv, etc. if the original file is named data.csv."
+    )]
+    pub backup_number: u32,
 }
 
 pub(crate) fn parse_cli() -> Cli {
