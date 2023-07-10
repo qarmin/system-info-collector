@@ -85,7 +85,13 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
             .collect::<Vec<String>>()
             .join(",")
     );
-    writeln!(data_file, "{data_header}").context(format!("Failed to write header into data file {}", settings.data_path))
+    writeln!(data_file, "{data_header}").context(format!("Failed to write header into data file {}", settings.data_path))?;
+
+    if !settings.disable_instant_flushing {
+        data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;
+    }
+
+    Ok(())
 }
 
 fn save_system_info_to_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
@@ -118,7 +124,13 @@ fn save_system_info_to_file(sys: &mut System, data_file: &mut BufWriter<std::fs:
         data_to_save.push(collected_string);
     }
 
-    writeln!(data_file, "{}", data_to_save.join(",")).context(format!("Failed to write data into data file {}", settings.data_path))
+    writeln!(data_file, "{}", data_to_save.join(",")).context(format!("Failed to write data into data file {}", settings.data_path))?;
+
+    if !settings.disable_instant_flushing {
+        data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;
+    }
+
+    Ok(())
 }
 
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {

@@ -74,6 +74,15 @@ pub struct Cli {
         help = "Open generated plot file in default html viewer"
     )]
     pub open_plot_file: bool,
+
+    #[arg(
+        short = 'i',
+        long,
+        default_value = "false",
+        value_name = "INSTANT_FLUSHING",
+        help = "Disables automatic flushing when writing to the file. This may cause data loss in case of a system crash. Use with caution."
+    )]
+    pub disable_instant_flushing: bool,
 }
 
 pub(crate) fn parse_cli() -> Cli {
