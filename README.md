@@ -93,6 +93,52 @@ Shows help about available arguments
 ./system_info_collector --help
 ```
 
+## Running app when OS starts(Linux)
+
+Simple way to collect OS data from start, is to create simple systemd service.
+
+Copy app into `/usr/bin` folder and create folder for collected data
+
+```
+sudo cp system_info_collector /usr/bin/system_info_collector
+sudo mkdir -p /opt/system_info_collector/ # To collect reports
+```
+
+creating service content
+
+```
+sudo touch /etc/systemd/system/system-info-collector.service
+sudo gedit /etc/systemd/system/system-info-collector.service # open it with any text editor - I used gedit
+```
+
+paste this code there
+
+```
+[Unit]
+Description=System Data Collector
+
+[Service]
+ExecStart=/usr/bin/system_info_collector -d /opt/system_info_collector/data.csv
+
+[Install]
+WantedBy=default.target
+```
+
+now start service
+
+```
+sudo systemctl daemon-reload
+sudo systemctl start system-info-collector
+sudo systemctl status system-info-collector # This should print "active (running)" if everything works fine, if there is failure, check log to see what happened
+sudo systemctl enable system-info-collector # To enable running service when OS starts
+```
+
+now you can convert collected data with simple command
+
+```
+system_info_collector -a convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
+```
+
 ## License
 
 MIT License

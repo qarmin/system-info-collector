@@ -30,6 +30,7 @@ pub struct Settings {
     pub disable_instant_flushing: bool,
     pub use_web_gl: bool,
     pub backup_number: u32,
+    pub maximum_data_file_size_bytes: usize,
 }
 
 impl From<Cli> for Settings {
@@ -48,6 +49,7 @@ impl From<Cli> for Settings {
             disable_instant_flushing: cli.disable_instant_flushing,
             use_web_gl: true, // TODO: add this to CLI - need to check if this works
             backup_number: cli.backup_number,
+            maximum_data_file_size_bytes: (cli.maximum_data_file_size_mb * 1024.0 * 1024.0) as usize,
         }
     }
 }

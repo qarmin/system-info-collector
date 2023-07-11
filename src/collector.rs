@@ -33,9 +33,11 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
     let (ctx, crx) = unbounded::<()>();
     set_ctrl_c_handler(ctx);
 
+    let mut collected_bytes = 0;
+
     info!("Started collecting data...");
     loop {
-        save_system_info_to_file(sys, &mut data_file, settings)?;
+        save_system_info_to_file(sys, &mut data_file, settings, &mut collected_bytes)?;
 
         if crx.try_recv().is_ok() {
             drop(data_file);
@@ -130,7 +132,12 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     Ok(())
 }
 
-fn save_system_info_to_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
+fn save_system_info_to_file(
+    sys: &mut System,
+    data_file: &mut BufWriter<fs::File>,
+    settings: &Settings,
+    collected_bytes: &mut usize,
+) -> Result<(), Error> {
     let current_time = SystemTime::now();
 
     let start = SystemTime::now();
@@ -160,7 +167,18 @@ fn save_system_info_to_file(sys: &mut System, data_file: &mut BufWriter<std::fs:
         data_to_save.push(collected_string);
     }
 
-    writeln!(data_file, "{}", data_to_save.join(",")).context(format!("Failed to write data into data file {}", settings.data_path))?;
+    let data_to_save_str = data_to_save.join(",");
+    *collected_bytes += data_to_save_str.len();
+
+    if *collected_bytes >= settings.maximum_data_file_size_bytes {
+        let _ = data_file.flush();
+        return Err(Error::msg(format!(
+            "Exceeded allowed data size - {}, consider to increase size limit, decrease interval or amount of logged data",
+            humansize::format_size(settings.maximum_data_file_size_bytes, humansize::BINARY)
+        )));
+    }
+
+    writeln!(data_file, "{data_to_save_str}").context(format!("Failed to write data into data file {}", settings.data_path))?;
 
     if !settings.disable_instant_flushing {
         data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;

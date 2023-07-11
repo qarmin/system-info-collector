@@ -92,6 +92,15 @@ pub struct Cli {
         help = "Number of file backups to keep. Backup files will be named data__1.csv, data__2.csv, etc. if the original file is named data.csv."
     )]
     pub backup_number: u32,
+
+    #[arg(
+        short = 'k',
+        long,
+        default_value = "100.0",
+        value_name = "MAXIMUM_FILE_SIZE_MB",
+        help = "Maximum file size of created data, to help prevent using too much disk space."
+    )]
+    pub maximum_data_file_size_mb: f32,
 }
 
 pub(crate) fn parse_cli() -> Cli {
