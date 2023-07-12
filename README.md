@@ -139,6 +139,11 @@ now you can convert collected data with simple command
 system_info_collector -a convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
 ```
 
+## Compatibility
+
+Compatibility between different versions of app is not guaranteed, so if you want to collect
+
+
 ## License
 
 MIT License

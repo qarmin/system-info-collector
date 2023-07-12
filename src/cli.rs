@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::enums::{AppMode, DataCollectionMode, LogLev};
+use crate::enums::{AppMode, LogLev, SimpleDataCollectionMode};
 
 #[derive(Parser, Debug)]
 #[command(name = "System Info Collector")]
@@ -52,7 +52,7 @@ pub struct Cli {
         value_name = "DATA_TYPE",
         help = "List data"
     )]
-    pub collection_mode: Vec<DataCollectionMode>,
+    pub collection_mode: Vec<SimpleDataCollectionMode>,
 
     #[arg(short = 'w', long, default_value = "1700", value_name = "WIDTH", help = "Width of generated plot.")]
     pub plot_width: u32,
@@ -101,6 +101,14 @@ pub struct Cli {
         help = "Maximum file size of created data, to help prevent using too much disk space."
     )]
     pub maximum_data_file_size_mb: f32,
+
+    #[arg(
+        short = 'e',
+        long,
+        value_name = "CMD_SEARCH_TEXT",
+        help = "Search for certain text in process run command"
+    )]
+    pub process_cmd_to_search: Vec<String>,
 }
 
 pub(crate) fn parse_cli() -> Cli {

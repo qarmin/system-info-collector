@@ -7,11 +7,11 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
-use sysinfo::{CpuExt, System, SystemExt};
+use sysinfo::{CpuExt, ProcessExt, ProcessRefreshKind, System, SystemExt};
 use tokio::time::interval;
 
-use crate::enums::{DataCollectionMode, DataType, HeaderValues};
-use crate::model::Settings;
+use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
+use crate::model::{ProcessCache, Settings, SingleProcessCacheStruct};
 use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
 
@@ -34,10 +34,11 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
     set_ctrl_c_handler(ctx);
 
     let mut collected_bytes = 0;
+    let mut process_cache_data = ProcessCache::default();
 
     info!("Started collecting data...");
     loop {
-        save_system_info_to_file(sys, &mut data_file, settings, &mut collected_bytes)?;
+        save_system_info_to_file(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data)?;
 
         if crx.try_recv().is_ok() {
             drop(data_file);
@@ -103,13 +104,15 @@ fn format_new_name(file_path: &str, item_to_add: &str) -> String {
 
 fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
     let general_info = format!(
-        "{}={},{}={},{}={}",
+        "{}={},{}={},{}={},{}={}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
         sys.cpus().len(),
         HeaderValues::MEMORY_TOTAL,
-        convert_bytes_into_mega_bytes(sys.total_memory())
+        convert_bytes_into_mega_bytes(sys.total_memory()),
+        HeaderValues::APP_VERSION,
+        env!("CARGO_PKG_VERSION")
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
 
@@ -137,14 +140,20 @@ fn save_system_info_to_file(
     data_file: &mut BufWriter<fs::File>,
     settings: &Settings,
     collected_bytes: &mut usize,
+    process_cache_data: &mut ProcessCache,
 ) -> Result<(), Error> {
     let current_time = SystemTime::now();
 
     let start = SystemTime::now();
     sys.refresh_cpu();
     sys.refresh_memory();
-    // sys.refresh_processes();
-    debug!("Refreshed CPU and memory in {:?}", start.elapsed().unwrap());
+
+    if settings.need_to_refresh_processes {
+        sys.refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
+        check_for_new_process_data(sys, process_cache_data, settings);
+    }
+
+    debug!("Refreshed app/os usage data in {:?}", start.elapsed().unwrap());
 
     let mut data_to_save = vec![];
 
@@ -153,16 +162,16 @@ fn save_system_info_to_file(
 
     for i in &settings.collection_mode {
         let collected_string = match i {
-            DataCollectionMode::MEMORY_USED => convert_bytes_into_mega_bytes(sys.used_memory()).to_string(),
-            DataCollectionMode::MEMORY_AVAILABLE => convert_bytes_into_mega_bytes(sys.available_memory()).to_string(),
-            DataCollectionMode::MEMORY_FREE => convert_bytes_into_mega_bytes(sys.free_memory()).to_string(),
-            DataCollectionMode::CPU_USAGE_TOTAL => {
+            SimpleDataCollectionMode::MEMORY_USED => convert_bytes_into_mega_bytes(sys.used_memory()).to_string(),
+            SimpleDataCollectionMode::MEMORY_AVAILABLE => convert_bytes_into_mega_bytes(sys.available_memory()).to_string(),
+            SimpleDataCollectionMode::MEMORY_FREE => convert_bytes_into_mega_bytes(sys.free_memory()).to_string(),
+            SimpleDataCollectionMode::CPU_USAGE_TOTAL => {
                 format!(
                     "{:.2}",
                     sys.cpus().iter().map(sysinfo::CpuExt::cpu_usage).sum::<f32>() / sys.cpus().len() as f32
                 )
             }
-            DataCollectionMode::CPU_USAGE_PER_CORE => sys.cpus().iter().map(|e| format!("{:.2}", e.cpu_usage())).collect::<Vec<_>>().join(";"),
+            SimpleDataCollectionMode::CPU_USAGE_PER_CORE => sys.cpus().iter().map(|e| format!("{:.2}", e.cpu_usage())).collect::<Vec<_>>().join(";"),
         };
         data_to_save.push(collected_string);
     }
@@ -185,6 +194,17 @@ fn save_system_info_to_file(
     }
 
     Ok(())
+}
+
+pub fn check_for_new_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) {
+    for (pid, process) in sys.processes() {
+        let collected_name = process.cmd().join(" ");
+        let need_to_check = settings.process_cmd_to_search.iter().any(|e| e.graph_name.contains(&collected_name));
+        process_cache_data.process_used.entry((*pid).into()).or_insert(SingleProcessCacheStruct {
+            collected_name,
+            need_to_check,
+        });
+    }
 }
 
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {

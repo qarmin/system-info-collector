@@ -6,7 +6,7 @@ use serde::Deserialize;
 use strum::{Display, EnumIter, EnumString};
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-pub enum DataCollectionMode {
+pub enum SimpleDataCollectionMode {
     #[default]
     CPU_USAGE_TOTAL,
     CPU_USAGE_PER_CORE,
@@ -27,6 +27,17 @@ pub enum DataType {
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
+}
+impl From<SimpleDataCollectionMode> for DataType {
+    fn from(collection_mode: SimpleDataCollectionMode) -> DataType {
+        match collection_mode {
+            SimpleDataCollectionMode::CPU_USAGE_TOTAL => DataType::CPU_USAGE_TOTAL,
+            SimpleDataCollectionMode::CPU_USAGE_PER_CORE => DataType::CPU_USAGE_PER_CORE,
+            SimpleDataCollectionMode::MEMORY_USED => DataType::MEMORY_USED,
+            SimpleDataCollectionMode::MEMORY_FREE => DataType::MEMORY_FREE,
+            SimpleDataCollectionMode::MEMORY_AVAILABLE => DataType::MEMORY_AVAILABLE,
+        }
+    }
 }
 
 impl DataType {
@@ -54,6 +65,7 @@ pub enum HeaderValues {
     MEMORY_TOTAL,
     CPU_CORE_COUNT,
     INTERVAL_SECONDS,
+    APP_VERSION,
 }
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]

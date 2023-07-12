@@ -28,12 +28,20 @@ async fn main() {
     TermLogger::init(config, TerminalMode::Mixed, ColorChoice::Auto).unwrap();
 
     if [AppMode::COLLECT, AppMode::COLLECT_AND_CONVERT].contains(&settings.app_mode) {
-        let refresh_start_time = SystemTime::now();
+        let creating_start_time = SystemTime::now();
         let mut sys = System::new_all();
+        let creating_duration = creating_start_time.elapsed().unwrap();
+        let refresh_start_time = SystemTime::now();
         sys.refresh_memory();
         sys.refresh_cpu();
-        sys.refresh_processes();
-        info!("Initial refresh took {:?}", refresh_start_time.elapsed().unwrap());
+        if settings.need_to_refresh_processes {
+            sys.refresh_processes();
+        }
+        info!(
+            "Initial refresh took {:?} (creating sys struct took {:?})",
+            refresh_start_time.elapsed().unwrap(),
+            creating_duration
+        );
 
         if let Err(e) = collect_data(&mut sys, &settings).await {
             error!("{e}");
