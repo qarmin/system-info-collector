@@ -49,8 +49,13 @@ impl ProcessCache {
         for _ in 0..size {
             process_used.push(None);
         }
+
+        // Do not allow to check current process, because cmd values will always be valid for it
+        let mut processes_checked = HashSet::default();
+        processes_checked.insert(process::id() as usize);
+
         ProcessCache {
-            processes_checked: HashSet::default(),
+            processes_checked,
             process_used,
         }
     }

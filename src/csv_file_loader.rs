@@ -114,9 +114,9 @@ fn parse_header(
             Err(_) => {
                 if let Some(s) = item.strip_prefix("CUSTOM_") {
                     let split = s.split('_').collect::<Vec<_>>();
-                    if split.len() != 2 || split[0].parse::<usize>().is_err() || (matches!(split[1], "CPU" | "MEMORY")) {
+                    if split.len() != 2 || split[0].parse::<usize>().is_err() || !(matches!(split[1], "CPU" | "MEMORY")) {
                         return Err(Error::msg(format!(
-                            "Failed to parse Custom item {item}, should have format CUSTOM_{{IDX}}_CPU or CUSTOM_{{IDX}}_MEMORY"
+                            "Failed to parse custom item {item}, should have format CUSTOM_{{IDX}}_CPU or CUSTOM_{{IDX}}_MEMORY"
                         )));
                     }
                     let idx = split[0].parse::<usize>().unwrap();

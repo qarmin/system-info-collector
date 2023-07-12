@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
-use sysinfo::{CpuExt, ProcessExt, ProcessRefreshKind, System, SystemExt};
+use sysinfo::{CpuExt, Pid, ProcessExt, ProcessRefreshKind, System, SystemExt};
 use tokio::time::interval;
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
@@ -202,8 +202,16 @@ fn collect_and_save_data(
         data_to_save.push(collected_string);
     }
     if settings.need_to_refresh_processes {
-        // for i in
-        // TODO save here results from
+        dbg!(&process_cache_data.process_used);
+        for process_opt in &process_cache_data.process_used {
+            if let Some(process) = process_opt {
+                data_to_save.push(format!("{:.2}", process.cpu_usage));
+                data_to_save.push(convert_bytes_into_mega_bytes(process.memory_usage).to_string());
+            } else {
+                data_to_save.push("0".to_string());
+                data_to_save.push("0".to_string());
+            }
+        }
     }
 
     let data_to_save_str = data_to_save.join(",");
@@ -226,8 +234,6 @@ fn collect_and_save_data(
     Ok(())
 }
 
-// Verify if
-
 pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) {
     // Verify if cached process exists, if not remove it
     let current_processes_id: HashSet<usize> = sys.processes().keys().map(|e| (*e).into()).collect();
@@ -248,8 +254,6 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
         })
         .collect();
 
-    process_cache_data.processes_checked = process_cache_data.process_used.iter().filter_map(|e| e.as_ref().map(|a| a.pid)).collect();
-
     // Check for new processes that can be used for monitoring, set them to first possible
     for (pid, process) in sys.processes() {
         if process_cache_data.processes_checked.contains(&(*pid).into()) {
@@ -269,6 +273,19 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
             }
         }
     }
+
+    // At end update results from used processes
+    for custom_process in process_cache_data.process_used.iter_mut().flatten() {
+        // Unwrap should be safe, in previous steps we we checked if process exists
+        let process = sys.processes().get(&Pid::from(custom_process.pid)).unwrap();
+        custom_process.memory_usage = process.memory();
+        custom_process.cpu_usage = process.cpu_usage();
+    }
+
+    // At end set all processes as checked
+    process_cache_data
+        .processes_checked
+        .extend(sys.processes().iter().map(|(pid, _)| <Pid as Into<usize>>::into(*pid)));
 }
 
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {
