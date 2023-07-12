@@ -126,10 +126,14 @@ pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_resul
 }
 
 pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings) {
-    if let Some(data) = loaded_results.collected_data.get(&DataType::CPU_USAGE_TOTAL) {
+    for (data_type, data) in &loaded_results.collected_data {
+        // CPU_USAGE_PER_CORE is handled differently below
+        if !data_type.is_cpu() || data_type == &DataType::CPU_USAGE_PER_CORE {
+            continue;
+        }
         let trace = Scatter::new(dates.to_owned(), data.clone())
             // .web_gl_mode(settings.use_web_gl)
-            .name(DataType::CPU_USAGE_TOTAL.pretty_print())
+            .name(data_type.pretty_print())
             .y_axis("y2")
             .x_axis("x2");
         plot.add_trace(trace);

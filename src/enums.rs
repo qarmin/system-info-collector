@@ -37,11 +37,14 @@ impl DataType {
     }
 
     pub fn is_memory(&self) -> bool {
-        matches!(self, DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE)
+        matches!(
+            self,
+            DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE | DataType::CUSTOM_MEMORY(_)
+        )
     }
-    // pub fn is_cpu(self) -> bool {
-    //     matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE)
-    // }
+    pub fn is_cpu(&self) -> bool {
+        matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE | DataType::CUSTOM_CPU(_))
+    }
     pub fn pretty_print(&self) -> String {
         match self {
             DataType::UNIX_TIMESTAMP => "Unix timestamp".to_string(),
