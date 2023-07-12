@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process;
 
 use serde::Deserialize;
+use sysinfo::{Process, ProcessExt};
 
 use crate::cli::Cli;
 use crate::enums::{AppMode, DataType, GeneralInfoGroup, LogLev, SimpleDataCollectionMode};
@@ -16,9 +17,43 @@ pub struct CollectedItemModels {
     pub check_interval: f32,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Debug, Clone)]
+pub struct CustomProcessData {
+    pub pid: usize,
+    pub name: String,
+    pub cmd_string: String,
+    pub memory_usage: u64,
+    pub cpu_usage: f32,
+}
+
+impl CustomProcessData {
+    pub fn from_process(process: &Process) -> Self {
+        CustomProcessData {
+            pid: process.pid().into(),
+            name: process.name().to_string(),
+            cmd_string: process.cmd().join(" "),
+            memory_usage: process.memory(),
+            cpu_usage: process.cpu_usage(),
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone)]
 pub struct ProcessCache {
-    pub process_used: HashMap<usize, SingleProcessCacheStruct>,
+    pub processes_checked: HashSet<usize>,
+    pub process_used: Vec<Option<CustomProcessData>>,
+}
+impl ProcessCache {
+    pub fn new_with_size(size: usize) -> Self {
+        let mut process_used = vec![];
+        for _ in 0..size {
+            process_used.push(None);
+        }
+        ProcessCache {
+            processes_checked: HashSet::default(),
+            process_used,
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug)]
@@ -59,6 +94,10 @@ impl From<Cli> for Settings {
             .process_cmd_to_search
             .iter()
             .map(|e| {
+                if e.contains('=') || e.contains(',') {
+                    eprintln!("{e} - cannot use here = or ,");
+                    process::exit(1);
+                }
                 let split = e.split('|').collect::<Vec<_>>();
                 if split.len() != 2 {
                     eprintln!("{e} - should contains two parts split by |");

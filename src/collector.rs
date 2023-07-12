@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
@@ -11,7 +12,7 @@ use sysinfo::{CpuExt, ProcessExt, ProcessRefreshKind, System, SystemExt};
 use tokio::time::interval;
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
-use crate::model::{ProcessCache, Settings, SingleProcessCacheStruct};
+use crate::model::{CustomProcessData, ProcessCache, Settings};
 use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
 
@@ -34,11 +35,11 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
     set_ctrl_c_handler(ctx);
 
     let mut collected_bytes = 0;
-    let mut process_cache_data = ProcessCache::default();
+    let mut process_cache_data = ProcessCache::new_with_size(settings.process_cmd_to_search.len());
 
     info!("Started collecting data...");
     loop {
-        save_system_info_to_file(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data)?;
+        collect_and_save_data(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data)?;
 
         if crx.try_recv().is_ok() {
             drop(data_file);
@@ -103,8 +104,22 @@ fn format_new_name(file_path: &str, item_to_add: &str) -> String {
 }
 
 fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
+    let custom_headers = settings
+        .process_cmd_to_search
+        .iter()
+        .enumerate()
+        .map(|(idx, e)| format!("CUSTOM_{idx}={}", e.graph_name))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let custom_headers = if custom_headers.is_empty() {
+        String::new()
+    } else {
+        format!(",{custom_headers}")
+    };
+
     let general_info = format!(
-        "{}={},{}={},{}={},{}={}",
+        "{}={},{}={},{}={},{}={}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -112,7 +127,8 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
         HeaderValues::MEMORY_TOTAL,
         convert_bytes_into_mega_bytes(sys.total_memory()),
         HeaderValues::APP_VERSION,
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        custom_headers
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
 
@@ -135,7 +151,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     Ok(())
 }
 
-fn save_system_info_to_file(
+fn collect_and_save_data(
     sys: &mut System,
     data_file: &mut BufWriter<fs::File>,
     settings: &Settings,
@@ -150,7 +166,7 @@ fn save_system_info_to_file(
 
     if settings.need_to_refresh_processes {
         sys.refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
-        check_for_new_process_data(sys, process_cache_data, settings);
+        check_for_new_and_old_process_data(sys, process_cache_data, settings);
     }
 
     debug!("Refreshed app/os usage data in {:?}", start.elapsed().unwrap());
@@ -175,6 +191,9 @@ fn save_system_info_to_file(
         };
         data_to_save.push(collected_string);
     }
+    if settings.need_to_refresh_processes {
+        // TODO save here results from
+    }
 
     let data_to_save_str = data_to_save.join(",");
     *collected_bytes += data_to_save_str.len();
@@ -196,14 +215,48 @@ fn save_system_info_to_file(
     Ok(())
 }
 
-pub fn check_for_new_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) {
+// Verify if
+
+pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) {
+    // Verify if cached process exists, if not remove it
+    let current_processes_id: HashSet<usize> = sys.processes().keys().map(|e| (*e).into()).collect();
+    process_cache_data.process_used = process_cache_data
+        .process_used
+        .clone()
+        .into_iter()
+        .map(|e| {
+            if let Some(e) = e {
+                if current_processes_id.contains(&e.pid) {
+                    Some(e)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    process_cache_data.processes_checked = process_cache_data.process_used.iter().filter_map(|e| e.as_ref().map(|a| a.pid)).collect();
+
+    // Check for new processes that can be used for monitoring, set them to first possible
     for (pid, process) in sys.processes() {
+        if process_cache_data.processes_checked.contains(&(*pid).into()) {
+            continue;
+        }
+
         let collected_name = process.cmd().join(" ");
-        let need_to_check = settings.process_cmd_to_search.iter().any(|e| e.graph_name.contains(&collected_name));
-        process_cache_data.process_used.entry((*pid).into()).or_insert(SingleProcessCacheStruct {
-            collected_name,
-            need_to_check,
-        });
+        for (idx, i) in settings.process_cmd_to_search.iter().enumerate() {
+            if process_cache_data.process_used[idx].is_some() {
+                // Already monitoring process from such name
+                continue;
+            }
+            if collected_name.contains(&i.search_text) {
+                process_cache_data.processes_checked.insert((*pid).into());
+                process_cache_data.process_used[idx] = Some(CustomProcessData::from_process(process));
+                break;
+            }
+        }
     }
 }
 

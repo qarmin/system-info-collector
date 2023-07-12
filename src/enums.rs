@@ -18,7 +18,7 @@ pub enum SimpleDataCollectionMode {
 
 // Must contains same enums as above with additional UNIX_TIMESTAMP and maybe some other
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
+#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
 pub enum DataType {
     #[default]
     UNIX_TIMESTAMP,
@@ -27,6 +27,8 @@ pub enum DataType {
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
+    // #[skip]
+    CUSTOM_PROCESS(String),
 }
 impl From<SimpleDataCollectionMode> for DataType {
     fn from(collection_mode: SimpleDataCollectionMode) -> DataType {
@@ -41,13 +43,13 @@ impl From<SimpleDataCollectionMode> for DataType {
 }
 
 impl DataType {
-    pub fn is_memory(self) -> bool {
+    pub fn is_memory(&self) -> bool {
         matches!(self, DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE)
     }
     // pub fn is_cpu(self) -> bool {
     //     matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE)
     // }
-    pub fn pretty_print(self) -> String {
+    pub fn pretty_print(&self) -> String {
         match self {
             DataType::UNIX_TIMESTAMP => "Unix timestamp".to_string(),
             DataType::CPU_USAGE_TOTAL => "CPU usage total".to_string(),
@@ -55,6 +57,7 @@ impl DataType {
             DataType::MEMORY_USED => "Memory used".to_string(),
             DataType::MEMORY_FREE => "Memory free".to_string(),
             DataType::MEMORY_AVAILABLE => "Memory available".to_string(),
+            DataType::CUSTOM_PROCESS(name) => name.clone(),
         }
     }
 }

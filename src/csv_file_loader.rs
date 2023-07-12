@@ -64,7 +64,7 @@ fn parse_data(
 
     let mut collected_data: HashMap<DataType, Vec<String>> = HashMap::default();
     for (data_name, data) in collected_data_names.iter().zip(collected_vec_data.into_iter()) {
-        collected_data.insert(*data_name, data);
+        collected_data.insert(data_name.clone(), data);
     }
 
     // Special formatting for CPU usage per core which is really Vec<Vec<String>> instead, Vec<String>
@@ -141,29 +141,26 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f6
         .context("Failed to read first line of data file")?;
 
     // MEMORY_TOTAL, CPU_CORE_COUNT, INTERVAL_SECONDS, etc.
-    let mut general_data_hashmap: HashMap<HeaderValues, String> = HashMap::new();
+    let mut general_data_hashmap: HashMap<String, String> = HashMap::new();
     for item in general_data_info.split(',') {
         let mut split = item.split('=');
-        let key = split.next().context("Failed to get key from general data")?.parse().context(format!(
-            "Failed to parse header value, available values {}",
-            HeaderValues::iter().map(|e| e.to_string()).collect::<String>()
-        ))?;
+        let key = split.next().context("Failed to get key from general data")?.to_string();
         let value = split.next().context("Failed to get value from general data")?.to_string();
         general_data_hashmap.insert(key, value);
     }
 
     let memory_total = general_data_hashmap
-        .get(&HeaderValues::MEMORY_TOTAL)
+        .get(&HeaderValues::MEMORY_TOTAL.to_string())
         .context("Failed to get MEMORY_TOTAL from general data")?
         .parse::<f64>()
         .context("Failed to parse MEMORY_TOTAL from general data")?;
     let cpu_core_count = general_data_hashmap
-        .get(&HeaderValues::CPU_CORE_COUNT)
+        .get(&HeaderValues::CPU_CORE_COUNT.to_string())
         .context("Failed to get CPU_CORE_COUNT from general data")?
         .parse::<usize>()
         .context("Failed to parse CPU_CORE_COUNT from general data")?;
     let check_interval = general_data_hashmap
-        .get(&HeaderValues::INTERVAL_SECONDS)
+        .get(&HeaderValues::INTERVAL_SECONDS.to_string())
         .context("Failed to get INTERVAL_SECONDS from general data")?
         .parse::<f32>()
         .context("Failed to parse INTERVAL_SECONDS from general data")?;
