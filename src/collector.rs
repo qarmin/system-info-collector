@@ -202,7 +202,6 @@ fn collect_and_save_data(
         data_to_save.push(collected_string);
     }
     if settings.need_to_refresh_processes {
-        dbg!(&process_cache_data.process_used);
         for process_opt in &process_cache_data.process_used {
             if let Some(process) = process_opt {
                 data_to_save.push(format!("{:.2}", process.cpu_usage));
@@ -246,6 +245,10 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
                 if current_processes_id.contains(&e.pid) {
                     Some(e)
                 } else {
+                    info!(
+                        "Process \"{}\" with pid \"{}\" is no longer available, removing from monitoring - (\"{}\")",
+                        e.name, e.pid, e.cmd_string
+                    );
                     None
                 }
             } else {
@@ -267,6 +270,12 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
                 continue;
             }
             if collected_name.contains(&i.search_text) {
+                info!(
+                    "Found process \"{}\" with pid \"{}\" that will be monitored - (\"{}\")",
+                    process.name(),
+                    pid,
+                    collected_name,
+                );
                 process_cache_data.processes_checked.insert((*pid).into());
                 process_cache_data.process_used[idx] = Some(CustomProcessData::from_process(process));
                 break;
@@ -283,6 +292,8 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
     }
 
     // At end set all processes as checked
+    // So if 2 processes with same name are running, we will not check second again, even if first stop working - this is also bug and feature
+    // Only new processes will be checked
     process_cache_data
         .processes_checked
         .extend(sys.processes().iter().map(|(pid, _)| <Pid as Into<usize>>::into(*pid)));
