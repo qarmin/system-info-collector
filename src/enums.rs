@@ -3,7 +3,7 @@
 
 use clap::ValueEnum;
 use serde::Deserialize;
-use strum::{Display, EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
 pub enum SimpleDataCollectionMode {
@@ -27,22 +27,15 @@ pub enum DataType {
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
-    // #[skip]
-    CUSTOM_PROCESS(String),
-}
-impl From<SimpleDataCollectionMode> for DataType {
-    fn from(collection_mode: SimpleDataCollectionMode) -> DataType {
-        match collection_mode {
-            SimpleDataCollectionMode::CPU_USAGE_TOTAL => DataType::CPU_USAGE_TOTAL,
-            SimpleDataCollectionMode::CPU_USAGE_PER_CORE => DataType::CPU_USAGE_PER_CORE,
-            SimpleDataCollectionMode::MEMORY_USED => DataType::MEMORY_USED,
-            SimpleDataCollectionMode::MEMORY_FREE => DataType::MEMORY_FREE,
-            SimpleDataCollectionMode::MEMORY_AVAILABLE => DataType::MEMORY_AVAILABLE,
-        }
-    }
+    CUSTOM_CPU((usize, String)),
+    CUSTOM_MEMORY((usize, String)),
 }
 
 impl DataType {
+    pub fn get_allowed_values() -> String {
+        DataType::iter().map(|e| e.to_string()).collect::<Vec<String>>().join(", ")
+    }
+
     pub fn is_memory(&self) -> bool {
         matches!(self, DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE)
     }
@@ -57,7 +50,8 @@ impl DataType {
             DataType::MEMORY_USED => "Memory used".to_string(),
             DataType::MEMORY_FREE => "Memory free".to_string(),
             DataType::MEMORY_AVAILABLE => "Memory available".to_string(),
-            DataType::CUSTOM_PROCESS(name) => name.clone(),
+            DataType::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
+            DataType::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
         }
     }
 }

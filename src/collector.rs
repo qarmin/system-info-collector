@@ -132,8 +132,18 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
 
+    let custom_columns = (0..settings.process_cmd_to_search.len())
+        .map(|idx| format!("CUSTOM_{idx}_CPU,CUSTOM_{idx}_MEMORY"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let custom_columns = if custom_columns.is_empty() {
+        String::new()
+    } else {
+        format!(",{custom_columns}")
+    };
+
     let data_header = format!(
-        "{},{}",
+        "{},{}{custom_columns}",
         DataType::UNIX_TIMESTAMP,
         settings
             .collection_mode
@@ -192,6 +202,7 @@ fn collect_and_save_data(
         data_to_save.push(collected_string);
     }
     if settings.need_to_refresh_processes {
+        // for i in
         // TODO save here results from
     }
 
