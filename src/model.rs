@@ -1,8 +1,9 @@
+use std::collections::hash_set::Iter;
 use std::collections::{HashMap, HashSet};
 use std::process;
 
 use serde::Deserialize;
-use sysinfo::{Process, ProcessExt};
+use sysinfo::{Process, ProcessExt, System, SystemExt};
 
 use crate::cli::Cli;
 use crate::enums::{AppMode, DataType, GeneralInfoGroup, LogLev, SimpleDataCollectionMode};
@@ -40,24 +41,51 @@ impl CustomProcessData {
 
 #[derive(Default, Debug, Clone)]
 pub struct ProcessCache {
-    pub processes_checked: HashSet<usize>,
+    // Usage of cpu for this process was updated
+    pub processes_usage_updated: HashSet<usize>,
+    // Processes were checked if can be used in data collection
+    pub processes_checked_to_be_used: HashSet<usize>,
     pub process_used: Vec<Option<CustomProcessData>>,
 }
 impl ProcessCache {
-    pub fn new_with_size(size: usize) -> Self {
+    pub fn new_with_size(size: usize, sys: &System) -> Self {
         let mut process_used = vec![];
         for _ in 0..size {
             process_used.push(None);
         }
 
         // Do not allow to check current process, because cmd values will always be valid for it
-        let mut processes_checked = HashSet::default();
-        processes_checked.insert(process::id() as usize);
+        let mut processes_checked_to_be_used = HashSet::default();
+        processes_checked_to_be_used.insert(process::id() as usize);
+
+        let mut processes_usage_updated = sys.processes().iter().map(|(pid, _)| (*pid).into()).collect::<HashSet<usize>>();
+        processes_usage_updated.insert(process::id() as usize);
 
         ProcessCache {
-            processes_checked,
+            processes_usage_updated,
+            processes_checked_to_be_used,
             process_used,
         }
+    }
+
+    pub fn get_differences_in_usage_processes(&self, elements: Iter<usize>) -> Vec<usize> {
+        let mut result = vec![];
+        for element in elements {
+            if !self.processes_usage_updated.contains(element) {
+                result.push(*element);
+            }
+        }
+        result
+    }
+
+    pub fn replace_checked_usage_processes(&mut self, elements: Iter<usize>) {
+        self.processes_usage_updated = elements.copied().collect::<HashSet<usize>>();
+        self.processes_usage_updated.insert(process::id() as usize);
+    }
+
+    pub fn replace_checked_to_be_used_processes(&mut self, elements: Iter<usize>) {
+        self.processes_checked_to_be_used = elements.copied().collect::<HashSet<usize>>();
+        self.processes_checked_to_be_used.insert(process::id() as usize);
     }
 }
 

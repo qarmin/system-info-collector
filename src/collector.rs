@@ -35,7 +35,7 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
     set_ctrl_c_handler(ctx);
 
     let mut collected_bytes = 0;
-    let mut process_cache_data = ProcessCache::new_with_size(settings.process_cmd_to_search.len());
+    let mut process_cache_data = ProcessCache::new_with_size(settings.process_cmd_to_search.len(), sys);
 
     info!("Started collecting data...");
     loop {
@@ -175,8 +175,7 @@ fn collect_and_save_data(
     sys.refresh_memory();
 
     if settings.need_to_refresh_processes {
-        sys.refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
-        check_for_new_and_old_process_data(sys, process_cache_data, settings);
+        check_for_new_and_old_process_data(sys, process_cache_data, settings)?;
     }
 
     debug!("Refreshed app/os usage data in {:?}", start.elapsed().unwrap());
@@ -233,33 +232,63 @@ fn collect_and_save_data(
     Ok(())
 }
 
-pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) {
-    // Verify if cached process exists, if not remove it
-    let current_processes_id: HashSet<usize> = sys.processes().keys().map(|e| (*e).into()).collect();
-    process_cache_data.process_used = process_cache_data
-        .process_used
-        .clone()
-        .into_iter()
-        .map(|e| {
-            if let Some(e) = e {
-                if current_processes_id.contains(&e.pid) {
-                    Some(e)
-                } else {
-                    info!(
-                        "Process \"{}\" with pid \"{}\" is no longer available, removing from monitoring - (\"{}\")",
-                        e.name, e.pid, e.cmd_string
-                    );
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
+// Sys-info not have enough fast to check for available processes
+// In this step I don't need any info except running process pids
+pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
+    let Ok(entries) = fs::read_dir("/proc") else  {
+        return Err(Error::msg("Failed to read /proc directory"));
+    };
 
-    // Check for new processes that can be used for monitoring, set them to first possible
+    let mut pids = HashSet::new();
+    for entry in entries.flatten() {
+        if let Ok(file_type) = entry.file_type() {
+            if !file_type.is_dir() {
+                continue;
+            }
+            if let Some(name) = entry.file_name().to_str() {
+                if let Ok(pid) = name.parse::<usize>() {
+                    pids.insert(pid);
+                }
+            }
+        }
+    }
+
+    Ok(pids)
+}
+// Algorithm:
+// 1. Get all system pids
+// 2. Check for new processes and update them if are > 30, then use sys.refresh_processes_specific, to update them all in batch(probably cheaper than updating one by one)
+
+pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) -> Result<(), Error> {
+    let system_pids = get_system_pids()?;
+
+    // If all searched processes are tracked, then app don't need to check for new processes
+    // Only update used
+    // This save a lot of processing time
+    if process_cache_data
+        .process_used
+        .iter()
+        .all(|e| e.is_some() && system_pids.contains(&e.as_ref().unwrap().pid))
+    {
+        update_usage_of_tracked_process(process_cache_data, sys);
+        return Ok(());
+    }
+
+    update_new_processes_stats(process_cache_data, sys, &system_pids);
+    remove_tracking_of_removed_processes(process_cache_data, &system_pids);
+    check_which_process_to_track(process_cache_data, sys, settings, &system_pids);
+
+    update_usage_of_tracked_process(process_cache_data, sys);
+
+    process_cache_data.replace_checked_to_be_used_processes(system_pids.iter());
+
+    Ok(())
+}
+
+fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &Settings, system_pids: &HashSet<usize>) {
     for (pid, process) in sys.processes() {
-        if process_cache_data.processes_checked.contains(&(*pid).into()) {
+        let pid_number: usize = (*pid).into();
+        if process_cache_data.processes_checked_to_be_used.contains(&pid_number) || !system_pids.contains(&pid_number) {
             continue;
         }
 
@@ -273,30 +302,67 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
                 info!(
                     "Found process \"{}\" with pid \"{}\" that will be monitored - (\"{}\")",
                     process.name(),
-                    pid,
+                    pid_number,
                     collected_name,
                 );
-                process_cache_data.processes_checked.insert((*pid).into());
+                process_cache_data.processes_checked_to_be_used.insert(pid_number);
                 process_cache_data.process_used[idx] = Some(CustomProcessData::from_process(process));
                 break;
             }
         }
     }
+}
 
-    // At end update results from used processes
+fn remove_tracking_of_removed_processes(process_cache_data: &mut ProcessCache, system_pids: &HashSet<usize>) {
+    process_cache_data.process_used = process_cache_data
+        .process_used
+        .clone()
+        .into_iter()
+        .map(|e| {
+            if let Some(e) = e {
+                if system_pids.contains(&e.pid) {
+                    Some(e)
+                } else {
+                    info!(
+                        "Process \"{}\" with pid \"{}\" is no longer available, removing from monitoring - (\"{}\")",
+                        e.name, e.pid, e.cmd_string
+                    );
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+}
+
+// Needed to get processes name and cmd, rest is updated in update_usage_of_tracked_process
+fn update_new_processes_stats(process_cache_data: &mut ProcessCache, sys: &mut System, system_pids: &HashSet<usize>) {
+    let new_processes = process_cache_data.get_differences_in_usage_processes(system_pids.iter());
+    if !new_processes.is_empty() {
+        if new_processes.len() > 40 {
+            info!("Found {} new processes, refreshing them in batch", new_processes.len());
+            sys.refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
+        } else {
+            info!("Found {} new processes, refreshing them one by one", new_processes.len());
+            for i in new_processes {
+                sys.refresh_process_specifics(Pid::from(i), ProcessRefreshKind::new().with_cpu());
+            }
+        }
+    }
+    process_cache_data.replace_checked_usage_processes(system_pids.iter());
+}
+
+fn update_usage_of_tracked_process(process_cache_data: &mut ProcessCache, sys: &mut System) {
+    debug!("Updating data of {} processes", process_cache_data.process_used.iter().flatten().count());
     for custom_process in process_cache_data.process_used.iter_mut().flatten() {
-        // Unwrap should be safe, in previous steps we we checked if process exists
-        let process = sys.processes().get(&Pid::from(custom_process.pid)).unwrap();
+        sys.refresh_process_specifics(Pid::from(custom_process.pid), ProcessRefreshKind::new().with_cpu());
+        let Some(process) = sys.processes().get(&Pid::from(custom_process.pid))  else {
+            continue; // Process was removed since we last checked
+        };
         custom_process.memory_usage = process.memory();
         custom_process.cpu_usage = process.cpu_usage();
     }
-
-    // At end set all processes as checked
-    // So if 2 processes with same name are running, we will not check second again, even if first stop working - this is also bug and feature
-    // Only new processes will be checked
-    process_cache_data
-        .processes_checked
-        .extend(sys.processes().iter().map(|(pid, _)| <Pid as Into<usize>>::into(*pid)));
 }
 
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {
