@@ -104,7 +104,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     }
     if contains_cpu_group {
         layout = layout
-            .y_axis2(Axis::new().range(vec![0, 100]).title(Title::new("CPU Usage[%]")))
+            .y_axis2(Axis::new().range(vec![-1, 100]).title(Title::new("CPU Usage[%]")))
             .x_axis2(Axis::new().title(Title::new("Time")));
     }
 

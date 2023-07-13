@@ -1,8 +1,10 @@
-## Version 0.3.0 - ?
+## Version 0.3.0 - 13.07.2023
 - Create backup of data file if already exists
 - Add instant flushing of data file
 - Added instruction, how to create simple systemd service
 - Maximum file limit can be set(default 100MB), to avoid out of space problems
+- Collecting memory and cpu data from selected processes
+- -1 value in plot to show that process was not found in system
 
 ## Version 0.2.0 - 09.07.2023
 - Added CLI
