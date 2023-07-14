@@ -33,6 +33,10 @@ https://github.com/qarmin/system-info-collector/assets/41945903/7ac510b5-babf-4d
 
 During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lesser than 0.1%.
 
+Sys-info library which I use have quite big overhead when finding cpu/ram usage for processes, so I plan to do some
+computations manually. So if you want to use as little resources as possible, you should use only collect basic os info
+without any processes(this is default mode).
+
 In collect mode, app only needs to read cpu/ram usage and then save it to file, so that is why it uses so little
 resources.
 
@@ -55,12 +59,6 @@ UNIX_TIMESTAMP,CPU_USAGE_TOTAL,CPU_USAGE_PER_CORE,MEMORY_USED
 - HTML file size: 129 MiB (new versions use simple regex minimizer, so size should be ~30% smaller)
 - Creating html file: 1.68 s
 
-## Plans
-
-- Rotating files
-- Allow to track certain process memory/cpu usage
-- Creating backups of data if file already exists
-
 ## Example commands
 
 Collect used memory and cpu usage in interval of 1 second and save it to system_data.csv file
@@ -81,10 +79,20 @@ Convert csv data file into html document with plot and open it in browser
 ./system_info_collector -a convert -d /home/user/data.csv -p /home/user/plot.html -o
 ```
 
-Collect all possible data(at this moment) with interval of 0.2 seconds
+Collect all basic data with interval of 0.2 seconds
 
 ```
 ./system_info_collector -l debug -a collect-and-convert -o -m memory-used -m memory-free -m memory-available -m cpu-usage-total -m cpu-usage-per-core -c 0.2
+```
+
+Collect memory and cpu usage of selected processes - will try to find process with command containing `firefox` in
+name - `FIREFOX` name will be used later in plot.
+
+App can only track 1 process with certain name at once, so if two or more processes contains `firefox` in name, only
+info about first will be collected
+
+```
+./system_info_collector -e "FIREFOX|firefox" -e "Event Handler|/usr/bin/event_handler --timeout"
 ```
 
 Shows help about available arguments
@@ -138,6 +146,27 @@ now you can convert collected data with simple command
 ```
 system_info_collector -a convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
 ```
+
+## CPU/Memory results
+Cpu usage is shown in range between 0 and 100%, if computer have more than 1 core, cpu usage is divided by number of cores, to get value in proper range.
+
+Memory usage is shown in MiB, with range from 0 to total memory size.
+
+When checking for processes -1 is visible both in cpu/memory plot if searched process is not found.
+
+## Data file compatibility
+
+Compatibility between different versions of app is not guaranteed, so if you want to collect create graphs from csv
+file, be sure that you use the same version of app.
+
+Usually incompatibilities are quite easy to workaround by manually adding/removing records from csv file.
+
+## OS Support
+
+Currently, fully supported is only Linux, due using manually reading `/proc` files(performance reasons).
+
+App should also fully work on Mac, but on Windows capturing process cpu/memory usage is not supported(except that,
+everything should work fine).
 
 ## License
 

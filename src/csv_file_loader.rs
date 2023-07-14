@@ -4,7 +4,6 @@ use std::io::{BufRead, BufReader, Lines};
 
 use anyhow::{Context, Error, Result};
 use log::info;
-use strum::IntoEnumIterator;
 
 use crate::enums::{DataType, GeneralInfoGroup, HeaderValues};
 use crate::model::{CollectedItemModels, Settings};
@@ -23,8 +22,8 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
 
     let mut lines_iter = data_file.lines();
 
-    let (memory_total, cpu_core_count, check_interval) = parse_file_values_data(&mut lines_iter)?;
-    let (collected_data_names, collected_groups) = parse_header(&mut lines_iter)?;
+    let (memory_total, cpu_core_count, check_interval, hashmap_data) = parse_file_values_data(&mut lines_iter)?;
+    let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
     Ok(CollectedItemModels {
@@ -64,7 +63,7 @@ fn parse_data(
 
     let mut collected_data: HashMap<DataType, Vec<String>> = HashMap::default();
     for (data_name, data) in collected_data_names.iter().zip(collected_vec_data.into_iter()) {
-        collected_data.insert(*data_name, data);
+        collected_data.insert(data_name.clone(), data);
     }
 
     // Special formatting for CPU usage per core which is really Vec<Vec<String>> instead, Vec<String>
@@ -99,7 +98,10 @@ fn parse_data(
     Ok(collected_data)
 }
 
-fn parse_header(lines_iter: &mut Lines<BufReader<File>>) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
+fn parse_header(
+    lines_iter: &mut Lines<BufReader<File>>,
+    hashmap_data: &HashMap<String, String>,
+) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
     // Header data like UNIX_TIMESTAMP, MEMORY_USED, CPU_TOTAL, etc.
     let collected_data_names_str: String = lines_iter
         .next()
@@ -109,12 +111,34 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>) -> Result<(Vec<DataType
         .split(',')
         .map(|item| match item.parse::<DataType>() {
             Ok(item) => Ok(item),
-            Err(_) => Err(Error::msg(format!(
-                "Failed to parse item {item} from data file, allowed values are {:?}",
-                DataType::iter().map(|e| e.to_string()).collect::<String>()
-            ))),
+            Err(_) => {
+                if let Some(s) = item.strip_prefix("CUSTOM_") {
+                    let split = s.split('_').collect::<Vec<_>>();
+                    if split.len() != 2 || split[0].parse::<usize>().is_err() || !(matches!(split[1], "CPU" | "MEMORY")) {
+                        return Err(Error::msg(format!(
+                            "Failed to parse custom item {item}, should have format CUSTOM_{{IDX}}_CPU or CUSTOM_{{IDX}}_MEMORY"
+                        )));
+                    }
+                    let idx = split[0].parse::<usize>().unwrap();
+                    let name = hashmap_data
+                        .get(&format!("CUSTOM_{idx}"))
+                        .context(format!("Failed to find CUSTOM_{idx} in data file, but it is used in header"))?
+                        .to_string();
+                    if split[1] == "CPU" {
+                        Ok(DataType::CUSTOM_CPU((idx, name)))
+                    } else {
+                        Ok(DataType::CUSTOM_MEMORY((idx, name)))
+                    }
+                } else {
+                    Err(Error::msg(format!(
+                        "Failed to parse item {item} from data file, allowed values are {:?} or CUSTOM_ items",
+                        DataType::get_allowed_values()
+                    )))
+                }
+            }
         })
         .collect::<Result<_, Error>>()?;
+
     if collected_data_names.len() <= 1 {
         return Err(Error::msg("No data to load"));
     }
@@ -134,39 +158,36 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>) -> Result<(Vec<DataType
     Ok((collected_data_names, collected_groups))
 }
 
-fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f64, usize, f32), Error> {
+fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f64, usize, f32, HashMap<String, String>), Error> {
     let general_data_info = lines_iter
         .next()
         .context("Failed to read first line of data file")?
         .context("Failed to read first line of data file")?;
 
     // MEMORY_TOTAL, CPU_CORE_COUNT, INTERVAL_SECONDS, etc.
-    let mut general_data_hashmap: HashMap<HeaderValues, String> = HashMap::new();
+    let mut general_data_hashmap: HashMap<String, String> = HashMap::new();
     for item in general_data_info.split(',') {
         let mut split = item.split('=');
-        let key = split.next().context("Failed to get key from general data")?.parse().context(format!(
-            "Failed to parse header value, available values {}",
-            HeaderValues::iter().map(|e| e.to_string()).collect::<String>()
-        ))?;
+        let key = split.next().context("Failed to get key from general data")?.to_string();
         let value = split.next().context("Failed to get value from general data")?.to_string();
         general_data_hashmap.insert(key, value);
     }
 
     let memory_total = general_data_hashmap
-        .get(&HeaderValues::MEMORY_TOTAL)
+        .remove(&HeaderValues::MEMORY_TOTAL.to_string())
         .context("Failed to get MEMORY_TOTAL from general data")?
         .parse::<f64>()
         .context("Failed to parse MEMORY_TOTAL from general data")?;
     let cpu_core_count = general_data_hashmap
-        .get(&HeaderValues::CPU_CORE_COUNT)
+        .remove(&HeaderValues::CPU_CORE_COUNT.to_string())
         .context("Failed to get CPU_CORE_COUNT from general data")?
         .parse::<usize>()
         .context("Failed to parse CPU_CORE_COUNT from general data")?;
     let check_interval = general_data_hashmap
-        .get(&HeaderValues::INTERVAL_SECONDS)
+        .remove(&HeaderValues::INTERVAL_SECONDS.to_string())
         .context("Failed to get INTERVAL_SECONDS from general data")?
         .parse::<f32>()
         .context("Failed to parse INTERVAL_SECONDS from general data")?;
 
-    Ok((memory_total, cpu_core_count, check_interval))
+    Ok((memory_total, cpu_core_count, check_interval, general_data_hashmap))
 }

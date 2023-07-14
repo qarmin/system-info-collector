@@ -3,10 +3,10 @@
 
 use clap::ValueEnum;
 use serde::Deserialize;
-use strum::{Display, EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-pub enum DataCollectionMode {
+pub enum SimpleDataCollectionMode {
     #[default]
     CPU_USAGE_TOTAL,
     CPU_USAGE_PER_CORE,
@@ -18,7 +18,7 @@ pub enum DataCollectionMode {
 
 // Must contains same enums as above with additional UNIX_TIMESTAMP and maybe some other
 
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
+#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
 pub enum DataType {
     #[default]
     UNIX_TIMESTAMP,
@@ -27,16 +27,25 @@ pub enum DataType {
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
+    CUSTOM_CPU((usize, String)),
+    CUSTOM_MEMORY((usize, String)),
 }
 
 impl DataType {
-    pub fn is_memory(self) -> bool {
-        matches!(self, DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE)
+    pub fn get_allowed_values() -> String {
+        DataType::iter().map(|e| e.to_string()).collect::<Vec<String>>().join(", ")
     }
-    // pub fn is_cpu(self) -> bool {
-    //     matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE)
-    // }
-    pub fn pretty_print(self) -> String {
+
+    pub fn is_memory(&self) -> bool {
+        matches!(
+            self,
+            DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE | DataType::CUSTOM_MEMORY(_)
+        )
+    }
+    pub fn is_cpu(&self) -> bool {
+        matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE | DataType::CUSTOM_CPU(_))
+    }
+    pub fn pretty_print(&self) -> String {
         match self {
             DataType::UNIX_TIMESTAMP => "Unix timestamp".to_string(),
             DataType::CPU_USAGE_TOTAL => "CPU usage total".to_string(),
@@ -44,6 +53,8 @@ impl DataType {
             DataType::MEMORY_USED => "Memory used".to_string(),
             DataType::MEMORY_FREE => "Memory free".to_string(),
             DataType::MEMORY_AVAILABLE => "Memory available".to_string(),
+            DataType::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
+            DataType::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
         }
     }
 }
@@ -54,6 +65,7 @@ pub enum HeaderValues {
     MEMORY_TOTAL,
     CPU_CORE_COUNT,
     INTERVAL_SECONDS,
+    APP_VERSION,
 }
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
