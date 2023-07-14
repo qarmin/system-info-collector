@@ -1,4 +1,4 @@
-## Version 0.3.0 - 13.07.2023
+## Version 0.3.0 - 14.07.2023
 - Create backup of data file if already exists
 - Add instant flushing of data file
 - Added instruction, how to create simple systemd service

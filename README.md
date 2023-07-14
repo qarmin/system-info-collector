@@ -147,6 +147,13 @@ now you can convert collected data with simple command
 system_info_collector -a convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
 ```
 
+## CPU/Memory results
+Cpu usage is shown in range between 0 and 100%, if computer have more than 1 core, cpu usage is divided by number of cores, to get value in proper range.
+
+Memory usage is shown in MiB, with range from 0 to total memory size.
+
+When checking for processes -1 is visible both in cpu/memory plot if searched process is not found.
+
 ## Data file compatibility
 
 Compatibility between different versions of app is not guaranteed, so if you want to collect create graphs from csv

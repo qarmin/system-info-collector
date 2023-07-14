@@ -35,3 +35,4 @@ opt-level = 3
 debug = false
 panic = "unwind"
 lto = "fat"
+codegen-units = 1
