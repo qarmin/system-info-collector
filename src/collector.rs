@@ -203,7 +203,7 @@ fn collect_and_save_data(
     if settings.need_to_refresh_processes {
         for process_opt in &process_cache_data.process_used {
             if let Some(process) = process_opt {
-                data_to_save.push(format!("{:.2}", process.cpu_usage / 8.0));
+                data_to_save.push(format!("{:.2}", process.cpu_usage / sys.cpus().len() as f32));
                 data_to_save.push(convert_bytes_into_mega_bytes(process.memory_usage).to_string());
             } else {
                 data_to_save.push("-1".to_string());
