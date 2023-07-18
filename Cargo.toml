@@ -15,9 +15,9 @@ repository = "https://github.com/qarmin/system-info-collector"
 [dependencies]
 time = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
-sysinfo = "0.29"
+sysinfo = { version = "0.29" }
 tokio = { version = "1.29", features = ["full"] }
-handsome_logger = "0.4"
+handsome_logger = "0.5"
 log = "0.4"
 crossbeam-channel = "0.5"
 serde = { version = "1.0", features = ["derive"] }

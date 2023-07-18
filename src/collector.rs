@@ -125,7 +125,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
         HeaderValues::CPU_CORE_COUNT,
         sys.cpus().len(),
         HeaderValues::MEMORY_TOTAL,
-        convert_bytes_into_mega_bytes(sys.total_memory()),
+        convert_into_string_megabytes(sys.total_memory()),
         HeaderValues::APP_VERSION,
         env!("CARGO_PKG_VERSION"),
         custom_headers
@@ -187,9 +187,9 @@ fn collect_and_save_data(
 
     for i in &settings.collection_mode {
         let collected_string = match i {
-            SimpleDataCollectionMode::MEMORY_USED => convert_bytes_into_mega_bytes(sys.used_memory()).to_string(),
-            SimpleDataCollectionMode::MEMORY_AVAILABLE => convert_bytes_into_mega_bytes(sys.available_memory()).to_string(),
-            SimpleDataCollectionMode::MEMORY_FREE => convert_bytes_into_mega_bytes(sys.free_memory()).to_string(),
+            SimpleDataCollectionMode::MEMORY_USED => convert_into_string_megabytes(sys.used_memory()),
+            SimpleDataCollectionMode::MEMORY_AVAILABLE => convert_into_string_megabytes(sys.available_memory()),
+            SimpleDataCollectionMode::MEMORY_FREE => convert_into_string_megabytes(sys.free_memory()),
             SimpleDataCollectionMode::CPU_USAGE_TOTAL => {
                 format!(
                     "{:.2}",
@@ -204,7 +204,7 @@ fn collect_and_save_data(
         for process_opt in &process_cache_data.process_used {
             if let Some(process) = process_opt {
                 data_to_save.push(format!("{:.2}", process.cpu_usage / sys.cpus().len() as f32));
-                data_to_save.push(convert_bytes_into_mega_bytes(process.memory_usage).to_string());
+                data_to_save.push(convert_into_string_megabytes(process.memory_usage));
             } else {
                 data_to_save.push("-1".to_string());
                 data_to_save.push("-1".to_string());
@@ -375,6 +375,11 @@ fn update_usage_of_tracked_process(process_cache_data: &mut ProcessCache, sys: &
         custom_process.memory_usage = process.memory();
         custom_process.cpu_usage = process.cpu_usage();
     }
+}
+
+// Only track changes > 10 KB
+pub fn convert_into_string_megabytes(bytes: u64) -> String {
+    format!("{:.2}", convert_bytes_into_mega_bytes(bytes))
 }
 
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {
