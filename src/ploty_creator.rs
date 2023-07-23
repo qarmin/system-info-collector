@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::time::SystemTime;
 
@@ -53,13 +54,35 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
 
     let mut plot = Plot::new();
 
-    plot.set_layout(create_plot_layout(loaded_results, settings));
+    let (layout, layout_info) = create_plot_layout(loaded_results, settings);
+    plot.set_layout(layout);
 
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY) {
-        create_memory_plot(&mut plot, &dates, loaded_results, settings);
+        create_memory_plot(
+            &mut plot,
+            &dates,
+            loaded_results,
+            settings,
+            *layout_info.get(&GeneralInfoGroup::MEMORY).unwrap(),
+        );
     }
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU) {
-        create_cpu_plot(&mut plot, &dates, loaded_results, settings);
+        create_cpu_plot(
+            &mut plot,
+            &dates,
+            loaded_results,
+            settings,
+            *layout_info.get(&GeneralInfoGroup::CPU).unwrap(),
+        );
+    }
+    if loaded_results.collected_groups.contains(&GeneralInfoGroup::SWAP) {
+        create_swap_plot(
+            &mut plot,
+            &dates,
+            loaded_results,
+            settings,
+            *layout_info.get(&GeneralInfoGroup::SWAP).unwrap(),
+        );
     }
 
     // Only replace when using dark theme
@@ -76,16 +99,17 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
     Ok(())
 }
 
-pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Settings) -> Layout {
+pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Settings) -> (Layout, HashMap<GeneralInfoGroup, u32>) {
     let contains_memory_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY);
     let contains_cpu_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU);
+    let contains_swap_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::SWAP);
 
     let mut layout = Layout::new()
         .width(settings.plot_width as usize)
         .height(settings.plot_height as usize)
         .grid(
             LayoutGrid::new()
-                .rows(contains_cpu_group as usize + contains_memory_group as usize)
+                .rows(contains_cpu_group as usize + contains_memory_group as usize + contains_swap_group as usize)
                 .columns(1)
                 .pattern(GridPattern::Independent),
         );
@@ -93,39 +117,66 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     if !settings.white_plot_mode {
         layout = layout.template(&*PLOTLY_DARK);
     }
+
+    let mut layout_idx_info = HashMap::default();
+    let x_axis = Axis::new().title(Title::new("Time"));
+
+    let mut current_axis_idx = 1;
     if contains_memory_group {
-        layout = layout
-            .y_axis(
-                Axis::new()
-                    .range(vec![0, loaded_results.memory_total.ceil() as usize])
-                    .title(Title::new("Memory Usage[MB]")),
-            )
-            .x_axis(Axis::new().title(Title::new("Time")));
+        layout_idx_info.insert(GeneralInfoGroup::MEMORY, current_axis_idx);
+        let y_axis = Axis::new()
+            .range(vec![0, loaded_results.memory_total.ceil() as usize])
+            .title(Title::new("Memory Usage[MB]"));
+
+        layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
     }
     if contains_cpu_group {
-        layout = layout
-            .y_axis2(Axis::new().range(vec![-1, 100]).title(Title::new("CPU Usage[%]")))
-            .x_axis2(Axis::new().title(Title::new("Time")));
+        layout_idx_info.insert(GeneralInfoGroup::CPU, current_axis_idx);
+        let y_axis = Axis::new().range(vec![-1, 100]).title(Title::new("CPU Usage[%]"));
+
+        layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
+    }
+    if contains_swap_group {
+        layout_idx_info.insert(GeneralInfoGroup::SWAP, current_axis_idx);
+        let y_axis = Axis::new()
+            .range(vec![0, loaded_results.swap_total.ceil() as usize])
+            .title(Title::new("Swap Usage[MB]"));
+
+        layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
     }
 
-    layout
+    (layout, layout_idx_info)
 }
 
-pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings) {
+pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_memory() {
+            continue;
+        }
+
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            // .web_gl_mode(settings.use_web_gl)
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
+        plot.add_trace(trace);
+    }
+}
+pub fn create_swap_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+    for (data_type, data) in &loaded_results.collected_data {
+        if !data_type.is_swap() {
             continue;
         }
         let trace = Scatter::new(dates.to_owned(), data.clone())
             // .web_gl_mode(settings.use_web_gl)
             .name(data_type.pretty_print())
-            .y_axis("y1")
-            .x_axis("x1");
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }
 
-pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings) {
+pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         // CPU_USAGE_PER_CORE is handled differently below
         if !data_type.is_cpu() || data_type == &DataType::CPU_USAGE_PER_CORE {
@@ -134,8 +185,8 @@ pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results:
         let trace = Scatter::new(dates.to_owned(), data.clone())
             // .web_gl_mode(settings.use_web_gl)
             .name(data_type.pretty_print())
-            .y_axis("y2")
-            .x_axis("x2");
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 
@@ -146,9 +197,20 @@ pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results:
             let trace = Scatter::new(dates.to_owned(), single_cpu_data)
                 // .web_gl_mode(settings.use_web_gl)
                 .name(format!("Core {idx}"))
-                .y_axis("y2")
-                .x_axis("x2");
+                .y_axis(format!("y{i}"))
+                .x_axis(format!("x{i}"));
             plot.add_trace(trace);
         }
     }
+}
+
+fn set_axes_into_layout(idx: &mut u32, layout: Layout, x_axis: Axis, y_axis: Axis) -> Layout {
+    let new_layout = match idx {
+        1 => layout.x_axis(x_axis).y_axis(y_axis),
+        2 => layout.x_axis2(x_axis).y_axis2(y_axis),
+        3 => layout.x_axis3(x_axis).y_axis3(y_axis),
+        _ => panic!(),
+    };
+    *idx += 1;
+    new_layout
 }

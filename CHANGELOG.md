@@ -1,3 +1,8 @@
+## Version 0.4.0 - 23.07.2023
+- Fixed invalid per process cpu usage calculation(worked fine only on cpu with 8 cores)
+- Do not save too much data unnecessary data into csv file(like timestamp in microseconds)
+- Add support for collecting swap info 
+
 ## Version 0.3.0 - 14.07.2023
 - Create backup of data file if already exists
 - Add instant flushing of data file

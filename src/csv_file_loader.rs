@@ -22,7 +22,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
 
     let mut lines_iter = data_file.lines();
 
-    let (memory_total, cpu_core_count, check_interval, hashmap_data) = parse_file_values_data(&mut lines_iter)?;
+    let (swap_total, memory_total, cpu_core_count, check_interval, hashmap_data) = parse_file_values_data(&mut lines_iter)?;
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
@@ -31,6 +31,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
         collected_data,
         collected_groups,
         memory_total,
+        swap_total,
         cpu_core_count,
         check_interval,
     })
@@ -149,16 +150,22 @@ fn parse_header(
     let mut collected_groups = Vec::new();
     let cpu_collection = [DataType::CPU_USAGE_TOTAL, DataType::CPU_USAGE_PER_CORE];
     let memory_collection = [DataType::MEMORY_AVAILABLE, DataType::MEMORY_FREE, DataType::MEMORY_USED];
+    let swap_collection = [DataType::SWAP_USED, DataType::SWAP_FREE];
     if collected_data_names.iter().any(|e| cpu_collection.contains(e)) {
         collected_groups.push(GeneralInfoGroup::CPU);
     }
     if collected_data_names.iter().any(|e| memory_collection.contains(e)) {
         collected_groups.push(GeneralInfoGroup::MEMORY);
     }
+    if collected_data_names.iter().any(|e| swap_collection.contains(e)) {
+        collected_groups.push(GeneralInfoGroup::SWAP);
+    }
     Ok((collected_data_names, collected_groups))
 }
 
-fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f64, usize, f32, HashMap<String, String>), Error> {
+type ParsedOkResult = (f64, f64, usize, f32, HashMap<String, String>);
+
+fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> std::result::Result<ParsedOkResult, Error> {
     let general_data_info = lines_iter
         .next()
         .context("Failed to read first line of data file")?
@@ -173,6 +180,11 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f6
         general_data_hashmap.insert(key, value);
     }
 
+    let swap_total = general_data_hashmap
+        .remove(&HeaderValues::SWAP_TOTAL.to_string())
+        .context("Failed to get SWAP_TOTAL from general data")?
+        .parse::<f64>()
+        .context("Failed to parse SWAP_TOTAL from general data")?;
     let memory_total = general_data_hashmap
         .remove(&HeaderValues::MEMORY_TOTAL.to_string())
         .context("Failed to get MEMORY_TOTAL from general data")?
@@ -189,5 +201,5 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<(f6
         .parse::<f32>()
         .context("Failed to parse INTERVAL_SECONDS from general data")?;
 
-    Ok((memory_total, cpu_core_count, check_interval, general_data_hashmap))
+    Ok((swap_total, memory_total, cpu_core_count, check_interval, general_data_hashmap))
 }

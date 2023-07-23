@@ -119,13 +119,15 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     };
 
     let general_info = format!(
-        "{}={},{}={},{}={},{}={}{}",
+        "{}={},{}={},{}={},{}={},{}={}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
         sys.cpus().len(),
         HeaderValues::MEMORY_TOTAL,
         convert_into_string_megabytes(sys.total_memory()),
+        HeaderValues::SWAP_TOTAL,
+        convert_into_string_megabytes(sys.total_swap()),
         HeaderValues::APP_VERSION,
         env!("CARGO_PKG_VERSION"),
         custom_headers
@@ -183,7 +185,10 @@ fn collect_and_save_data(
     let mut data_to_save = vec![];
 
     // UNIX_TIMESTAMP - always required
-    data_to_save.push(current_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64().to_string());
+    data_to_save.push(format!(
+        "{:.2}",
+        current_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64()
+    ));
 
     for i in &settings.collection_mode {
         let collected_string = match i {
@@ -197,6 +202,8 @@ fn collect_and_save_data(
                 )
             }
             SimpleDataCollectionMode::CPU_USAGE_PER_CORE => sys.cpus().iter().map(|e| format!("{:.2}", e.cpu_usage())).collect::<Vec<_>>().join(";"),
+            SimpleDataCollectionMode::SWAP_FREE => convert_into_string_megabytes(sys.free_swap()),
+            SimpleDataCollectionMode::SWAP_USED => convert_into_string_megabytes(sys.used_swap()),
         };
         data_to_save.push(collected_string);
     }

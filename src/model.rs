@@ -14,6 +14,7 @@ pub struct CollectedItemModels {
     pub collected_data: HashMap<DataType, Vec<String>>,
     pub collected_groups: Vec<GeneralInfoGroup>,
     pub memory_total: f64,
+    pub swap_total: f64,
     pub cpu_core_count: usize,
     pub check_interval: f32,
 }

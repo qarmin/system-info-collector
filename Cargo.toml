@@ -1,6 +1,6 @@
 [package]
 name = "system_info_collector"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2021"
 rust-version = "1.70.0"
@@ -33,6 +33,6 @@ regex = "1.9.1"
 [profile.release]
 opt-level = 3
 debug = false
-panic = "unwind"
+panic = "abort"
 lto = "fat"
 codegen-units = 1

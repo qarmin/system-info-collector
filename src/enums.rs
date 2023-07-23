@@ -10,6 +10,8 @@ pub enum SimpleDataCollectionMode {
     #[default]
     CPU_USAGE_TOTAL,
     CPU_USAGE_PER_CORE,
+    SWAP_FREE,
+    SWAP_USED,
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
@@ -24,6 +26,8 @@ pub enum DataType {
     UNIX_TIMESTAMP,
     CPU_USAGE_TOTAL,
     CPU_USAGE_PER_CORE,
+    SWAP_FREE,
+    SWAP_USED,
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
@@ -42,6 +46,9 @@ impl DataType {
             DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE | DataType::CUSTOM_MEMORY(_)
         )
     }
+    pub fn is_swap(&self) -> bool {
+        matches!(self, DataType::SWAP_USED | DataType::SWAP_FREE)
+    }
     pub fn is_cpu(&self) -> bool {
         matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE | DataType::CUSTOM_CPU(_))
     }
@@ -52,6 +59,8 @@ impl DataType {
             DataType::CPU_USAGE_PER_CORE => "CPU usage per core".to_string(),
             DataType::MEMORY_USED => "Memory used".to_string(),
             DataType::MEMORY_FREE => "Memory free".to_string(),
+            DataType::SWAP_FREE => "Swap free".to_string(),
+            DataType::SWAP_USED => "Swap used".to_string(),
             DataType::MEMORY_AVAILABLE => "Memory available".to_string(),
             DataType::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
             DataType::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
@@ -63,6 +72,7 @@ impl DataType {
 pub enum HeaderValues {
     #[default]
     MEMORY_TOTAL,
+    SWAP_TOTAL,
     CPU_CORE_COUNT,
     INTERVAL_SECONDS,
     APP_VERSION,
@@ -73,6 +83,7 @@ pub enum GeneralInfoGroup {
     #[default]
     CPU,
     MEMORY,
+    SWAP,
 }
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]

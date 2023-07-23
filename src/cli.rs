@@ -13,7 +13,7 @@ pub struct Cli {
         long,
         default_value = "1.0",
         value_name = "INTERVAL",
-        help = "Interval of checking cpu/memory usage in seconds"
+        help = "Interval of checking cpu/memory usage in seconds, minimum value is 0.25 second(sysinfo library contains hard limit 200ms)."
     )]
     pub check_interval: f32,
 
