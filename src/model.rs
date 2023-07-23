@@ -1,6 +1,7 @@
 use std::collections::hash_set::Iter;
 use std::collections::{HashMap, HashSet};
 use std::process;
+use std::time::SystemTime;
 
 use serde::Deserialize;
 use sysinfo::{Process, ProcessExt, System, SystemExt};
@@ -120,6 +121,7 @@ pub struct Settings {
     pub maximum_data_file_size_bytes: usize,
     pub process_cmd_to_search: Vec<FindingStruct>,
     pub need_to_refresh_processes: bool,
+    pub start_time: f64,
 }
 
 impl From<Cli> for Settings {
@@ -161,6 +163,7 @@ impl From<Cli> for Settings {
             maximum_data_file_size_bytes: (cli.maximum_data_file_size_mb * 1024.0 * 1024.0) as usize,
             need_to_refresh_processes: !process_to_search.is_empty(),
             process_cmd_to_search: process_to_search,
+            start_time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64(),
         }
     }
 }

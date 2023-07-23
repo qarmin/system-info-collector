@@ -18,12 +18,12 @@ pub enum SimpleDataCollectionMode {
     // TODO CustomProcessName, CustomProcessId
 }
 
-// Must contains same enums as above with additional UNIX_TIMESTAMP and maybe some other
+// Must contains same enums as above with additional SECONDS_SINCE_START and maybe some other
 
 #[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash)]
 pub enum DataType {
     #[default]
-    UNIX_TIMESTAMP,
+    SECONDS_SINCE_START,
     CPU_USAGE_TOTAL,
     CPU_USAGE_PER_CORE,
     SWAP_FREE,
@@ -54,7 +54,7 @@ impl DataType {
     }
     pub fn pretty_print(&self) -> String {
         match self {
-            DataType::UNIX_TIMESTAMP => "Unix timestamp".to_string(),
+            DataType::SECONDS_SINCE_START => "Unix timestamp".to_string(),
             DataType::CPU_USAGE_TOTAL => "CPU usage total".to_string(),
             DataType::CPU_USAGE_PER_CORE => "CPU usage per core".to_string(),
             DataType::MEMORY_USED => "Memory used".to_string(),
@@ -76,6 +76,7 @@ pub enum HeaderValues {
     CPU_CORE_COUNT,
     INTERVAL_SECONDS,
     APP_VERSION,
+    UNIX_TIMESTAMP_START_TIME,
 }
 
 #[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]

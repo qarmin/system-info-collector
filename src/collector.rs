@@ -119,7 +119,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     };
 
     let general_info = format!(
-        "{}={},{}={},{}={},{}={},{}={}{}",
+        "{}={},{}={},{}={},{}={},{}={},{}={}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -128,6 +128,8 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
         convert_into_string_megabytes(sys.total_memory()),
         HeaderValues::SWAP_TOTAL,
         convert_into_string_megabytes(sys.total_swap()),
+        HeaderValues::UNIX_TIMESTAMP_START_TIME,
+        settings.start_time,
         HeaderValues::APP_VERSION,
         env!("CARGO_PKG_VERSION"),
         custom_headers
@@ -146,7 +148,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
 
     let data_header = format!(
         "{},{}{custom_columns}",
-        DataType::UNIX_TIMESTAMP,
+        DataType::SECONDS_SINCE_START,
         settings
             .collection_mode
             .iter()
@@ -184,10 +186,10 @@ fn collect_and_save_data(
 
     let mut data_to_save = vec![];
 
-    // UNIX_TIMESTAMP - always required
+    // SECONDS_SINCE_START - always required
     data_to_save.push(format!(
         "{:.2}",
-        current_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64()
+        current_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64() - settings.start_time
     ));
 
     for i in &settings.collection_mode {
@@ -242,7 +244,7 @@ fn collect_and_save_data(
 // Sys-info not have enough fast to check for available processes
 // In this step I don't need any info except running process pids
 pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
-    let Ok(entries) = fs::read_dir("/proc") else  {
+    let Ok(entries) = fs::read_dir("/proc") else {
         return Err(Error::msg("Failed to read /proc directory"));
     };
 
@@ -376,7 +378,7 @@ fn update_usage_of_tracked_process(process_cache_data: &mut ProcessCache, sys: &
     debug!("Updating data of {} processes", process_cache_data.process_used.iter().flatten().count());
     for custom_process in process_cache_data.process_used.iter_mut().flatten() {
         sys.refresh_process_specifics(Pid::from(custom_process.pid), ProcessRefreshKind::new().with_cpu());
-        let Some(process) = sys.processes().get(&Pid::from(custom_process.pid))  else {
+        let Some(process) = sys.processes().get(&Pid::from(custom_process.pid)) else {
             continue; // Process was removed since we last checked
         };
         custom_process.memory_usage = process.memory();

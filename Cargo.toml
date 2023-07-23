@@ -1,6 +1,6 @@
 [package]
 name = "system_info_collector"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2021"
 rust-version = "1.70.0"

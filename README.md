@@ -31,11 +31,11 @@ https://github.com/qarmin/system-info-collector/assets/41945903/7ac510b5-babf-4d
 
 ## Performance and memory usage
 
-During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lesser than 0.1%.
+During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lower than 0.1%.
 
-Sys-info library which I use have quite big overhead when finding cpu/ram usage for processes, so I plan to do some
-computations manually. So if you want to use as little resources as possible, you should use only collect basic os info
-without any processes(this is default mode).
+Sys-info library which I use have quite big overhead(usually few ms) when finding cpu/ram usage for processes due
+opening unnecessary files, so I plan to do some computations manually. So if you want to use as little resources as
+possible, you should use only collect basic os info without any processes(this is default mode).
 
 In collect mode, app only needs to read cpu/ram usage and then save it to file, so that is why it uses so little
 resources.
@@ -45,13 +45,16 @@ Converting csv file to html file is more resource intensive, so should be done o
 Results from testing on i7-4770 250000 samples for memory, cpu total and per core usage - with 1s interval, collecting
 such number of samples should take ~3 days(I used smaller interval to mimic real usage):
 
-Example of first 4 lines of csv file:
+Example of first lines of csv file:
 
 ```
-INTERVAL_SECONDS=1,CPU_CORE_COUNT=8,MEMORY_TOTAL=23943.921875
-UNIX_TIMESTAMP,CPU_USAGE_TOTAL,CPU_USAGE_PER_CORE,MEMORY_USED
-1688908461.4185224,0.00,0.00;0.00;0.00;0.00;0.00;0.00;0.00;0.00,10472.640625
-1688908462.4186845,5.78,4.42;6.14;5.31;5.36;7.21;8.04;4.46;5.26,10473.49609375
+INTERVAL_SECONDS=1,CPU_CORE_COUNT=8,MEMORY_TOTAL=23943.89,SWAP_TOTAL=2048.00,UNIX_TIMESTAMP_START_TIME=1690142980.2999594,APP_VERSION=0.4.0,CUSTOM_0=FIREFOX
+SECONDS_SINCE_START,MEMORY_USED,SWAP_USED,CPU_USAGE_TOTAL,CUSTOM_0_CPU,CUSTOM_0_MEMORY
+0.24,11031.20,0.00,49.66,0.00,1111.25
+1.24,11037.60,0.00,16.75,2.11,1111.25
+2.24,11039.49,0.00,19.14,3.55,1110.93
+3.24,11040.23,0.00,13.27,2.17,1110.93
+4.24,11047.52,0.00,16.32,4.65,1111.61
 ```
 
 - CSV file size: 19.55 MiB
@@ -105,7 +108,7 @@ Shows help about available arguments
 
 Simple way to collect OS data from start, is to create simple systemd service.
 
-Copy app into `/usr/bin` folder and create folder for collected data
+To do this, copy app into `/usr/bin` folder and create folder for collected data
 
 ```
 sudo cp system_info_collector /usr/bin/system_info_collector
@@ -119,7 +122,7 @@ sudo touch /etc/systemd/system/system-info-collector.service
 sudo gedit /etc/systemd/system/system-info-collector.service # open it with any text editor - I used gedit
 ```
 
-paste this code there
+paste this code with modified arguments:
 
 ```
 [Unit]
@@ -147,17 +150,19 @@ now you can convert collected data with simple command
 system_info_collector -a convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
 ```
 
-## CPU/Memory results
-Cpu usage is shown in range between 0 and 100%, if computer have more than 1 core, cpu usage is divided by number of cores, to get value in proper range.
+## CPU/Memory/Swap results
 
-Memory usage is shown in MiB, with range from 0 to total memory size.
+Cpu usage is shown in range between 0 and 100%, if computer have more than 1 core, cpu usage is divided by number of
+cores, to get value in proper range.
+
+Memory and swap usage are shown in MiB, with range from 0 to total memory/swap size.
 
 When checking for processes -1 is visible both in cpu/memory plot if searched process is not found.
 
 ## Data file compatibility
 
 Compatibility between different versions of app is not guaranteed, so if you want to collect create graphs from csv
-file, be sure that you use the same version of app.
+file, be sure that you use the same version of app(csv file contains inside info which version of app was used).
 
 Usually incompatibilities are quite easy to workaround by manually adding/removing records from csv file.
 

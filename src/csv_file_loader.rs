@@ -103,7 +103,7 @@ fn parse_header(
     lines_iter: &mut Lines<BufReader<File>>,
     hashmap_data: &HashMap<String, String>,
 ) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
-    // Header data like UNIX_TIMESTAMP, MEMORY_USED, CPU_TOTAL, etc.
+    // Header data like SECONDS_SINCE_START, MEMORY_USED, CPU_TOTAL, etc.
     let collected_data_names_str: String = lines_iter
         .next()
         .context("Failed to read second line of data file")?
@@ -143,8 +143,8 @@ fn parse_header(
     if collected_data_names.len() <= 1 {
         return Err(Error::msg("No data to load"));
     }
-    if collected_data_names[0] != DataType::UNIX_TIMESTAMP {
-        return Err(Error::msg("First item in data file should be UNIX_TIMESTAMP"));
+    if collected_data_names[0] != DataType::SECONDS_SINCE_START {
+        return Err(Error::msg("First item in data file should be SECONDS_SINCE_START"));
     }
 
     let mut collected_groups = Vec::new();
