@@ -1,6 +1,6 @@
 [package]
 name = "system_info_collector"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2021"
 rust-version = "1.70.0"
@@ -16,7 +16,7 @@ repository = "https://github.com/qarmin/system-info-collector"
 time = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
 sysinfo = { version = "0.29" }
-tokio = { version = "1.29", features = ["full"] }
+tokio = { version = "1.30", features = ["full"] }
 handsome_logger = "0.5"
 log = "0.4"
 crossbeam-channel = "0.5"
@@ -28,7 +28,7 @@ chrono = { version = "0.4.26", features = ["serde"] }
 humansize = "2.1.3"
 clap = { version = "4.3", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
-regex = "1.9.1"
+regex = "1.9.3"
 
 [profile.release]
 opt-level = 3

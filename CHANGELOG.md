@@ -1,3 +1,7 @@
+## Version 0.5.1 - 10.08.2023
+
+- Fixes problem with start time, which was taken from current time instead collecting start time
+
 ## Version 0.5.0 - 23.07.2023
 
 - Store time since app start instead full unix timestamp in each record to minimize generated csv size(usually 5-15%)

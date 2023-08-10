@@ -44,7 +44,7 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
         .iter()
         .map(|str_time| {
             if let Ok(time) = str_time.parse::<f64>() {
-                NaiveDateTime::from_timestamp_millis(((time + settings.start_time) * 1000.0) as i64 + timezone_millis_offset)
+                NaiveDateTime::from_timestamp_millis(((time + loaded_results.start_time) * 1000.0) as i64 + timezone_millis_offset)
             } else {
                 None
             }

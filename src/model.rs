@@ -18,6 +18,7 @@ pub struct CollectedItemModels {
     pub swap_total: f64,
     pub cpu_core_count: usize,
     pub check_interval: f32,
+    pub start_time: f64,
 }
 
 #[derive(Default, Debug, Clone)]

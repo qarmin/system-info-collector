@@ -22,7 +22,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
 
     let mut lines_iter = data_file.lines();
 
-    let (swap_total, memory_total, cpu_core_count, check_interval, hashmap_data) = parse_file_values_data(&mut lines_iter)?;
+    let (swap_total, memory_total, cpu_core_count, check_interval, hashmap_data, start_time) = parse_file_values_data(&mut lines_iter)?;
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
@@ -34,6 +34,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
         swap_total,
         cpu_core_count,
         check_interval,
+        start_time,
     })
 }
 
@@ -163,7 +164,7 @@ fn parse_header(
     Ok((collected_data_names, collected_groups))
 }
 
-type ParsedOkResult = (f64, f64, usize, f32, HashMap<String, String>);
+type ParsedOkResult = (f64, f64, usize, f32, HashMap<String, String>, f64);
 
 fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> std::result::Result<ParsedOkResult, Error> {
     let general_data_info = lines_iter
@@ -200,6 +201,11 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> std::resul
         .context("Failed to get INTERVAL_SECONDS from general data")?
         .parse::<f32>()
         .context("Failed to parse INTERVAL_SECONDS from general data")?;
+    let start_time = general_data_hashmap
+        .remove(&HeaderValues::UNIX_TIMESTAMP_START_TIME.to_string())
+        .context("Failed to get START_TIME from general data")?
+        .parse::<f64>()
+        .context("Failed to parse START_TIME from general data")?;
 
-    Ok((swap_total, memory_total, cpu_core_count, check_interval, general_data_hashmap))
+    Ok((swap_total, memory_total, cpu_core_count, check_interval, general_data_hashmap, start_time))
 }
