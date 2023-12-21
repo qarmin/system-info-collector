@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use crossbeam_channel::Sender;
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info};
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 
 use crate::cli::parse_cli;
 use crate::collector::collect_data;

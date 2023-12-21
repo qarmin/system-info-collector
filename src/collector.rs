@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
-use sysinfo::{CpuExt, Pid, ProcessExt, ProcessRefreshKind, System, SystemExt};
+use sysinfo::{Pid, ProcessRefreshKind, System};
 use tokio::time::interval;
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
@@ -200,7 +200,7 @@ fn collect_and_save_data(
             SimpleDataCollectionMode::CPU_USAGE_TOTAL => {
                 format!(
                     "{:.2}",
-                    sys.cpus().iter().map(sysinfo::CpuExt::cpu_usage).sum::<f32>() / sys.cpus().len() as f32
+                    sys.cpus().iter().map(sysinfo::Cpu::cpu_usage).sum::<f32>() / sys.cpus().len() as f32
                 )
             }
             SimpleDataCollectionMode::CPU_USAGE_PER_CORE => sys.cpus().iter().map(|e| format!("{:.2}", e.cpu_usage())).collect::<Vec<_>>().join(";"),

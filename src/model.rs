@@ -4,7 +4,7 @@ use std::process;
 use std::time::SystemTime;
 
 use serde::Deserialize;
-use sysinfo::{Process, ProcessExt, System, SystemExt};
+use sysinfo::{Process, System};
 
 use crate::cli::Cli;
 use crate::enums::{AppMode, DataType, GeneralInfoGroup, LogLev, SimpleDataCollectionMode};
