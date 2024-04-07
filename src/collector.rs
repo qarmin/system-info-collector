@@ -1,15 +1,15 @@
+use anyhow::{Context, Error};
+use crossbeam_channel::unbounded;
+use log::{debug, info};
+use sysinfo::{Pid, ProcessRefreshKind, System};
+use tokio::time::interval;
+
 use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-
-use anyhow::{Context, Error};
-use crossbeam_channel::unbounded;
-use log::{debug, info};
-use sysinfo::{Pid, ProcessRefreshKind, System};
-use tokio::time::interval;
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache, Settings};
@@ -356,13 +356,17 @@ fn remove_tracking_of_removed_processes(process_cache_data: &mut ProcessCache, s
 fn update_new_processes_stats(process_cache_data: &mut ProcessCache, sys: &mut System, system_pids: &HashSet<usize>) {
     let new_processes = process_cache_data.get_differences_in_usage_processes(system_pids.iter());
 
-    if !new_processes.is_empty() {
-        info!("Found {} new processes", new_processes.len());
+    if new_processes.len() == 1 {
+        info!("Found {} new processes, refreshing them once", new_processes.len());
+        sys.refresh_process_specifics(Pid::from(new_processes[0]), ProcessRefreshKind::new().with_cpu());
+    } else if new_processes.len() > 1 {
+        info!("Found {} new processes, refreshing them one by one", new_processes.len());
         sys.refresh_pids_specifics(
             &new_processes.iter().map(|e| Pid::from(*e)).collect::<Vec<_>>(),
             ProcessRefreshKind::new().with_cpu(),
         );
     }
+
     process_cache_data.replace_checked_usage_processes(system_pids.iter());
 }
 
