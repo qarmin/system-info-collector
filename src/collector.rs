@@ -357,15 +357,11 @@ fn update_new_processes_stats(process_cache_data: &mut ProcessCache, sys: &mut S
     let new_processes = process_cache_data.get_differences_in_usage_processes(system_pids.iter());
 
     if !new_processes.is_empty() {
-        if new_processes.len() > 40 {
-            info!("Found {} new processes, refreshing them in batch", new_processes.len());
-            sys.refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
-        } else {
-            info!("Found {} new processes, refreshing them one by one", new_processes.len());
-            for i in new_processes {
-                sys.refresh_process_specifics(Pid::from(i), ProcessRefreshKind::new().with_cpu());
-            }
-        }
+        info!("Found {} new processes", new_processes.len());
+        sys.refresh_pids_specifics(
+            &new_processes.iter().map(|e| Pid::from(*e)).collect::<Vec<_>>(),
+            ProcessRefreshKind::new().with_cpu(),
+        );
     }
     process_cache_data.replace_checked_usage_processes(system_pids.iter());
 }
@@ -375,9 +371,27 @@ fn update_usage_of_tracked_process(process_cache_data: &mut ProcessCache, sys: &
     if process_count == 0 {
         return;
     }
-    debug!("Updating data of {} processes", process_cache_data.process_used.iter().flatten().count());
+    debug!("Updating data of {process_count} processes");
+
+    let refresh_kind = ProcessRefreshKind::new().with_cpu();
+    if process_count > 1 {
+        sys.refresh_pids_specifics(
+            &process_cache_data
+                .process_used
+                .iter()
+                .flatten()
+                .map(|e| Pid::from(e.pid))
+                .collect::<Vec<_>>(),
+            refresh_kind,
+        );
+    } else {
+        sys.refresh_process_specifics(
+            Pid::from(process_cache_data.process_used.iter().flatten().next().unwrap().pid),
+            refresh_kind,
+        );
+    }
+
     for custom_process in process_cache_data.process_used.iter_mut().flatten() {
-        sys.refresh_process_specifics(Pid::from(custom_process.pid), ProcessRefreshKind::new().with_cpu());
         let Some(process) = sys.processes().get(&Pid::from(custom_process.pid)) else {
             continue; // Process was removed since we last checked
         };

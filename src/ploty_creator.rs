@@ -3,7 +3,7 @@ use std::fs;
 use std::time::SystemTime;
 
 use anyhow::{Context, Error};
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use log::info;
 use plotly::common::Title;
 use plotly::layout::themes::PLOTLY_DARK;
@@ -44,12 +44,12 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
         .iter()
         .map(|str_time| {
             if let Ok(time) = str_time.parse::<f64>() {
-                NaiveDateTime::from_timestamp_millis(((time + loaded_results.start_time) * 1000.0) as i64 + timezone_millis_offset)
+                DateTime::from_timestamp_millis(((time + loaded_results.start_time) * 1000.0) as i64 + timezone_millis_offset)
             } else {
                 None
             }
         })
-        .collect::<Option<Vec<NaiveDateTime>>>()
+        .collect::<Option<Vec<DateTime<Utc>>>>()
         .context("Failed to parse unix timestamp")?;
 
     let mut plot = Plot::new();
@@ -148,7 +148,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     (layout, layout_idx_info)
 }
 
-pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+pub fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_memory() {
             continue;
@@ -162,7 +162,7 @@ pub fn create_memory_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_resul
         plot.add_trace(trace);
     }
 }
-pub fn create_swap_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+pub fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_swap() {
             continue;
@@ -176,7 +176,7 @@ pub fn create_swap_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results
     }
 }
 
-pub fn create_cpu_plot(plot: &mut Plot, dates: &[NaiveDateTime], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+pub fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         // CPU_USAGE_PER_CORE is handled differently below
         if !data_type.is_cpu() || data_type == &DataType::CPU_USAGE_PER_CORE {
