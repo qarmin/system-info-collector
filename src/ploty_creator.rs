@@ -119,20 +119,20 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     }
 
     let mut layout_idx_info = HashMap::default();
-    let x_axis = Axis::new().title(Title::new("Time"));
+    let x_axis = Axis::new().title(Title::with_text("Time"));
 
     let mut current_axis_idx = 1;
     if contains_memory_group {
         layout_idx_info.insert(GeneralInfoGroup::MEMORY, current_axis_idx);
         let y_axis = Axis::new()
             .range(vec![0, loaded_results.memory_total.ceil() as usize])
-            .title(Title::new("Memory Usage[MB]"));
+            .title(Title::with_text("Memory Usage[MB]"));
 
         layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
     }
     if contains_cpu_group {
         layout_idx_info.insert(GeneralInfoGroup::CPU, current_axis_idx);
-        let y_axis = Axis::new().range(vec![-1, 100]).title(Title::new("CPU Usage[%]"));
+        let y_axis = Axis::new().range(vec![-1, 100]).title(Title::with_text("CPU Usage[%]"));
 
         layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
     }
@@ -140,7 +140,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
         layout_idx_info.insert(GeneralInfoGroup::SWAP, current_axis_idx);
         let y_axis = Axis::new()
             .range(vec![0, loaded_results.swap_total.ceil() as usize])
-            .title(Title::new("Swap Usage[MB]"));
+            .title(Title::with_text("Swap Usage[MB]"));
 
         layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
     }

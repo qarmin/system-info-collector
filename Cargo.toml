@@ -22,7 +22,7 @@ log = "0.4"
 crossbeam-channel = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 open = "5.1"
-plotly = "0.8"
+plotly = "0.10"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 humansize = "2.1.3"

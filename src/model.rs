@@ -92,11 +92,6 @@ impl ProcessCache {
     }
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct SingleProcessCacheStruct {
-    pub collected_name: String,
-    pub need_to_check: bool,
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct FindingStruct {
@@ -117,7 +112,7 @@ pub struct Settings {
     pub log_level: LogLev,
     pub open_plot_file: bool,
     pub disable_instant_flushing: bool,
-    pub use_web_gl: bool,
+    // pub use_web_gl: bool,
     pub backup_number: u32,
     pub maximum_data_file_size_bytes: usize,
     pub process_cmd_to_search: Vec<FindingStruct>,
@@ -159,7 +154,7 @@ impl From<Cli> for Settings {
             log_level: cli.log_level,
             open_plot_file: cli.open_plot_file,
             disable_instant_flushing: cli.disable_instant_flushing,
-            use_web_gl: true, // TODO: add this to CLI - need to check if this works
+            // use_web_gl: true, // TODO: add this to CLI - need to check if this works
             backup_number: cli.backup_number,
             maximum_data_file_size_bytes: (cli.maximum_data_file_size_mb * 1024.0 * 1024.0) as usize,
             need_to_refresh_processes: !process_to_search.is_empty(),
