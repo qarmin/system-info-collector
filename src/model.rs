@@ -11,7 +11,7 @@ use crate::enums::{AppMode, DataType, GeneralInfoGroup, LogLev, SimpleDataCollec
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct CollectedItemModels {
-    pub collected_data_names: Vec<DataType>,
+    // pub collected_data_names: Vec<DataType>,
     pub collected_data: HashMap<DataType, Vec<String>>,
     pub collected_groups: Vec<GeneralInfoGroup>,
     pub memory_total: f64,
@@ -34,8 +34,13 @@ impl CustomProcessData {
     pub fn from_process(process: &Process) -> Self {
         CustomProcessData {
             pid: process.pid().into(),
-            name: process.name().to_string(),
-            cmd_string: process.cmd().join(" "),
+            name: process.name().to_string_lossy().to_string(),
+            cmd_string: process
+                .cmd()
+                .iter()
+                .map(|e| e.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
             memory_usage: process.memory(),
             cpu_usage: process.cpu_usage(),
         }
@@ -91,7 +96,6 @@ impl ProcessCache {
         self.processes_checked_to_be_used.insert(process::id() as usize);
     }
 }
-
 
 #[derive(Default, Clone, Debug)]
 pub struct FindingStruct {

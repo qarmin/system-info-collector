@@ -91,6 +91,26 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
         html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
     }
 
+    let notes = [
+        format!("Cpu count: {}", loaded_results.cpu_core_count),
+        format!("Check interval: {}s", loaded_results.check_interval),
+        format!("Start time: {}", loaded_results.start_time),
+        format!(
+            "Memory total: {}",
+            humansize::format_size((loaded_results.memory_total * 1024.0 * 1024.0) as u64, humansize::BINARY)
+        ),
+        format!(
+            "Swap total: {}",
+            humansize::format_size((loaded_results.swap_total * 1024.0 * 1024.0) as u64, humansize::BINARY)
+        ),
+    ];
+
+    let notes = notes
+        .iter()
+        .map(|e| format!("<div style=\"text-align: center;\">{}</div>", e))
+        .collect::<String>();
+    html = html.replace("</body>", &format!("{}\n</body>", &notes));
+
     // Simple minify
     let regex = Regex::new(r"\n[ ]+").unwrap();
     let html = regex.replace_all(&html, "");

@@ -27,7 +27,7 @@ pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Erro
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
     Ok(CollectedItemModels {
-        collected_data_names,
+        // collected_data_names,
         collected_data,
         collected_groups,
         memory_total,
@@ -58,7 +58,7 @@ fn parse_data(
             continue;
         }
         for i in &mut collected_vec_data {
-            // Unwrap is safe, because we checked this line earlier
+            // Unwrap is safe, because we checked that it must be equal to collected_data_names.len()
             i.push(split.next().unwrap().to_string());
         }
     }

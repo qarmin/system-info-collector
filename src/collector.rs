@@ -1,7 +1,7 @@
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, info};
-use sysinfo::{Pid, ProcessRefreshKind, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::time::interval;
 
 use std::collections::HashSet;
@@ -175,7 +175,7 @@ fn collect_and_save_data(
     let current_time = SystemTime::now();
 
     let start = SystemTime::now();
-    sys.refresh_cpu();
+    sys.refresh_cpu_all();
     sys.refresh_memory();
 
     if settings.need_to_refresh_processes {
@@ -309,7 +309,7 @@ fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut
             if process_cache_data.processes_checked_to_be_used.contains(&pid_number) || !system_pids.contains(&pid_number) {
                 continue;
             }
-            let collected_name = process.cmd().join(" ");
+            let collected_name = process.cmd().iter().map(|e| e.to_string_lossy()).collect::<Vec<_>>().join(" ");
             if collected_name.contains(&i.search_text) && collected_name.len() < shortest_text {
                 shortest_text = collected_name.len();
                 shortest_matching_process_data = Some((pid_number, process, collected_name));
@@ -319,7 +319,7 @@ fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut
         if let Some((pid_number, process, collected_name)) = shortest_matching_process_data {
             info!(
                 "Found process \"{}\" with pid \"{}\" that will be monitored - (\"{}\")",
-                process.name(),
+                process.name().to_string_lossy(),
                 pid_number,
                 collected_name,
             );
@@ -358,11 +358,16 @@ fn update_new_processes_stats(process_cache_data: &mut ProcessCache, sys: &mut S
 
     if new_processes.len() == 1 {
         info!("Found {} new processes, refreshing them once", new_processes.len());
-        sys.refresh_process_specifics(Pid::from(new_processes[0]), ProcessRefreshKind::new().with_cpu());
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[Pid::from(new_processes[0])]),
+            true,
+            ProcessRefreshKind::new().with_cpu(),
+        );
     } else if new_processes.len() > 1 {
         info!("Found {} new processes, refreshing them one by one", new_processes.len());
-        sys.refresh_pids_specifics(
-            &new_processes.iter().map(|e| Pid::from(*e)).collect::<Vec<_>>(),
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&new_processes.iter().map(|e| Pid::from(*e)).collect::<Vec<_>>()),
+            true,
             ProcessRefreshKind::new().with_cpu(),
         );
     }
@@ -379,18 +384,22 @@ fn update_usage_of_tracked_process(process_cache_data: &mut ProcessCache, sys: &
 
     let refresh_kind = ProcessRefreshKind::new().with_cpu();
     if process_count > 1 {
-        sys.refresh_pids_specifics(
-            &process_cache_data
-                .process_used
-                .iter()
-                .flatten()
-                .map(|e| Pid::from(e.pid))
-                .collect::<Vec<_>>(),
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(
+                &process_cache_data
+                    .process_used
+                    .iter()
+                    .flatten()
+                    .map(|e| Pid::from(e.pid))
+                    .collect::<Vec<_>>(),
+            ),
+            true,
             refresh_kind,
         );
     } else {
-        sys.refresh_process_specifics(
-            Pid::from(process_cache_data.process_used.iter().flatten().next().unwrap().pid),
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[Pid::from(process_cache_data.process_used.iter().flatten().next().unwrap().pid)]),
+            true,
             refresh_kind,
         );
     }

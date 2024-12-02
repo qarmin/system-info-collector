@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use crossbeam_channel::Sender;
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info};
-use sysinfo::System;
+use sysinfo::{ProcessesToUpdate, System};
 
 use crate::cli::parse_cli;
 use crate::collector::collect_data;
@@ -33,9 +33,9 @@ async fn main() {
         let creating_duration = creating_start_time.elapsed().unwrap();
         let refresh_start_time = SystemTime::now();
         sys.refresh_memory();
-        sys.refresh_cpu();
+        sys.refresh_cpu_all();
         if settings.need_to_refresh_processes {
-            sys.refresh_processes();
+            sys.refresh_processes(ProcessesToUpdate::All, true);
         }
         info!(
             "Initial refresh took {:?} (creating sys struct took {:?})",

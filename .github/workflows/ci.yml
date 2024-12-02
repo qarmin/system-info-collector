@@ -10,8 +10,8 @@ jobs:
   full_ci:
     strategy:
       matrix:
-        os: [ ubuntu-latest, ubuntu-20.04, macos-latest, windows-latest ]
-        toolchain: [ stable, 1.70.0 ]
+        os: [ ubuntu-22.04, macos-latest, windows-latest ]
+        toolchain: [ stable, 1.74.0 ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
