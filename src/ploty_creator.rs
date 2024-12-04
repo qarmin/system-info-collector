@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::time::SystemTime;
+use std::time::Instant;
 
 use anyhow::{Context, Error};
 use chrono::{DateTime, Utc};
@@ -17,13 +17,13 @@ use crate::enums::{DataType, GeneralInfoGroup};
 use crate::model::{CollectedItemModels, Settings};
 
 pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
-    let time_start = SystemTime::now();
+    let time_start = Instant::now();
     let loaded_results = load_csv_results(settings)?;
-    info!("Loading data took {:?}", time_start.elapsed().unwrap());
+    info!("Loading data took {:?}", time_start.elapsed());
 
-    let time_start = SystemTime::now();
+    let time_start = Instant::now();
     save_plot_into_file(&loaded_results, settings)?;
-    info!("Creating plot took {:?}", time_start.elapsed().unwrap());
+    info!("Creating plot took {:?}", time_start.elapsed());
     if settings.open_plot_file {
         info!("Opening file {}", settings.plot_path);
         open::that(&settings.plot_path).context(format!("Failed to open {}", settings.plot_path))?;
@@ -94,7 +94,7 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
     let notes = [
         format!("Cpu count: {}", loaded_results.cpu_core_count),
         format!("Check interval: {}s", loaded_results.check_interval),
-        format!("Start time: {}", loaded_results.start_time),
+        // format!("Start time: {}", loaded_results.start_time),
         format!(
             "Memory total: {}",
             humansize::format_size((loaded_results.memory_total * 1024.0 * 1024.0) as u64, humansize::BINARY)
@@ -105,14 +105,15 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
         ),
     ];
 
+    #[allow(clippy::format_collect)]
     let notes = notes
         .iter()
-        .map(|e| format!("<div style=\"text-align: center;\">{}</div>", e))
+        .map(|e| format!("<div style=\"text-align: center;\">{e}</div>"))
         .collect::<String>();
     html = html.replace("</body>", &format!("{}\n</body>", &notes));
 
     // Simple minify
-    let regex = Regex::new(r"\n[ ]+").unwrap();
+    let regex = Regex::new(r"\n[ ]+").expect("Regex is invalid");
     let html = regex.replace_all(&html, "");
     fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
 

@@ -9,7 +9,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache, Settings};
@@ -174,22 +174,26 @@ fn collect_and_save_data(
 ) -> Result<(), Error> {
     let current_time = SystemTime::now();
 
-    let start = SystemTime::now();
-    sys.refresh_cpu_all();
+    let start = Instant::now();
+    sys.refresh_cpu_usage();
     sys.refresh_memory();
 
     if settings.need_to_refresh_processes {
         check_for_new_and_old_process_data(sys, process_cache_data, settings)?;
     }
 
-    debug!("Refreshed app/os usage data in {:?}", start.elapsed().unwrap());
+    debug!("Refreshed app/os usage data in {:?}", start.elapsed());
 
     let mut data_to_save = vec![];
 
     // SECONDS_SINCE_START - always required
     data_to_save.push(format!(
         "{:.2}",
-        current_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64() - settings.start_time
+        current_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("Cannot fail, because this cannot set time before UNIX_EPOCH")
+            .as_secs_f64()
+            - settings.start_time
     ));
 
     for i in &settings.collection_mode {

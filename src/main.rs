@@ -1,6 +1,6 @@
 use std::process;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::SystemTime;
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
@@ -28,10 +28,10 @@ async fn main() {
     TermLogger::init(config, TerminalMode::Mixed, ColorChoice::Auto).unwrap();
 
     if [AppMode::COLLECT, AppMode::COLLECT_AND_CONVERT].contains(&settings.app_mode) {
-        let creating_start_time = SystemTime::now();
+        let creating_start_time = Instant::now();
         let mut sys = System::new_all();
-        let creating_duration = creating_start_time.elapsed().unwrap();
-        let refresh_start_time = SystemTime::now();
+        let creating_duration = creating_start_time.elapsed();
+        let refresh_start_time = Instant::now();
         sys.refresh_memory();
         sys.refresh_cpu_all();
         if settings.need_to_refresh_processes {
@@ -39,7 +39,7 @@ async fn main() {
         }
         info!(
             "Initial refresh took {:?} (creating sys struct took {:?})",
-            refresh_start_time.elapsed().unwrap(),
+            refresh_start_time.elapsed(),
             creating_duration
         );
 

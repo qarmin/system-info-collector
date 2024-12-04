@@ -163,7 +163,10 @@ impl From<Cli> for Settings {
             maximum_data_file_size_bytes: (cli.maximum_data_file_size_mb * 1024.0 * 1024.0) as usize,
             need_to_refresh_processes: !process_to_search.is_empty(),
             process_cmd_to_search: process_to_search,
-            start_time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64(),
+            start_time: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("Cannot fail duration since UNIX_EPOCH")
+                .as_secs_f64(),
         }
     }
 }
