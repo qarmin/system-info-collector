@@ -1,28 +1,15 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
-use crate::enums::{AppMode, LogLev, SimpleDataCollectionMode};
+use crate::enums::{LogLev, SimpleDataCollectionMode};
 
-#[derive(Parser, Debug)]
-#[command(name = "System Info Collector")]
-#[command(author = "Rafał Mikrut")]
-#[command(version = "0.1")]
-#[command(about = "App to collect info about system", long_about = None)]
-pub struct Cli {
-    #[arg(
-        short,
-        long,
-        default_value = "1.0",
-        value_name = "INTERVAL",
-        help = "Interval of checking cpu/memory usage in seconds, minimum value is 0.25 second(sysinfo library contains hard limit 200ms)."
-    )]
-    pub check_interval: f32,
-
+#[derive(Debug, clap::Args, Clone)]
+pub struct CommonCliItems {
     #[arg(
         short,
         long,
         default_value = "system_data.csv",
         value_name = "DATA_PATH",
-        help = "Path to data file collected by this app, if mode is set to Convert, then this file must exists, in other modes it will be created."
+        help = "Path to data file collected by this app or to convert."
     )]
     pub data_path: String,
 
@@ -31,28 +18,9 @@ pub struct Cli {
         long,
         default_value = "system_data_plot.html",
         value_name = "HTML_PLOT_PATH",
-        help = "Path where html file with plot will be saved. Only useful for Convert/CollectAndConvert mode."
+        help = "Path where html file with plot will be saved."
     )]
     pub plot_path: String,
-
-    #[arg(
-        short,
-        long,
-        default_value = "collect",
-        value_name = "APP_MODE",
-        help = "Collect will collect system data, Convert will convert."
-    )]
-    pub app_mode: AppMode,
-
-    #[arg(
-        short = 'm',
-        long,
-        num_args = 1..,
-        default_values = & ["cpu-usage-total", "memory-used"],
-        value_name = "DATA_TYPE",
-        help = "List data"
-    )]
-    pub collection_mode: Vec<SimpleDataCollectionMode>,
 
     #[arg(short = 'w', long, default_value = "1700", value_name = "WIDTH", help = "Width of generated plot.")]
     pub plot_width: u32,
@@ -63,9 +31,6 @@ pub struct Cli {
     #[arg(short = 'z', long, default_value = "false", value_name = "WHITE_PLOT_MODE", help = "White plot mode.")]
     pub white_plot_mode: bool,
 
-    #[arg(short, long, default_value = "info", value_name = "Info", help = "Logging level")]
-    pub log_level: LogLev,
-
     #[arg(
         short,
         long,
@@ -74,6 +39,52 @@ pub struct Cli {
         help = "Open generated plot file in default html viewer"
     )]
     pub open_plot_file: bool,
+
+    #[arg(short, long, default_value = "info", value_name = "Info", help = "Logging level")]
+    pub log_level: LogLev,
+}
+
+#[derive(Parser, Debug)]
+#[command(name = "System Info Collector")]
+#[command(author = "Rafał Mikrut")]
+#[command(version = "0.1")]
+#[command(about = "App to collect info about system", long_about = None)]
+pub struct Args {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Collect system info. Use --convert-after to also convert/plot after collecting
+    Collect(CollectArgs),
+    /// Convert existing data file into plot
+    Convert(ConvertArgs),
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct CollectArgs {
+    #[arg(
+        short,
+        long,
+        default_value = "1.0",
+        value_name = "INTERVAL",
+        help = "Interval of checking cpu/memory usage in seconds, minimum value is 0.25 second(sysinfo library contains hard limit 200ms)."
+    )]
+    pub check_interval: f32,
+
+    #[command(flatten)]
+    pub common: CommonCliItems,
+
+    #[arg(
+        short = 'm',
+        long,
+        num_args = 1..,
+        default_values = & ["cpu-usage-total", "memory-used"],
+        value_name = "DATA_TYPE",
+        help = "List data"
+    )]
+    pub collection_mode: Vec<SimpleDataCollectionMode>,
 
     #[arg(
         short = 'i',
@@ -109,8 +120,17 @@ pub struct Cli {
         help = "Search for certain text in process run command"
     )]
     pub process_cmd_to_search: Vec<String>,
+
+    #[arg(long, help = "Also convert/plot after collecting is finished")]
+    pub convert_after: bool,
 }
 
-pub(crate) fn parse_cli() -> Cli {
-    Cli::parse()
+#[derive(Parser, Debug, Clone)]
+pub struct ConvertArgs {
+    #[command(flatten)]
+    pub common: CommonCliItems,
+}
+
+pub(crate) fn parse_cli() -> Args {
+    Args::parse()
 }

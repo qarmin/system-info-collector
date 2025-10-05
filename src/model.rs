@@ -1,13 +1,13 @@
+use log::error;
+use serde::Deserialize;
 use std::collections::hash_set::Iter;
 use std::collections::{HashMap, HashSet};
 use std::process;
 use std::time::SystemTime;
-
-use serde::Deserialize;
 use sysinfo::{Process, System};
 
-use crate::cli::Cli;
-use crate::enums::{AppMode, DataType, GeneralInfoGroup, LogLev, SimpleDataCollectionMode};
+use crate::cli::{CollectArgs, ConvertArgs};
+use crate::enums::{DataType, GeneralInfoGroup, LogLev, SimpleDataCollectionMode};
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct CollectedItemModels {
@@ -104,39 +104,43 @@ pub struct FindingStruct {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct Settings {
-    pub check_interval: f32,
+pub struct ConvertSettings {
     pub data_path: String,
     pub plot_path: String,
-    pub app_mode: AppMode,
-    pub collection_mode: Vec<SimpleDataCollectionMode>,
     pub plot_width: u32,
     pub plot_height: u32,
     pub white_plot_mode: bool,
     pub log_level: LogLev,
     pub open_plot_file: bool,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct CollectSettings {
+    pub check_interval: f32,
+    pub convert: ConvertSettings,
+    pub collection_mode: Vec<SimpleDataCollectionMode>,
     pub disable_instant_flushing: bool,
-    // pub use_web_gl: bool,
     pub backup_number: u32,
     pub maximum_data_file_size_bytes: usize,
     pub process_cmd_to_search: Vec<FindingStruct>,
     pub need_to_refresh_processes: bool,
     pub start_time: f64,
+    pub convert_after: bool,
 }
 
-impl From<Cli> for Settings {
-    fn from(cli: Cli) -> Self {
+impl From<CollectArgs> for CollectSettings {
+    fn from(cli: CollectArgs) -> Self {
         let process_to_search: Vec<_> = cli
             .process_cmd_to_search
             .iter()
             .map(|e| {
                 if e.contains('=') || e.contains(',') {
-                    eprintln!("{e} - cannot use here = or ,");
+                    error!("{e} - cannot use here = or ,");
                     process::exit(1);
                 }
                 let split = e.split('|').collect::<Vec<_>>();
                 if split.len() != 2 {
-                    eprintln!("{e} - should contains two parts split by |");
+                    error!("{e} - should contains two parts split by |");
                     process::exit(1);
                 }
                 FindingStruct {
@@ -146,19 +150,21 @@ impl From<Cli> for Settings {
             })
             .collect();
 
-        Settings {
+        let convert_settings = ConvertSettings {
+            data_path: cli.common.data_path,
+            plot_path: cli.common.plot_path,
+            plot_width: cli.common.plot_width,
+            plot_height: cli.common.plot_height,
+            white_plot_mode: cli.common.white_plot_mode,
+            log_level: cli.common.log_level,
+            open_plot_file: cli.common.open_plot_file,
+        };
+
+        CollectSettings {
             check_interval: cli.check_interval,
-            data_path: cli.data_path,
-            plot_path: cli.plot_path,
-            app_mode: cli.app_mode,
+            convert: convert_settings,
             collection_mode: cli.collection_mode,
-            plot_width: cli.plot_width,
-            plot_height: cli.plot_height,
-            white_plot_mode: cli.white_plot_mode,
-            log_level: cli.log_level,
-            open_plot_file: cli.open_plot_file,
             disable_instant_flushing: cli.disable_instant_flushing,
-            // use_web_gl: true, // TODO: add this to CLI - need to check if this works
             backup_number: cli.backup_number,
             maximum_data_file_size_bytes: (cli.maximum_data_file_size_mb * 1024.0 * 1024.0) as usize,
             need_to_refresh_processes: !process_to_search.is_empty(),
@@ -167,6 +173,21 @@ impl From<Cli> for Settings {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .expect("Cannot fail duration since UNIX_EPOCH")
                 .as_secs_f64(),
+            convert_after: cli.convert_after,
+        }
+    }
+}
+
+impl From<ConvertArgs> for ConvertSettings {
+    fn from(cli: ConvertArgs) -> Self {
+        ConvertSettings {
+            data_path: cli.common.data_path,
+            plot_path: cli.common.plot_path,
+            plot_width: cli.common.plot_width,
+            plot_height: cli.common.plot_height,
+            white_plot_mode: cli.common.white_plot_mode,
+            log_level: cli.common.log_level,
+            open_plot_file: cli.common.open_plot_file,
         }
     }
 }

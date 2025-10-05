@@ -6,9 +6,9 @@ use anyhow::{Context, Error, Result};
 use log::info;
 
 use crate::enums::{DataType, GeneralInfoGroup, HeaderValues};
-use crate::model::{CollectedItemModels, Settings};
+use crate::model::{CollectedItemModels, ConvertSettings};
 
-pub fn load_csv_results(settings: &Settings) -> Result<CollectedItemModels, Error> {
+pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModels, Error> {
     info!(
         "Data csv file is {} in size",
         humansize::format_size(
@@ -58,8 +58,7 @@ fn parse_data(
             continue;
         }
         for i in &mut collected_vec_data {
-            // Unwrap is safe, because we checked that it must be equal to collected_data_names.len()
-            i.push(split.next().unwrap().to_string());
+            i.push(split.next().expect("Validated before").to_string());
         }
     }
 
@@ -84,8 +83,7 @@ fn parse_data(
                 )));
             }
             for i in &mut cpu_per_core_data_pre_formatted {
-                // Unwrap is safe, because we checked this line earlier
-                i.push(split.next().unwrap().to_string());
+                i.push(split.next().expect("Validated this earlier").to_string());
             }
         }
 
@@ -121,7 +119,7 @@ fn parse_header(
                             "Failed to parse custom item {item}, should have format CUSTOM_{{IDX}}_CPU or CUSTOM_{{IDX}}_MEMORY"
                         )));
                     }
-                    let idx = split[0].parse::<usize>().unwrap();
+                    let idx = split[0].parse::<usize>().expect("Validated above");
                     let name = hashmap_data
                         .get(&format!("CUSTOM_{idx}"))
                         .context(format!("Failed to find CUSTOM_{idx} in data file, but it is used in header"))?

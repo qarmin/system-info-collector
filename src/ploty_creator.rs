@@ -14,9 +14,9 @@ use time::UtcOffset;
 
 use crate::csv_file_loader::load_csv_results;
 use crate::enums::{DataType, GeneralInfoGroup};
-use crate::model::{CollectedItemModels, Settings};
+use crate::model::{CollectedItemModels, ConvertSettings};
 
-pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
+pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Error> {
     let time_start = Instant::now();
     let loaded_results = load_csv_results(settings)?;
     info!("Loading data took {:?}", time_start.elapsed());
@@ -32,7 +32,7 @@ pub fn load_results_and_save_plot(settings: &Settings) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Settings) -> Result<(), Error> {
+pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings) -> Result<(), Error> {
     info!("Trying to create html file...");
 
     let timezone_millis_offset = match UtcOffset::from_whole_seconds(chrono::offset::Local::now().offset().local_minus_utc()) {
@@ -58,31 +58,13 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
     plot.set_layout(layout);
 
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY) {
-        create_memory_plot(
-            &mut plot,
-            &dates,
-            loaded_results,
-            settings,
-            *layout_info.get(&GeneralInfoGroup::MEMORY).unwrap(),
-        );
+        create_memory_plot(&mut plot, &dates, loaded_results, settings, layout_info[&GeneralInfoGroup::MEMORY]);
     }
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU) {
-        create_cpu_plot(
-            &mut plot,
-            &dates,
-            loaded_results,
-            settings,
-            *layout_info.get(&GeneralInfoGroup::CPU).unwrap(),
-        );
+        create_cpu_plot(&mut plot, &dates, loaded_results, settings, layout_info[&GeneralInfoGroup::CPU]);
     }
     if loaded_results.collected_groups.contains(&GeneralInfoGroup::SWAP) {
-        create_swap_plot(
-            &mut plot,
-            &dates,
-            loaded_results,
-            settings,
-            *layout_info.get(&GeneralInfoGroup::SWAP).unwrap(),
-        );
+        create_swap_plot(&mut plot, &dates, loaded_results, settings, layout_info[&GeneralInfoGroup::SWAP]);
     }
 
     // Only replace when using dark theme
@@ -120,7 +102,7 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Sett
     Ok(())
 }
 
-pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Settings) -> (Layout, HashMap<GeneralInfoGroup, u32>) {
+pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSettings) -> (Layout, HashMap<GeneralInfoGroup, u32>) {
     let contains_memory_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::MEMORY);
     let contains_cpu_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::CPU);
     let contains_swap_group = loaded_results.collected_groups.contains(&GeneralInfoGroup::SWAP);
@@ -169,7 +151,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     (layout, layout_idx_info)
 }
 
-pub fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+pub fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &ConvertSettings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_memory() {
             continue;
@@ -183,7 +165,7 @@ pub fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_resul
         plot.add_trace(trace);
     }
 }
-pub fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+pub fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &ConvertSettings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         if !data_type.is_swap() {
             continue;
@@ -197,7 +179,7 @@ pub fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
     }
 }
 
-pub fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &Settings, i: u32) {
+pub fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, _settings: &ConvertSettings, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         // CPU_USAGE_PER_CORE is handled differently below
         if !data_type.is_cpu() || data_type == &DataType::CPU_USAGE_PER_CORE {

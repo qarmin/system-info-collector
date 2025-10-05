@@ -12,19 +12,19 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
-use crate::model::{CustomProcessData, ProcessCache, Settings};
+use crate::model::{CollectSettings, CustomProcessData, ProcessCache};
 use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
 
-pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), Error> {
+pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Result<(), Error> {
     backup_old_file(settings)?;
 
     let data_file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&settings.data_path)
-        .context(format!("Failed to open data file {}", settings.data_path))?;
+        .open(&settings.convert.data_path)
+        .context(format!("Failed to open data file {}", settings.convert.data_path))?;
     let mut data_file = BufWriter::new(data_file);
     write_header_into_file(sys, &mut data_file, settings)?;
 
@@ -43,8 +43,8 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 
         if crx.try_recv().is_ok() {
             drop(data_file);
-            if settings.app_mode == crate::enums::AppMode::COLLECT_AND_CONVERT {
-                load_results_and_save_plot(settings)?;
+            if settings.convert_after {
+                load_results_and_save_plot(&settings.convert)?;
             }
             return Ok(());
         }
@@ -54,13 +54,13 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 }
 
 // Function to create
-fn backup_old_file(settings: &Settings) -> Result<(), Error> {
+fn backup_old_file(settings: &CollectSettings) -> Result<(), Error> {
     if settings.backup_number == 0 {
         return Ok(()); // No backup required
     }
     let mut backup_file_names = vec![];
     for i in 1..=settings.backup_number {
-        backup_file_names.push(format_new_name(&settings.data_path, &format!("__{i}")));
+        backup_file_names.push(format_new_name(&settings.convert.data_path, &format!("__{i}")));
     }
 
     // Remove last backup file
@@ -82,10 +82,10 @@ fn backup_old_file(settings: &Settings) -> Result<(), Error> {
     }
 
     // Rename current file into first backup file name
-    if Path::new(&settings.data_path).exists() {
-        fs::rename(&settings.data_path, &backup_file_names[0]).context(format!(
+    if Path::new(&settings.convert.data_path).exists() {
+        fs::rename(&settings.convert.data_path, &backup_file_names[0]).context(format!(
             "Failed to rename data file {} into {}",
-            &settings.data_path, &backup_file_names[0]
+            &settings.convert.data_path, &backup_file_names[0]
         ))?;
     }
 
@@ -103,7 +103,7 @@ fn format_new_name(file_path: &str, item_to_add: &str) -> String {
     }
 }
 
-fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
+fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &CollectSettings) -> Result<(), Error> {
     let custom_headers = settings
         .process_cmd_to_search
         .iter()
@@ -134,7 +134,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
         env!("CARGO_PKG_VERSION"),
         custom_headers
     );
-    writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
+    writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.convert.data_path))?;
 
     let custom_columns = (0..settings.process_cmd_to_search.len())
         .map(|idx| format!("CUSTOM_{idx}_CPU,CUSTOM_{idx}_MEMORY"))
@@ -156,10 +156,12 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
             .collect::<Vec<String>>()
             .join(",")
     );
-    writeln!(data_file, "{data_header}").context(format!("Failed to write header into data file {}", settings.data_path))?;
+    writeln!(data_file, "{data_header}").context(format!("Failed to write header into data file {}", settings.convert.data_path))?;
 
     if !settings.disable_instant_flushing {
-        data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;
+        data_file
+            .flush()
+            .context(format!("Failed to flush data file {}", settings.convert.data_path))?;
     }
 
     Ok(())
@@ -168,7 +170,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
 fn collect_and_save_data(
     sys: &mut System,
     data_file: &mut BufWriter<fs::File>,
-    settings: &Settings,
+    settings: &CollectSettings,
     collected_bytes: &mut usize,
     process_cache_data: &mut ProcessCache,
 ) -> Result<(), Error> {
@@ -236,10 +238,12 @@ fn collect_and_save_data(
         )));
     }
 
-    writeln!(data_file, "{data_to_save_str}").context(format!("Failed to write data into data file {}", settings.data_path))?;
+    writeln!(data_file, "{data_to_save_str}").context(format!("Failed to write data into data file {}", settings.convert.data_path))?;
 
     if !settings.disable_instant_flushing {
-        data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;
+        data_file
+            .flush()
+            .context(format!("Failed to flush data file {}", settings.convert.data_path))?;
     }
 
     Ok(())
@@ -272,7 +276,7 @@ pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
 // 1. Get all system pids
 // 2. Check for new processes and update them if are > 30, then use sys.refresh_processes_specific, to update them all in batch(probably cheaper than updating one by one)
 
-pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) -> Result<(), Error> {
+pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &CollectSettings) -> Result<(), Error> {
     let system_pids = get_system_pids()?;
 
     // If all searched processes are tracked, then app don't need to check for new processes
@@ -281,7 +285,7 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
     if process_cache_data
         .process_used
         .iter()
-        .all(|e| e.is_some() && system_pids.contains(&e.as_ref().unwrap().pid))
+        .all(|e| e.as_ref().is_some_and(|p| system_pids.contains(&p.pid)))
     {
         update_usage_of_tracked_process(process_cache_data, sys);
         return Ok(());
@@ -298,7 +302,7 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
     Ok(())
 }
 
-fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &Settings, system_pids: &HashSet<usize>) {
+fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &CollectSettings, system_pids: &HashSet<usize>) {
     for (idx, i) in settings.process_cmd_to_search.iter().enumerate() {
         if process_cache_data.process_used[idx].is_some() {
             // Already monitoring process from such name
