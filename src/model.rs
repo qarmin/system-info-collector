@@ -66,7 +66,7 @@ impl ProcessCache {
         let mut processes_checked_to_be_used = HashSet::default();
         processes_checked_to_be_used.insert(process::id() as usize);
 
-        let mut processes_usage_updated = sys.processes().iter().map(|(pid, _)| (*pid).into()).collect::<HashSet<usize>>();
+        let mut processes_usage_updated = sys.processes().keys().map(|pid| (*pid).into()).collect::<HashSet<usize>>();
         processes_usage_updated.insert(process::id() as usize);
 
         ProcessCache {

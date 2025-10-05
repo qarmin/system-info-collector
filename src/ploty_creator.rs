@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use log::info;
 use plotly::common::Title;
 use plotly::layout::themes::PLOTLY_DARK;
-use plotly::layout::{Axis, GridPattern, Layout, LayoutGrid};
+use plotly::layout::{Axis, AxisRange, GridPattern, Layout, LayoutGrid};
 use plotly::{Plot, Scatter};
 use regex::Regex;
 use time::UtcOffset;
@@ -146,7 +146,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     if contains_memory_group {
         layout_idx_info.insert(GeneralInfoGroup::MEMORY, current_axis_idx);
         let y_axis = Axis::new()
-            .range(vec![0, loaded_results.memory_total.ceil() as usize])
+            .range(AxisRange::new(0, loaded_results.memory_total.ceil() as usize))
             .title(Title::with_text("Memory Usage[MB]"));
 
         layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
@@ -160,7 +160,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Setti
     if contains_swap_group {
         layout_idx_info.insert(GeneralInfoGroup::SWAP, current_axis_idx);
         let y_axis = Axis::new()
-            .range(vec![0, loaded_results.swap_total.ceil() as usize])
+            .range(AxisRange::new(0, loaded_results.swap_total.ceil() as usize))
             .title(Title::with_text("Swap Usage[MB]"));
 
         layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);

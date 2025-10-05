@@ -52,7 +52,7 @@ async fn main() {
         if let Err(e) = ploty_creator::load_results_and_save_plot(&settings) {
             error!("{e}");
             process::exit(1);
-        };
+        }
     }
     info!("Closing app successfully");
 }
