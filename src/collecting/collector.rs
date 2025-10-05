@@ -46,6 +46,7 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
                 total_swap_mb: convert_bytes_into_mega_bytes(sys.total_swap()),
                 cpu_cores: sys.cpus().len(),
                 start_time: settings.start_time,
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
             },
             column_headers,
             max_buffer_size: settings.max_results,

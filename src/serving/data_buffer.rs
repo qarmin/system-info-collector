@@ -38,6 +38,7 @@ pub struct SystemInfo {
     pub total_swap_mb: f64,
     pub cpu_cores: usize,
     pub start_time: f64,
+    pub app_version: String,
 }
 
 #[derive(Clone)]
@@ -69,6 +70,7 @@ impl DataBuffer {
                 total_swap_mb: 0.0,
                 cpu_cores: 0,
                 start_time: 0.0,
+                app_version: "".to_string(),
             },
             column_headers: vec!["Timestamp".to_string()],
             max_buffer_size: self.max_size,

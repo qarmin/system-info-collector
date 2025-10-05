@@ -26,7 +26,7 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<
         .with_state(app_state);
 
     let addr = format!("0.0.0.0:{port}");
-    info!("Starting HTTP server on {addr}");
+    info!("Starting HTTP server on http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
@@ -46,7 +46,8 @@ async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRes
             "total_memory_mb": metadata.system_info.total_memory_mb,
             "total_swap_mb": metadata.system_info.total_swap_mb,
             "cpu_cores": metadata.system_info.cpu_cores,
-            "start_time": metadata.system_info.start_time
+            "start_time": metadata.system_info.start_time,
+            "app_version": metadata.system_info.app_version
         },
         "column_headers": metadata.column_headers,
         "max_buffer_size": metadata.max_buffer_size
