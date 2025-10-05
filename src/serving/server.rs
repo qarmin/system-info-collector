@@ -22,6 +22,7 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<
         .route("/", get(index_handler))
         .route("/api/data", get(data_handler))
         .route("/api/data/recent", get(recent_data_handler))
+        .route("/api/metadata", get(metadata_handler))
         .with_state(app_state);
 
     let addr = format!("0.0.0.0:{port}");
@@ -37,12 +38,24 @@ async fn index_handler() -> impl IntoResponse {
     Html(include_str!("server_index.html"))
 }
 
+async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
+    let metadata = buffer.get_metadata().await;
+
+    (StatusCode::OK, Json(json!({
+        "system_info": metadata.system_info,
+        "column_headers": metadata.column_headers,
+        "max_buffer_size": metadata.max_buffer_size
+    })))
+}
+
 async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let (first, last) = buffer.get_first_and_last().await;
     let total_count = buffer.len().await;
+    let max_size = buffer.get_max_size().await;
 
     let response = json!({
         "total_count": total_count,
+        "max_buffer_size": max_size,
         "first": first.as_ref().map(|d| json!({
             "timestamp": d.timestamp,
             "data": d.data
@@ -57,7 +70,9 @@ async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRespons
 }
 
 async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
-    let limit = params.limit.unwrap_or(10).min(100); // Maksymalnie 100 wyników na raz
+    let max_size = buffer.get_max_size().await;
+    let total_count = buffer.len().await;
+    let limit = params.limit.unwrap_or(10).min(max_size).min(total_count); // Respect actual buffer size
     let data_points = buffer.get_last_n(limit).await;
 
     let response = json!({
@@ -65,7 +80,8 @@ async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): Sta
             "timestamp": d.timestamp,
             "data": d.data
         })).collect::<Vec<_>>(),
-        "count": data_points.len()
+        "count": data_points.len(),
+        "max_available": total_count
     });
 
     (StatusCode::OK, Json(response))

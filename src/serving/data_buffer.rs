@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use serde::Serialize;
 
 #[derive(Clone, Debug)]
 pub struct DataPoint {
@@ -24,10 +25,26 @@ impl DataPoint {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SystemMetadata {
+    pub system_info: SystemInfo,
+    pub column_headers: Vec<String>,
+    pub max_buffer_size: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SystemInfo {
+    pub total_memory_mb: f64,
+    pub total_swap_mb: f64,
+    pub cpu_cores: usize,
+    pub start_time: f64,
+}
+
 #[derive(Clone)]
 pub struct DataBuffer {
     buffer: Arc<RwLock<VecDeque<DataPoint>>>,
     max_size: usize,
+    metadata: Arc<RwLock<Option<SystemMetadata>>>,
 }
 
 impl DataBuffer {
@@ -35,7 +52,31 @@ impl DataBuffer {
         Self {
             buffer: Arc::new(RwLock::new(VecDeque::with_capacity(max_size))),
             max_size,
+            metadata: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub async fn set_metadata(&self, metadata: SystemMetadata) {
+        let mut meta = self.metadata.write().await;
+        *meta = Some(metadata);
+    }
+
+    pub async fn get_metadata(&self) -> SystemMetadata {
+        let meta = self.metadata.read().await;
+        meta.clone().unwrap_or(SystemMetadata {
+            system_info: SystemInfo {
+                total_memory_mb: 0.0,
+                total_swap_mb: 0.0,
+                cpu_cores: 0,
+                start_time: 0.0,
+            },
+            column_headers: vec!["Timestamp".to_string()],
+            max_buffer_size: self.max_size,
+        })
+    }
+
+    pub async fn get_max_size(&self) -> usize {
+        self.max_size
     }
 
     pub async fn add_data_point(&self, data_point: DataPoint) {
