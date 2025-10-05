@@ -282,7 +282,7 @@
                 
                 // Add all data columns except the first one (which is the relative timestamp)
                 point.data.slice(1).forEach(value => {
-                    tableHTML += `<td>${value}</td>`;
+                    tableHTML += `<td>${([-1, "-1"].includes(value)) ? '' : value}</td>`;
                 });
                 tableHTML += '</tr>';
             });
