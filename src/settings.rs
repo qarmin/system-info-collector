@@ -104,7 +104,7 @@ mod tests {
     fn collect_settings_from_args_minimal() {
         let cli = crate::cli::CollectArgs {
             check_interval: 1.0,
-            common: crate::cli::CommonCliItems {
+            common: crate::cli::CommonCollect {
                 data_path: "data.csv".to_string(),
                 plot_path: "plot.html".to_string(),
                 plot_width: 800,

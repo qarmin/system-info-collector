@@ -18,16 +18,17 @@ use log::{error, info};
 use sysinfo::{ProcessesToUpdate, System};
 
 use crate::cli::{parse_cli, Commands};
-use crate::collector::collect_data;
+use crate::collecting::collector::collect_data;
+use crate::converting::ploty_creator::load_results_and_save_plot;
 use crate::settings::{CollectSettings, ConvertSettings};
 
 mod cli;
-mod collector;
-mod csv_file_loader;
+mod collecting;
+mod converting;
 mod enums;
 mod model;
-mod ploty_creator;
 mod settings;
+
 #[tokio::main]
 async fn main() {
     let _ = TermLogger::init(ConfigBuilder::default().build(), TerminalMode::Mixed, ColorChoice::Auto);
@@ -57,12 +58,20 @@ async fn main() {
                 error!("{e}");
                 process::exit(1);
             };
+
+            // Convert after collecting if enabled
+            if settings.convert_after {
+                if let Err(e) = load_results_and_save_plot(&settings.convert) {
+                    error!("{e}");
+                    process::exit(1);
+                }
+            }
         }
         Commands::Convert(convert_args) => {
             let settings: ConvertSettings = convert_args.into();
 
             // Only convert
-            if let Err(e) = ploty_creator::load_results_and_save_plot(&settings) {
+            if let Err(e) = load_results_and_save_plot(&settings) {
                 error!("{e}");
                 process::exit(1);
             }

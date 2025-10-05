@@ -13,7 +13,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache};
-use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
 use crate::settings::CollectSettings;
 
@@ -44,9 +43,6 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
 
         if crx.try_recv().is_ok() {
             drop(data_file);
-            if settings.convert_after {
-                load_results_and_save_plot(&settings.convert)?;
-            }
             return Ok(());
         }
 

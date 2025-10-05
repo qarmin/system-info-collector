@@ -23,4 +23,4 @@ clippy_nightly:
     # new_without_default
 
 run:
-    cargo run -- -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -a collect-and-convert -o; firefox system_data_plot.html
+    cargo run -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -o; firefox system_data_plot.html

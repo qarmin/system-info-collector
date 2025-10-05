@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use crate::enums::SimpleDataCollectionMode;
 
 #[derive(Debug, clap::Args, Clone)]
-pub struct CommonCliItems {
+pub struct CommonCollect {
     #[arg(
         short,
         long,
@@ -71,7 +71,7 @@ pub struct CollectArgs {
     pub check_interval: f32,
 
     #[command(flatten)]
-    pub common: CommonCliItems,
+    pub common: CommonCollect,
 
     #[arg(
         short = 'm',
@@ -125,7 +125,7 @@ pub struct CollectArgs {
 #[derive(Parser, Debug, Clone)]
 pub struct ConvertArgs {
     #[command(flatten)]
-    pub common: CommonCliItems,
+    pub common: CommonCollect,
 }
 
 pub(crate) fn parse_cli() -> Args {

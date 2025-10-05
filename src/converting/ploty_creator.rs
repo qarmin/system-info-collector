@@ -12,7 +12,7 @@ use plotly::{Plot, Scatter};
 use regex::Regex;
 use time::UtcOffset;
 
-use crate::csv_file_loader::load_csv_results;
+use crate::converting::csv_file_loader::load_csv_results;
 use crate::enums::{DataType, GeneralInfoGroup};
 use crate::model::CollectedItemModels;
 use crate::settings::ConvertSettings;
