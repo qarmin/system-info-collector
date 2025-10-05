@@ -1,6 +1,6 @@
 use anyhow::{Context, Error};
-use crossbeam_channel::unbounded;
-use log::{debug, info};
+use crossbeam_channel::{unbounded, Sender};
+use log::{debug, error, info};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::time::interval;
 
@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache};
+use crate::serving::data_buffer::DataPoint;
 use crate::set_ctrl_c_handler;
 use crate::settings::{CollectSettings, ProcessSettings};
 

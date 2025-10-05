@@ -11,7 +11,7 @@ use crate::enums::SimpleDataCollectionMode;
 use crate::model::ProcessCache;
 use crate::serving::data_buffer::{DataBuffer, DataPoint};
 use crate::set_ctrl_c_handler;
-use crate::settings::{ProcessSettings, ServeSettings};
+use crate::settings::{ProcessSettings};
 
 pub async fn collect_and_serve(sys: &mut System, settings: &ServeSettings, data_buffer: DataBuffer) -> Result<(), Error> {
     let mut interv = interval(Duration::from_millis((settings.check_interval * 1000.0) as u64));

@@ -57,8 +57,6 @@ pub enum Commands {
     Collect(CollectArgs),
     /// Convert existing data file into plot
     Convert(ConvertArgs),
-    /// Collect system info and serve it via HTTP server
-    Serve(ServeArgs),
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -120,6 +118,43 @@ pub struct CollectArgs {
     )]
     pub process_cmd_to_search: Vec<String>,
 
+
+    // Server options
+    #[arg(
+        short = 's',
+        long,
+        default_value = "false",
+        value_name = "SERVE",
+        help = "Start HTTP server to serve real-time data"
+    )]
+    pub serve: bool,
+
+    #[arg(
+        short = 'p',
+        long,
+        default_value = "5998",
+        value_name = "PORT",
+        help = "Port on which HTTP server will listen (only used with --serve)"
+    )]
+    pub port: u16,
+
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "10",
+        value_name = "MAX_RESULTS",
+        help = "Maximum number of results to store and display in server (1-1000, only used with --serve)"
+    )]
+    pub max_results: usize,
+
+    #[arg(
+        short = 'o',
+        long,
+        default_value = "false",
+        value_name = "OPEN_BROWSER",
+        help = "Open browser automatically when server starts (only used with --serve)"
+    )]
+    pub open_browser: bool,
     #[arg(short='C',long, help = "Also convert/plot after collecting is finished")]
     pub convert_after: bool,
 }

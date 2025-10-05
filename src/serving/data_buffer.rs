@@ -8,6 +8,21 @@ pub struct DataPoint {
     pub data: Vec<String>,
 }
 
+impl DataPoint {
+    pub fn from_collected_data(data: &Vec<String>) -> Self {
+        let timestamp = if !data.is_empty() {
+            data[0].parse::<f64>().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        Self {
+            timestamp,
+            data: data.clone(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct DataBuffer {
     buffer: Arc<RwLock<VecDeque<DataPoint>>>,
@@ -24,18 +39,18 @@ impl DataBuffer {
 
     pub async fn add_data_point(&self, data_point: DataPoint) {
         let mut buffer = self.buffer.write().await;
-        
+
         if buffer.len() >= self.max_size {
             buffer.pop_front();
         }
-        
+
         buffer.push_back(data_point);
     }
 
     pub async fn get_last_n(&self, n: usize) -> Vec<DataPoint> {
         let buffer = self.buffer.read().await;
         let count = n.min(buffer.len());
-        
+
         buffer.iter().rev().take(count).rev().cloned().collect()
     }
 
@@ -51,4 +66,3 @@ impl DataBuffer {
         buffer.len()
     }
 }
-

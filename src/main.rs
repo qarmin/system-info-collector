@@ -21,7 +21,7 @@ use sysinfo::{ProcessesToUpdate, System};
 use crate::cli::{parse_cli, Commands};
 use crate::collecting::collector::collect_data;
 use crate::converting::ploty_creator::load_results_and_save_plot;
-use crate::settings::{CollectSettings, ConvertSettings, ServeSettings};
+use crate::settings::{CollectSettings, ConvertSettings};
 
 mod cli;
 mod collecting;
@@ -79,54 +79,6 @@ async fn main() {
                 error!("{e}");
                 process::exit(1);
             }
-        }
-        Commands::Serve(serve_args) => {
-            let settings: ServeSettings = serve_args.into();
-
-            let creating_start_time = Instant::now();
-            let mut sys = System::new_all();
-            let creating_duration = creating_start_time.elapsed();
-            let refresh_start_time = Instant::now();
-            sys.refresh_memory();
-            sys.refresh_cpu_all();
-            if settings.need_to_refresh_processes {
-                sys.refresh_processes(ProcessesToUpdate::All, true);
-            }
-            info!(
-                "Initial refresh took {:?} (creating sys struct took {:?})",
-                refresh_start_time.elapsed(),
-                creating_duration
-            );
-
-            // Create data buffer
-            let data_buffer = serving::data_buffer::DataBuffer::new(settings.max_results);
-
-            // Start server in background task
-            let server_buffer = data_buffer.clone();
-            let server_port = settings.port;
-            let server_handle = tokio::spawn(async move {
-                if let Err(e) = serving::server::start_server(server_port, server_buffer).await {
-                    error!("Server error: {e}");
-                }
-            });
-
-            // Open browser if requested
-            if settings.open_browser {
-                let url = format!("http://127.0.0.1:{}", settings.port);
-                info!("Opening browser at {}", url);
-                if let Err(e) = open::that(&url) {
-                    error!("Failed to open browser: {e}");
-                }
-            }
-
-            // Start collecting data
-            if let Err(e) = serving::serve_collector::collect_and_serve(&mut sys, &settings, data_buffer).await {
-                error!("{e}");
-                process::exit(1);
-            }
-
-            // Wait for server to finish
-            let _ = server_handle.await;
         }
     }
     info!("Closing app successfully");
