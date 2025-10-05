@@ -57,6 +57,8 @@ pub enum Commands {
     Collect(CollectArgs),
     /// Convert existing data file into plot
     Convert(ConvertArgs),
+    /// Collect system info and serve it via HTTP server
+    Serve(ServeArgs),
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -126,6 +128,63 @@ pub struct CollectArgs {
 pub struct ConvertArgs {
     #[command(flatten)]
     pub common: CommonCollect,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct ServeArgs {
+    #[arg(
+        short,
+        long,
+        default_value = "1.0",
+        value_name = "INTERVAL",
+        help = "Interval of checking cpu/memory usage in seconds, minimum value is 0.25 second(sysinfo library contains hard limit 200ms)."
+    )]
+    pub check_interval: f32,
+
+    #[arg(
+        short = 'm',
+        long,
+        num_args = 1..,
+        default_values = & ["cpu-usage-total", "memory-used"],
+        value_name = "DATA_TYPE",
+        help = "List data"
+    )]
+    pub collection_mode: Vec<SimpleDataCollectionMode>,
+
+    #[arg(
+        short = 'e',
+        long,
+        value_name = "CMD_SEARCH_TEXT",
+        help = "Search for certain text in process run command"
+    )]
+    pub process_cmd_to_search: Vec<String>,
+
+    #[arg(
+        short = 'p',
+        long,
+        default_value = "5998",
+        value_name = "PORT",
+        help = "Port on which HTTP server will listen"
+    )]
+    pub port: u16,
+
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "10",
+        value_name = "MAX_RESULTS",
+        help = "Maximum number of results to store and display (1-1000)"
+    )]
+    pub max_results: usize,
+
+    #[arg(
+        short = 'o',
+        long,
+        default_value = "false",
+        value_name = "OPEN_BROWSER",
+        help = "Open browser automatically when server starts"
+    )]
+    pub open_browser: bool,
 }
 
 pub(crate) fn parse_cli() -> Args {

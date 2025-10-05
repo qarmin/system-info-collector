@@ -1,8 +1,7 @@
-use log::error;
 use std::process;
 use std::time::SystemTime;
 
-use crate::cli::{CollectArgs, ConvertArgs};
+use crate::cli::{CollectArgs, ConvertArgs, ServeArgs};
 
 #[derive(Default, Clone, Debug)]
 pub struct FindingStruct {
@@ -20,6 +19,11 @@ pub struct ConvertSettings {
     pub open_plot_file: bool,
 }
 
+// Trait for process settings access
+pub trait ProcessSettings {
+    fn process_cmd_to_search(&self) -> &Vec<FindingStruct>;
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct CollectSettings {
     pub check_interval: f32,
@@ -34,6 +38,30 @@ pub struct CollectSettings {
     pub convert_after: bool,
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct ServeSettings {
+    pub check_interval: f32,
+    pub collection_mode: Vec<crate::enums::SimpleDataCollectionMode>,
+    pub process_cmd_to_search: Vec<FindingStruct>,
+    pub need_to_refresh_processes: bool,
+    pub port: u16,
+    pub max_results: usize,
+    pub open_browser: bool,
+    pub start_time: f64,
+}
+
+impl ProcessSettings for CollectSettings {
+    fn process_cmd_to_search(&self) -> &Vec<FindingStruct> {
+        &self.process_cmd_to_search
+    }
+}
+
+impl ProcessSettings for ServeSettings {
+    fn process_cmd_to_search(&self) -> &Vec<FindingStruct> {
+        &self.process_cmd_to_search
+    }
+}
+
 impl From<CollectArgs> for CollectSettings {
     fn from(cli: CollectArgs) -> Self {
         let process_to_search: Vec<_> = cli
@@ -41,12 +69,12 @@ impl From<CollectArgs> for CollectSettings {
             .iter()
             .map(|e| {
                 if e.contains('=') || e.contains(',') {
-                    error!("{e} - cannot use here = or ,");
+                    log::error!("{e} - cannot use here = or ,");
                     process::exit(1);
                 }
                 let split = e.split('|').collect::<Vec<_>>();
                 if split.len() != 2 {
-                    error!("{e} - should contains two parts split by |");
+                    log::error!("{e} - should contains two parts split by |");
                     process::exit(1);
                 }
                 FindingStruct {
@@ -66,7 +94,7 @@ impl From<CollectArgs> for CollectSettings {
         };
 
         if cli.common.open_plot_file && !cli.convert_after {
-            error!("Cannot use --open-plot-file without --convert-after");
+            log::error!("Cannot use --open-plot-file without --convert-after");
             process::exit(1);
         }
 
@@ -88,6 +116,44 @@ impl From<CollectArgs> for CollectSettings {
     }
 }
 
+impl From<ServeArgs> for ServeSettings {
+    fn from(cli: ServeArgs) -> Self {
+        let process_to_search: Vec<_> = cli
+            .process_cmd_to_search
+            .iter()
+            .map(|e| {
+                if e.contains('=') || e.contains(',') {
+                    log::error!("{e} - cannot use here = or ,");
+                    process::exit(1);
+                }
+                let split = e.split('|').collect::<Vec<_>>();
+                if split.len() != 2 {
+                    log::error!("{e} - should contains two parts split by |");
+                    process::exit(1);
+                }
+                FindingStruct {
+                    graph_name: split[0].to_string(),
+                    search_text: split[1].to_string(),
+                }
+            })
+            .collect();
+
+        ServeSettings {
+            check_interval: cli.check_interval,
+            collection_mode: cli.collection_mode,
+            need_to_refresh_processes: !process_to_search.is_empty(),
+            process_cmd_to_search: process_to_search,
+            port: cli.port,
+            max_results: cli.max_results.clamp(1, 1000),
+            open_browser: cli.open_browser,
+            start_time: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("Cannot fail duration since UNIX_EPOCH")
+                .as_secs_f64(),
+        }
+    }
+}
+
 impl From<ConvertArgs> for ConvertSettings {
     fn from(cli: ConvertArgs) -> Self {
         ConvertSettings {
@@ -101,31 +167,3 @@ impl From<ConvertArgs> for ConvertSettings {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn collect_settings_from_args_minimal() {
-        let cli = crate::cli::CollectArgs {
-            check_interval: 1.0,
-            common: crate::cli::CommonCollect {
-                data_path: "data.csv".to_string(),
-                plot_path: "plot.html".to_string(),
-                plot_width: 800,
-                plot_height: 600,
-                white_plot_mode: false,
-                open_plot_file: false,
-            },
-            collection_mode: vec![crate::enums::SimpleDataCollectionMode::CPU_USAGE_TOTAL],
-            disable_instant_flushing: false,
-            backup_number: 0,
-            maximum_data_file_size_mb: 10.0,
-            process_cmd_to_search: vec![],
-            convert_after: false,
-        };
-        let settings: CollectSettings = cli.into();
-        assert_eq!(settings.convert.data_path, "data.csv");
-        assert_eq!(settings.collection_mode.len(), 1);
-    }
-}

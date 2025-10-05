@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache};
 use crate::set_ctrl_c_handler;
-use crate::settings::CollectSettings;
+use crate::settings::{CollectSettings, ProcessSettings};
 
 pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Result<(), Error> {
     backup_old_file(settings)?;
@@ -273,7 +273,7 @@ pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
 // 1. Get all system pids
 // 2. Check for new processes and update them if are > 30, then use sys.refresh_processes_specific, to update them all in batch(probably cheaper than updating one by one)
 
-pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &CollectSettings) -> Result<(), Error> {
+pub fn check_for_new_and_old_process_data<T: ProcessSettings>(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &T) -> Result<(), Error> {
     let system_pids = get_system_pids()?;
 
     // If all searched processes are tracked, then app don't need to check for new processes
@@ -299,8 +299,8 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
     Ok(())
 }
 
-fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &CollectSettings, system_pids: &HashSet<usize>) {
-    for (idx, i) in settings.process_cmd_to_search.iter().enumerate() {
+fn check_which_process_to_track<T: ProcessSettings>(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &T, system_pids: &HashSet<usize>) {
+    for (idx, i) in settings.process_cmd_to_search().iter().enumerate() {
         if process_cache_data.process_used[idx].is_some() {
             // Already monitoring process from such name
             continue;
