@@ -35,7 +35,7 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
         }
 
         // Add custom process headers
-        for (idx, process) in settings.process_cmd_to_search.iter().enumerate() {
+        for  process in &settings.process_cmd_to_search {
             column_headers.push(format!("{} CPU", process.graph_name));
             column_headers.push(format!("{} Memory", process.graph_name));
         }
@@ -61,10 +61,19 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
             let server_buffer = buffer.clone();
             let port = settings.port;
 
-            tokio::spawn(async move {
-                if let Err(e) = crate::serving::server::start_server(port, server_buffer).await {
-                    error!("Server error: {e}");
-                }
+            // Spawn server in a separate OS thread with its own Tokio runtime
+            // This ensures the HTTP server runs completely independently and doesn't block data collection
+            std::thread::spawn(move || {
+                info!("Starting HTTP server thread on port {}", port);
+
+                // Create a new Tokio runtime for the server thread
+                let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime for server");
+
+                runtime.block_on(async move {
+                    if let Err(e) = crate::serving::server::start_server(port, server_buffer).await {
+                        error!("Server error: {e}");
+                    }
+                });
             });
         }
     }
