@@ -30,14 +30,13 @@ mod ploty_creator;
 mod settings;
 #[tokio::main]
 async fn main() {
+    let _ = TermLogger::init(ConfigBuilder::default().build(), TerminalMode::Mixed, ColorChoice::Auto);
+
     let args = parse_cli();
 
     match args.command {
         Commands::Collect(collect_args) => {
             let settings: CollectSettings = collect_args.into();
-
-            let config = ConfigBuilder::new().set_level(settings.convert.log_level.into()).build();
-            let _ = TermLogger::init(config, TerminalMode::Mixed, ColorChoice::Auto);
 
             let creating_start_time = Instant::now();
             let mut sys = System::new_all();
@@ -61,9 +60,6 @@ async fn main() {
         }
         Commands::Convert(convert_args) => {
             let settings: ConvertSettings = convert_args.into();
-
-            let config = ConfigBuilder::new().set_level(settings.log_level.into()).build();
-            let _ = TermLogger::init(config, TerminalMode::Mixed, ColorChoice::Auto);
 
             // Only convert
             if let Err(e) = ploty_creator::load_results_and_save_plot(&settings) {

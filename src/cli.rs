@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-use crate::enums::{LogLev, SimpleDataCollectionMode};
+use crate::enums::SimpleDataCollectionMode;
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct CommonCliItems {
@@ -39,9 +39,6 @@ pub struct CommonCliItems {
         help = "Open generated plot file in default html viewer"
     )]
     pub open_plot_file: bool,
-
-    #[arg(short, long, default_value = "info", value_name = "Info", help = "Logging level")]
-    pub log_level: LogLev,
 }
 
 #[derive(Parser, Debug)]

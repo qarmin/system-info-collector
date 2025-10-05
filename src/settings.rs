@@ -3,7 +3,6 @@ use std::process;
 use std::time::SystemTime;
 
 use crate::cli::{CollectArgs, ConvertArgs};
-use crate::enums::LogLev;
 
 #[derive(Default, Clone, Debug)]
 pub struct FindingStruct {
@@ -18,7 +17,6 @@ pub struct ConvertSettings {
     pub plot_width: u32,
     pub plot_height: u32,
     pub white_plot_mode: bool,
-    pub log_level: LogLev,
     pub open_plot_file: bool,
 }
 
@@ -64,7 +62,6 @@ impl From<CollectArgs> for CollectSettings {
             plot_width: cli.common.plot_width,
             plot_height: cli.common.plot_height,
             white_plot_mode: cli.common.white_plot_mode,
-            log_level: cli.common.log_level,
             open_plot_file: cli.common.open_plot_file,
         };
 
@@ -94,7 +91,6 @@ impl From<ConvertArgs> for ConvertSettings {
             plot_width: cli.common.plot_width,
             plot_height: cli.common.plot_height,
             white_plot_mode: cli.common.white_plot_mode,
-            log_level: cli.common.log_level,
             open_plot_file: cli.common.open_plot_file,
         }
     }
@@ -115,7 +111,6 @@ mod tests {
                 plot_height: 600,
                 white_plot_mode: false,
                 open_plot_file: false,
-                log_level: crate::enums::LogLev::Info,
             },
             collection_mode: vec![crate::enums::SimpleDataCollectionMode::CPU_USAGE_TOTAL],
             disable_instant_flushing: false,
