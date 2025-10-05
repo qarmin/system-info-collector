@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache};
-use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemMetadata, SystemInfo};
+use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemInfo, SystemMetadata};
 use crate::set_ctrl_c_handler;
 use crate::settings::{CollectSettings, ProcessSettings};
 
@@ -35,7 +35,7 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
         }
 
         // Add custom process headers
-        for  process in &settings.process_cmd_to_search {
+        for process in &settings.process_cmd_to_search {
             column_headers.push(format!("{} CPU", process.graph_name));
             column_headers.push(format!("{} Memory", process.graph_name));
         }
@@ -64,7 +64,7 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
             // Spawn server in a separate OS thread with its own Tokio runtime
             // This ensures the HTTP server runs completely independently and doesn't block data collection
             std::thread::spawn(move || {
-                info!("Starting HTTP server thread on port {}", port);
+                info!("Starting HTTP server thread on port {port}");
 
                 // Create a new Tokio runtime for the server thread
                 let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime for server");
@@ -100,7 +100,15 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
 
     info!("Started collecting data...");
     loop {
-        collect_and_save_data(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data, &data_buffer).await?;
+        collect_and_save_data(
+            sys,
+            &mut data_file,
+            settings,
+            &mut collected_bytes,
+            &mut process_cache_data,
+            data_buffer.as_ref(),
+        )
+        .await?;
 
         if crx.try_recv().is_ok() {
             drop(data_file);
@@ -231,7 +239,7 @@ async fn collect_and_save_data(
     settings: &CollectSettings,
     collected_bytes: &mut usize,
     process_cache_data: &mut ProcessCache,
-    data_buffer: &Option<DataBuffer>,
+    data_buffer: Option<&DataBuffer>,
 ) -> Result<(), Error> {
     let current_time = SystemTime::now();
 
@@ -305,7 +313,7 @@ async fn collect_and_save_data(
             .context(format!("Failed to flush data file {}", settings.convert.data_path))?;
     }
 
-    if let Some(ref buffer) = data_buffer {
+    if let Some(buffer) = data_buffer {
         buffer.add_data_point(DataPoint::from(&data_to_save_str)).await;
     }
 

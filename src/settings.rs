@@ -101,7 +101,7 @@ impl From<CollectArgs> for CollectSettings {
             // Server options
             serve: cli.serve,
             port: cli.port,
-            max_results: cli.max_results.clamp(1, 1000),
+            max_results: cli.max_results.clamp(1, 100_000),
         }
     }
 }

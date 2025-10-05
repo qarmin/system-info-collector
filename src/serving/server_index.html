@@ -119,12 +119,22 @@
         .auto-refresh {
             color: #4CAF50;
         }
+        .chart-container {
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto 30px auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            padding: 20px;
+        }
     </style>
+    <script src="/static/chart.min.js"></script>
 </head>
 <body>
     <div class="container">
         <h1>System Info Collector - Live Data</h1>
-        
+
         <div class="system-info" id="systemInfo">
             <h3>System Information</h3>
             <div class="system-stats">
@@ -167,6 +177,15 @@
 
         <div class="stats" id="stats">
             <div class="loading">Loading stats...</div>
+        </div>
+
+        <div class="chart-container" id="cpuChartContainer" style="display:none;">
+            <h3>CPU Usage [%]</h3>
+            <canvas id="cpuChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="ramChartContainer" style="display:none;">
+            <h3>RAM Usage [MB]</h3>
+            <canvas id="ramChart" height="120"></canvas>
         </div>
 
         <div id="error" class="error" style="display: none;"></div>
@@ -249,21 +268,109 @@
 
         function displayTable(data) {
             const container = document.getElementById('dataContainer');
-            
             if (data.length === 0) {
                 container.innerHTML = '<div class="loading">No data available</div>';
+                document.getElementById('cpuChartContainer').style.display = 'none';
+                document.getElementById('ramChartContainer').style.display = 'none';
                 return;
             }
-
             // Use proper column headers from metadata or fallback to generic names
             const headers = metadata?.column_headers || ['Timestamp'];
-            
             // Ensure we have headers for all data columns
             const firstRow = data[0];
             while (headers.length < firstRow.data.length) {
                 headers.push(`Data ${headers.length}`);
             }
-
+            // --- WYKRESY ---
+            // Szukamy indeksów kolumn CPU i RAM
+            const cpuIndices = headers
+                .map((h, i) => ({ h, i }))
+                .filter(({ h }) => h.toLowerCase().includes('cpu'));
+            const ramIndices = headers
+                .map((h, i) => ({ h, i }))
+                .filter(({ h }) => h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory'));
+            // Przygotuj dane do wykresów
+            const timestamps = data.map(point => {
+                const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
+                return formatAbsoluteTimestamp(absoluteTime);
+            });
+            // CPU - wiele linii
+            let cpuDatasets = [];
+            if (cpuIndices.length > 0) {
+                cpuDatasets = cpuIndices.map(({ h, i }, idx) => ({
+                    label: h,
+                    data: data.map(point => {
+                        const v = point.data[i];
+                        return ([-1, "-1"].includes(v)) ? null : v;
+                    }),
+                    borderColor: idx === 0 ? '#1976d2' : `hsl(${(idx * 60) % 360}, 70%, 50%)`,
+                    backgroundColor: idx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${(idx * 60) % 360}, 70%, 50%, 0.1)`,
+                    spanGaps: true,
+                    tension: 0.1,
+                }));
+            }
+            // RAM - wiele linii
+            let ramDatasets = [];
+            if (ramIndices.length > 0) {
+                ramDatasets = ramIndices.map(({ h, i }, idx) => ({
+                    label: h,
+                    data: data.map(point => {
+                        const v = point.data[i];
+                        return ([-1, "-1"].includes(v)) ? null : v;
+                    }),
+                    borderColor: idx === 0 ? '#43a047' : `hsl(${(idx * 60 + 180) % 360}, 70%, 50%)`,
+                    backgroundColor: idx === 0 ? 'rgba(67,160,71,0.1)' : `hsla(${(idx * 60 + 180) % 360}, 70%, 50%, 0.1)`,
+                    spanGaps: true,
+                    tension: 0.1,
+                }));
+            }
+            // Rysuj wykres CPU
+            if (cpuDatasets.length && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('cpuChartContainer').style.display = '';
+                if (window.cpuChartObj) window.cpuChartObj.destroy();
+                window.cpuChartObj = new Chart(document.getElementById('cpuChart').getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: cpuDatasets,
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        scales: {
+                            y: { min: 0, max: 100, title: { display: true, text: 'CPU [%]' } },
+                            x: { title: { display: true, text: 'Timestamp' }, ticks: { maxTicksLimit: 10 } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('cpuChartContainer').style.display = 'none';
+            }
+            // Rysuj wykres RAM
+            if (ramDatasets.length && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('ramChartContainer').style.display = '';
+                if (window.ramChartObj) window.ramChartObj.destroy();
+                window.ramChartObj = new Chart(document.getElementById('ramChart').getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: ramDatasets,
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        scales: {
+                            y: { min: 0, max: metadata?.system_info?.total_memory_mb || undefined, title: { display: true, text: 'RAM [MB]' } },
+                            x: { title: { display: true, text: 'Timestamp' }, ticks: { maxTicksLimit: 10 } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('ramChartContainer').style.display = 'none';
+            }
+            // --- TABELA ---
             let tableHTML = `
                 <table>
                     <thead>
@@ -273,20 +380,17 @@
                     </thead>
                     <tbody>
             `;
-
             data.forEach(point => {
                 tableHTML += '<tr>';
                 // Format timestamp properly
                 const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
                 tableHTML += `<td class="timestamp">${formatAbsoluteTimestamp(absoluteTime)}</td>`;
-                
                 // Add all data columns except the first one (which is the relative timestamp)
                 point.data.slice(1).forEach(value => {
                     tableHTML += `<td>${([-1, "-1"].includes(value)) ? '' : value}</td>`;
                 });
                 tableHTML += '</tr>';
             });
-
             tableHTML += '</tbody></table>';
             container.innerHTML = tableHTML;
         }

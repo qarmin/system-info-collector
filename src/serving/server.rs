@@ -59,6 +59,7 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<
         .route("/api/data", get(data_handler))
         .route("/api/data/recent", get(recent_data_handler))
         .route("/api/metadata", get(metadata_handler))
+        .route("/static/chart.min.js", get(chartjs_handler))
         .with_state(app_state);
 
     let addr = format!("0.0.0.0:{port}");
@@ -95,7 +96,7 @@ async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRes
 async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let (first, last) = buffer.get_first_and_last().await;
     let total_count = buffer.len().await;
-    let max_size = buffer.get_max_size().await;
+    let max_size = buffer.get_max_size();
 
     let response = DataResponse {
         total_count,
@@ -114,19 +115,29 @@ async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRespons
 }
 
 async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
-    let max_size = buffer.get_max_size().await;
+    let max_size = buffer.get_max_size();
     let total_count = buffer.len().await;
     let limit = params.limit.unwrap_or(10).min(max_size).min(total_count);
     let data_points = buffer.get_last_n(limit).await;
 
     let response = RecentDataResponse {
-        data: data_points.into_iter().map(|d| DataPointResponse {
-            timestamp: d.timestamp,
-            data: d.data,
-        }).collect(),
+        data: data_points
+            .into_iter()
+            .map(|d| DataPointResponse {
+                timestamp: d.timestamp,
+                data: d.data,
+            })
+            .collect(),
         count: limit,
         max_available: total_count,
     };
 
     (StatusCode::OK, Json(response))
+}
+
+async fn chartjs_handler() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        include_bytes!("./chart.min.js") as &'static [u8],
+    )
 }

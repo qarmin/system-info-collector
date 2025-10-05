@@ -1,7 +1,7 @@
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::Serialize;
 
 #[derive(Clone, Debug)]
 pub struct DataPoint {
@@ -10,12 +10,12 @@ pub struct DataPoint {
 }
 
 impl DataPoint {
-    pub fn from_collected_data(data: &Vec<String>) -> Self {
+    pub fn from_collected_data(data: &[String]) -> Self {
         let timestamp = if !data.is_empty() { data[0].parse::<f64>().unwrap_or(0.0) } else { 0.0 };
 
         Self {
             timestamp,
-            data: data.clone(),
+            data: data.to_vec(),
         }
     }
 
@@ -70,14 +70,14 @@ impl DataBuffer {
                 total_swap_mb: 0.0,
                 cpu_cores: 0,
                 start_time: 0.0,
-                app_version: "".to_string(),
+                app_version: String::new(),
             },
             column_headers: vec!["Timestamp".to_string()],
             max_buffer_size: self.max_size,
         })
     }
 
-    pub async fn get_max_size(&self) -> usize {
+    pub fn get_max_size(&self) -> usize {
         self.max_size
     }
 
