@@ -87,6 +87,23 @@
             color: #fff;
             position: sticky;
             top: 0;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover {
+            background-color: #1565c0;
+        }
+        th.sortable::after {
+            content: ' ⇅';
+            opacity: 0.5;
+        }
+        th.sorted-asc::after {
+            content: ' ▲';
+            opacity: 1;
+        }
+        th.sorted-desc::after {
+            content: ' ▼';
+            opacity: 1;
         }
         tr:hover {
             background-color: #2c3136;
@@ -396,7 +413,7 @@
                 <table>
                     <thead>
                         <tr>
-                            ${headers.map(h => `<th>${h}</th>`).join('')}
+                            ${headers.map(h => `<th class="sortable">${h}</th>`).join('')}
                         </tr>
                     </thead>
                     <tbody>
@@ -414,6 +431,7 @@
             });
             tableHTML += '</tbody></table>';
             container.innerHTML = `<div class="table-scroll">${tableHTML}</div>`;
+            setupTableSort();
         }
 
         function formatAbsoluteTimestamp(unixTimestamp) {
@@ -455,6 +473,61 @@
             if (checkbox.checked) {
                 autoRefreshInterval = setInterval(loadData, 5000);
             }
+        }
+
+        function setupTableSort() {
+            const table = document.querySelector('table');
+            const headers = table.querySelectorAll('th.sortable');
+
+            let currentSort = {
+                column: null,
+                order: 'asc', // or 'desc'
+            };
+
+            headers.forEach((header, index) => {
+                header.addEventListener('click', () => {
+                    const newOrder = (currentSort.column === index && currentSort.order === 'asc') ? 'desc' : 'asc';
+                    sortTableByColumn(table, index, newOrder);
+                    currentSort.column = index;
+                    currentSort.order = newOrder;
+                    updateSortIndicators(headers, index, newOrder);
+                });
+            });
+        }
+
+        function sortTableByColumn(table, columnIndex, order) {
+            const dirModifier = (order === 'asc') ? 1 : -1;
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            // Sort rows
+            rows.sort((a, b) => {
+                const aText = a.children[columnIndex].textContent.trim();
+                const bText = b.children[columnIndex].textContent.trim();
+
+                // Handle numeric and date sorting
+                const aValue = isNaN(aText) ? aText : parseFloat(aText);
+                const bValue = isNaN(bText) ? bText : parseFloat(bText);
+
+                return (aValue > bValue ? 1 : -1) * dirModifier;
+            });
+
+            // Remove existing rows
+            while (tbody.firstChild) {
+                tbody.removeChild(tbody.firstChild);
+            }
+
+            // Re-add sorted rows
+            tbody.append(...rows);
+        }
+
+        function updateSortIndicators(headers, sortedColumnIndex, order) {
+            headers.forEach((header, index) => {
+                header.classList.remove('sorted-asc', 'sorted-desc');
+                if (index === sortedColumnIndex) {
+                    header.classList.add(order === 'asc' ? 'sorted-asc' : 'sorted-desc');
+                }
+            });
         }
 
         // Initialize
