@@ -42,7 +42,12 @@ async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRes
     let metadata = buffer.get_metadata().await;
 
     (StatusCode::OK, Json(json!({
-        "system_info": metadata.system_info,
+        "system_info": {
+            "total_memory_mb": metadata.system_info.total_memory_mb,
+            "total_swap_mb": metadata.system_info.total_swap_mb,
+            "cpu_cores": metadata.system_info.cpu_cores,
+            "start_time": metadata.system_info.start_time
+        },
         "column_headers": metadata.column_headers,
         "max_buffer_size": metadata.max_buffer_size
     })))
