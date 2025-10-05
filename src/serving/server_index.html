@@ -19,6 +19,19 @@
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.5);
         }
+        .container.full-width {
+            max-width: 95vw !important;
+            width: 95vw !important;
+            margin-left: auto;
+            margin-right: auto;
+            border-radius: 0;
+            box-shadow: none;
+        }
+        .container.full-width .chart-container,
+        .container.full-width .table-scroll {
+            max-width: 100% !important;
+            width: 100% !important;
+        }
         h1 {
             color: #fff;
         }
@@ -164,7 +177,10 @@
     <script src="/static/chart.min.js"></script>
 </head>
 <body>
-    <div class="container">
+    <div class="container" id="mainContainer">
+        <div style="text-align:right; margin-bottom:10px;">
+            <button id="toggleWidthBtn" onclick="toggleFullWidth()">Full Width</button>
+        </div>
         <h1>System Info Collector - Live Data</h1>
 
         <div class="system-info" id="systemInfo">
@@ -472,6 +488,32 @@
             // Start auto-refresh if checkbox is checked
             if (checkbox.checked) {
                 autoRefreshInterval = setInterval(loadData, 5000);
+            }
+        }
+
+        function toggleFullWidth() {
+            const container = document.getElementById('mainContainer');
+            const btn = document.getElementById('toggleWidthBtn');
+            const chartContainers = document.querySelectorAll('.chart-container');
+            const tableScrolls = document.querySelectorAll('.table-scroll');
+            if (!container.classList.contains('full-width')) {
+                container.classList.add('full-width');
+                btn.textContent = 'Normal Width';
+                chartContainers.forEach(el => {
+                    el.style.maxWidth = '100%';
+                });
+                tableScrolls.forEach(el => {
+                    el.style.maxWidth = '100%';
+                });
+            } else {
+                container.classList.remove('full-width');
+                btn.textContent = 'Full Width';
+                chartContainers.forEach(el => {
+                    el.style.maxWidth = '';
+                });
+                tableScrolls.forEach(el => {
+                    el.style.maxWidth = '';
+                });
             }
         }
 
