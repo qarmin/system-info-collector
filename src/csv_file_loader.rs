@@ -6,7 +6,8 @@ use anyhow::{Context, Error, Result};
 use log::info;
 
 use crate::enums::{DataType, GeneralInfoGroup, HeaderValues};
-use crate::model::{CollectedItemModels, ConvertSettings};
+use crate::model::CollectedItemModels;
+use crate::settings::ConvertSettings;
 
 pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModels, Error> {
     info!(

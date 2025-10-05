@@ -12,9 +12,10 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
-use crate::model::{CollectSettings, CustomProcessData, ProcessCache};
+use crate::model::{CustomProcessData, ProcessCache};
 use crate::ploty_creator::load_results_and_save_plot;
 use crate::set_ctrl_c_handler;
+use crate::settings::CollectSettings;
 
 pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Result<(), Error> {
     backup_old_file(settings)?;

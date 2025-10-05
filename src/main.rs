@@ -19,7 +19,7 @@ use sysinfo::{ProcessesToUpdate, System};
 
 use crate::cli::{parse_cli, Commands};
 use crate::collector::collect_data;
-use crate::model::{CollectSettings, ConvertSettings};
+use crate::settings::{CollectSettings, ConvertSettings};
 
 mod cli;
 mod collector;
@@ -27,7 +27,7 @@ mod csv_file_loader;
 mod enums;
 mod model;
 mod ploty_creator;
-
+mod settings;
 #[tokio::main]
 async fn main() {
     let args = parse_cli();

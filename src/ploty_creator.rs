@@ -14,7 +14,8 @@ use time::UtcOffset;
 
 use crate::csv_file_loader::load_csv_results;
 use crate::enums::{DataType, GeneralInfoGroup};
-use crate::model::{CollectedItemModels, ConvertSettings};
+use crate::model::CollectedItemModels;
+use crate::settings::ConvertSettings;
 
 pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Error> {
     let time_start = Instant::now();
