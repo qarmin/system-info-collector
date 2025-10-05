@@ -25,6 +25,35 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
         None
     };
 
+    // Set metadata for the data buffer
+    if let Some(ref buffer) = data_buffer {
+        // Create column headers based on collection mode
+        let mut column_headers = vec!["Timestamp".to_string()];
+
+        for mode in &settings.collection_mode {
+            column_headers.push(mode.to_string());
+        }
+
+        // Add custom process headers
+        for (idx, process) in settings.process_cmd_to_search.iter().enumerate() {
+            column_headers.push(format!("{} CPU", process.graph_name));
+            column_headers.push(format!("{} Memory", process.graph_name));
+        }
+
+        let metadata = SystemMetadata {
+            system_info: SystemInfo {
+                total_memory_mb: convert_bytes_into_mega_bytes(sys.total_memory()),
+                total_swap_mb: convert_bytes_into_mega_bytes(sys.total_swap()),
+                cpu_cores: sys.cpus().len(),
+                start_time: settings.start_time,
+            },
+            column_headers,
+            max_buffer_size: settings.max_results,
+        };
+
+        buffer.set_metadata(metadata).await;
+    }
+
     // Start server if serving is enabled
     if settings.serve {
         if let Some(ref buffer) = data_buffer {
@@ -455,4 +484,3 @@ pub fn convert_into_string_megabytes(bytes: u64) -> String {
 pub fn convert_bytes_into_mega_bytes(bytes: u64) -> f64 {
     bytes as f64 / 1024.0 / 1024.0
 }
-
