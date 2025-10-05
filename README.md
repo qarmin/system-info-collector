@@ -19,7 +19,7 @@ which in this case I would prefer to avoid.
 This is console app, so that means that you need to use terminal to use it.
 
 ```
-./system_info_collector -l debug -a collect-and-convert -o
+./system_info_collector collect --convert-after -o
 ```
 
 should once per second print debug message about refreshed CPU and memory usage.
@@ -64,38 +64,38 @@ SECONDS_SINCE_START,MEMORY_USED,SWAP_USED,CPU_USAGE_TOTAL,CUSTOM_0_CPU,CUSTOM_0_
 
 ## Example commands
 
-Collect used memory and cpu usage in interval of 1 second and save it to system_data.csv file
+Collect used memory and CPU usage in interval of 1 second and save it to system_data.csv file
 
 ```
-./system_info_collector
+./system_info_collector collect
 ```
 
 Collect and convert csv data and automatically open html file in browser, additionally will show more detailed logs
 
 ```
-./system_info_collector -l debug -a collect-and-convert -o
+./system_info_collector collect  --convert-after -o
 ```
 
 Convert csv data file into html document with plot and open it in browser
 
 ```
-./system_info_collector -a convert -d /home/user/data.csv -p /home/user/plot.html -o
+./system_info_collector convert -d /home/user/data.csv -p /home/user/plot.html -o
 ```
 
 Collect all basic data with interval of 0.2 seconds
 
 ```
-./system_info_collector -l debug -a collect-and-convert -o -m memory-used -m memory-free -m memory-available -m cpu-usage-total -m cpu-usage-per-core -c 0.2
+./system_info_collector collect --convert-after -o -m memory-used -m memory-free -m memory-available -m cpu-usage-total -m cpu-usage-per-core -c 0.2
 ```
 
-Collect memory and cpu usage of selected processes - will try to find process with command containing `firefox` in
+Collect memory and CPU usage of selected processes - will try to find process with command containing `firefox` in
 name - `FIREFOX` name will be used later in plot.
 
-App can only track 1 process with certain name at once, so if two or more processes contains `firefox` in name, only
-info about first will be collected
+App can only track 1 process with certain name at once, so if two or more processes contain `firefox` in name, only
+info about the first will be collected
 
 ```
-./system_info_collector -e "FIREFOX|firefox" -e "Event Handler|/usr/bin/event_handler --timeout"
+./system_info_collector collect -e "FIREFOX|firefox" -e "Event Handler|/usr/bin/event_handler --timeout"
 ```
 
 Shows help about available arguments
@@ -104,9 +104,9 @@ Shows help about available arguments
 ./system_info_collector --help
 ```
 
-## Running app when OS starts(Linux)
+## Running app when OS starts (Linux)
 
-Simple way to collect OS data from start, is to create simple systemd service.
+Simple way to collect OS data from start is to create a simple systemd service.
 
 To do this, copy app into `/usr/bin` folder and create folder for collected data
 
@@ -129,7 +129,7 @@ paste this code with modified arguments:
 Description=System Data Collector
 
 [Service]
-ExecStart=/usr/bin/system_info_collector -d /opt/system_info_collector/data.csv
+ExecStart=/usr/bin/system_info_collector collect -d /opt/system_info_collector/data.csv
 
 [Install]
 WantedBy=default.target
@@ -147,12 +147,12 @@ sudo systemctl enable system-info-collector # To enable running service when OS 
 now you can convert collected data with simple command
 
 ```
-system_info_collector -a convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
+system_info_collector convert -d /opt/system_info_collector/data.csv -p /tmp/plot.html -o
 ```
 
 ## CPU/Memory/Swap results
 
-Cpu usage is shown in range between 0 and 100%, if computer have more than 1 core, cpu usage is divided by number of
+Cpu usage is shown in range between 0 and 100%, if computer has more than 1 core, cpu usage is divided by number of
 cores, to get value in proper range.
 
 Memory and swap usage are shown in MiB, with range from 0 to total memory/swap size.
@@ -161,16 +161,16 @@ When checking for processes -1 is visible both in cpu/memory plot if searched pr
 
 ## Data file compatibility
 
-Compatibility between different versions of app is not guaranteed, so if you want to collect create graphs from csv
-file, be sure that you use the same version of app(csv file contains inside info which version of app was used).
+Compatibility between different versions of app is not guaranteed, so if you want to collect or create graphs from csv
+file, be sure that you use the same version of app (csv file contains inside info which version of app was used).
 
 Usually incompatibilities are quite easy to workaround by manually adding/removing records from csv file.
 
 ## OS Support
 
-Currently, fully supported is only Linux, due using manually reading `/proc` files(performance reasons).
+Currently, fully supported is only Linux, due to using manually reading `/proc` files (performance reasons).
 
-App should also fully work on Mac, but on Windows capturing process cpu/memory usage is not supported(except that,
+App should also fully work on Mac, but on Windows capturing process cpu/memory usage is not supported (except that,
 everything should work fine).
 
 ## License
@@ -178,3 +178,30 @@ everything should work fine).
 MIT License
 
 Copyright (c) 2023 Rafał Mikrut and contributors
+
+## Live HTTP Server
+
+The application has a built-in HTTP server that allows you to view live data in your web browser.
+
+### How to start the server?
+
+Run with the `--serve` option (optionally with `--port` and `--max-results`):
+
+```
+./system_info_collector collect --serve --port 5998 --max-results 1000
+```
+
+After starting, open your browser and go to `http://localhost:5998/`.
+
+### Web interface features
+- **CPU and RAM charts** (whole system + per program, if configured) – dynamic, with legend, dark mode.
+- **Data table** – with text information about current CPU and RAM usage.
+- **Auto-refresh** – ability to set the refresh interval.
+- **Responsive dark mode** – dark theme by default, readable on any screen.
+- **No internet dependency** – static files (e.g. Chart.js) are embedded in the binary and served by the backend.
+
+### Example view
+
+![Live server screenshot](https://github.com/qarmin/system-info-collector/assets/41945903/58371709-996a-41cf-a352-d28addf24ad9)
+
+The server allows you to conveniently view live data, analyze charts, and quickly browse large datasets without manually opening CSV or HTML files.

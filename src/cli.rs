@@ -140,9 +140,9 @@ pub struct CollectArgs {
     #[arg(
         short = 'l',
         long,
-        default_value = "10",
+        default_value = "1000",
         value_name = "MAX_RESULTS",
-        help = "Maximum number of results to store and display in server (1-1000, only used with --serve)"
+        help = "Maximum number of results to store and display in server (only used with --serve)"
     )]
     pub max_results: usize,
 
