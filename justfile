@@ -23,5 +23,5 @@ clippy_nightly:
     # new_without_default
 
 run:
-    # Well, do not run
-    cargo run -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -o; firefox system_data_plot.html
+    # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
+    cargo run -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o; firefox system_data_plot.html

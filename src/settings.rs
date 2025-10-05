@@ -65,6 +65,11 @@ impl From<CollectArgs> for CollectSettings {
             open_plot_file: cli.common.open_plot_file,
         };
 
+        if cli.common.open_plot_file && !cli.convert_after {
+            error!("Cannot use --open-plot-file without --convert-after");
+            process::exit(1);
+        }
+
         CollectSettings {
             check_interval: cli.check_interval,
             convert: convert_settings,

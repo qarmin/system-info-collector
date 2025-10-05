@@ -86,35 +86,3 @@ pub enum GeneralInfoGroup {
     MEMORY,
     SWAP,
 }
-
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-pub enum AppMode {
-    #[default]
-    COLLECT,
-    COLLECT_AND_CONVERT,
-    CONVERT,
-}
-
-#[derive(Clone, EnumString, EnumIter, ValueEnum, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-pub enum LogLev {
-    Off,
-    Error,
-    Warn,
-    #[default]
-    Info,
-    Debug,
-    Trace,
-}
-
-impl From<LogLev> for log::LevelFilter {
-    fn from(log_lev: LogLev) -> Self {
-        match log_lev {
-            LogLev::Off => Self::Off,
-            LogLev::Error => Self::Error,
-            LogLev::Warn => Self::Warn,
-            LogLev::Info => Self::Info,
-            LogLev::Debug => Self::Debug,
-            LogLev::Trace => Self::Trace,
-        }
-    }
-}

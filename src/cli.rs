@@ -118,7 +118,7 @@ pub struct CollectArgs {
     )]
     pub process_cmd_to_search: Vec<String>,
 
-    #[arg(long, help = "Also convert/plot after collecting is finished")]
+    #[arg(short='C',long, help = "Also convert/plot after collecting is finished")]
     pub convert_after: bool,
 }
 
