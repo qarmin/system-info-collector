@@ -135,6 +135,14 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.5);
             padding: 20px;
         }
+        .table-scroll {
+            max-height: 600px;
+            overflow-y: auto;
+            margin-top: 20px;
+            border-radius: 8px;
+            background: #23272a;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
     </style>
     <script src="/static/chart.min.js"></script>
 </head>
@@ -405,7 +413,7 @@
                 tableHTML += '</tr>';
             });
             tableHTML += '</tbody></table>';
-            container.innerHTML = tableHTML;
+            container.innerHTML = `<div class="table-scroll">${tableHTML}</div>`;
         }
 
         function formatAbsoluteTimestamp(unixTimestamp) {
