@@ -40,7 +40,6 @@ pub struct CollectSettings {
     pub serve: bool,
     pub port: u16,
     pub max_results: usize,
-    pub open_browser: bool,
 }
 
 impl ProcessSettings for CollectSettings {
@@ -99,10 +98,10 @@ impl From<CollectArgs> for CollectSettings {
                 .expect("Cannot fail duration since UNIX_EPOCH")
                 .as_secs_f64(),
             convert_after: cli.convert_after,
+            // Server options
             serve: cli.serve,
             port: cli.port,
             max_results: cli.max_results.clamp(1, 1000),
-            open_browser: cli.open_browser,
         }
     }
 }

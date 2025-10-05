@@ -1,5 +1,5 @@
 use anyhow::{Context, Error};
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::unbounded;
 use log::{debug, error, info};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::time::interval;
@@ -13,11 +13,32 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::model::{CustomProcessData, ProcessCache};
-use crate::serving::data_buffer::DataPoint;
+use crate::serving::data_buffer::{DataBuffer, DataPoint};
 use crate::set_ctrl_c_handler;
 use crate::settings::{CollectSettings, ProcessSettings};
 
 pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Result<(), Error> {
+    // Create data buffer if serving is enabled
+    let data_buffer = if settings.serve {
+        Some(DataBuffer::new(settings.max_results))
+    } else {
+        None
+    };
+
+    // Start server if serving is enabled
+    if settings.serve {
+        if let Some(ref buffer) = data_buffer {
+            let server_buffer = buffer.clone();
+            let port = settings.port;
+
+            tokio::spawn(async move {
+                if let Err(e) = crate::serving::server::start_server(port, server_buffer).await {
+                    error!("Server error: {e}");
+                }
+            });
+        }
+    }
+
     backup_old_file(settings)?;
 
     let data_file = OpenOptions::new()
@@ -40,7 +61,7 @@ pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Resul
 
     info!("Started collecting data...");
     loop {
-        collect_and_save_data(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data)?;
+        collect_and_save_data(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data, &data_buffer).await?;
 
         if crx.try_recv().is_ok() {
             drop(data_file);
@@ -165,12 +186,13 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
     Ok(())
 }
 
-fn collect_and_save_data(
+async fn collect_and_save_data(
     sys: &mut System,
     data_file: &mut BufWriter<fs::File>,
     settings: &CollectSettings,
     collected_bytes: &mut usize,
     process_cache_data: &mut ProcessCache,
+    data_buffer: &Option<DataBuffer>,
 ) -> Result<(), Error> {
     let current_time = SystemTime::now();
 
@@ -244,6 +266,10 @@ fn collect_and_save_data(
             .context(format!("Failed to flush data file {}", settings.convert.data_path))?;
     }
 
+    if let Some(ref buffer) = data_buffer {
+        buffer.add_data_point(DataPoint::from(&data_to_save_str)).await;
+    }
+
     Ok(())
 }
 
@@ -274,7 +300,11 @@ pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
 // 1. Get all system pids
 // 2. Check for new processes and update them if are > 30, then use sys.refresh_processes_specific, to update them all in batch(probably cheaper than updating one by one)
 
-pub fn check_for_new_and_old_process_data<T: ProcessSettings>(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &T) -> Result<(), Error> {
+pub fn check_for_new_and_old_process_data<T: ProcessSettings>(
+    sys: &mut System,
+    process_cache_data: &mut ProcessCache,
+    settings: &T,
+) -> Result<(), Error> {
     let system_pids = get_system_pids()?;
 
     // If all searched processes are tracked, then app don't need to check for new processes
@@ -300,7 +330,12 @@ pub fn check_for_new_and_old_process_data<T: ProcessSettings>(sys: &mut System, 
     Ok(())
 }
 
-fn check_which_process_to_track<T: ProcessSettings>(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &T, system_pids: &HashSet<usize>) {
+fn check_which_process_to_track<T: ProcessSettings>(
+    process_cache_data: &mut ProcessCache,
+    sys: &mut System,
+    settings: &T,
+    system_pids: &HashSet<usize>,
+) {
     for (idx, i) in settings.process_cmd_to_search().iter().enumerate() {
         if process_cache_data.process_used[idx].is_some() {
             // Already monitoring process from such name

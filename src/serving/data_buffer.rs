@@ -10,16 +10,17 @@ pub struct DataPoint {
 
 impl DataPoint {
     pub fn from_collected_data(data: &Vec<String>) -> Self {
-        let timestamp = if !data.is_empty() {
-            data[0].parse::<f64>().unwrap_or(0.0)
-        } else {
-            0.0
-        };
+        let timestamp = if !data.is_empty() { data[0].parse::<f64>().unwrap_or(0.0) } else { 0.0 };
 
         Self {
             timestamp,
             data: data.clone(),
         }
+    }
+
+    pub fn from(data_str: &str) -> Self {
+        let data: Vec<String> = data_str.split(',').map(std::string::ToString::to_string).collect();
+        Self::from_collected_data(&data)
     }
 }
 

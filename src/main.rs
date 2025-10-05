@@ -8,10 +8,10 @@
 #![warn(clippy::dbg_macro)]
 #![warn(clippy::string_slice)]
 
-use std::{env, process};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread::available_parallelism;
 use std::time::Instant;
+use std::{env, process};
 
 use crossbeam_channel::Sender;
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
@@ -61,7 +61,7 @@ async fn main() {
             if let Err(e) = collect_data(&mut sys, &settings).await {
                 error!("{e}");
                 process::exit(1);
-            };
+            }
 
             // Convert after collecting if enabled
             if settings.convert_after {
