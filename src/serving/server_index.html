@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Info Collector - Live Data</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .system-info {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #e3f2fd;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+        }
+        .system-info h3 {
+            margin-top: 0;
+            color: #1976d2;
+        }
+        .system-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+        .stat-item {
+            padding: 10px;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #1976d2;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+        }
+        .stats {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #e8f5e8;
+            border-radius: 4px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+            font-size: 0.9em;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+            position: sticky;
+            top: 0;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 0.85em;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+        }
+        .error {
+            color: #d32f2f;
+            background-color: #ffebee;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        input, select, button {
+            margin: 5px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .auto-refresh {
+            color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>System Info Collector - Live Data</h1>
+        
+        <div class="system-info" id="systemInfo">
+            <h3>System Information</h3>
+            <div class="system-stats">
+                <div class="stat-item">
+                    <div class="stat-label">Total Memory</div>
+                    <div class="stat-value" id="totalMemory">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total Swap</div>
+                    <div class="stat-value" id="totalSwap">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">CPU Cores</div>
+                    <div class="stat-value" id="cpuCores">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Started At</div>
+                    <div class="stat-value" id="startTime">Loading...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <label>
+                Number of results: 
+                <input type="number" id="limitInput" value="10" min="1" max="100">
+                <span id="maxLimitInfo"></span>
+            </label>
+            <button onclick="loadData()">Refresh</button>
+            <label>
+                <input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)
+            </label>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="loading">Loading stats...</div>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="dataContainer">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+        let metadata = null;
+
+        async function loadMetadata() {
+            try {
+                const response = await fetch('/api/metadata');
+                metadata = await response.json();
+                
+                // Update system info display
+                document.getElementById('totalMemory').textContent = `${metadata.system_info.total_memory_mb.toFixed(2)} MB`;
+                document.getElementById('totalSwap').textContent = `${metadata.system_info.total_swap_mb.toFixed(2)} MB`;
+                document.getElementById('cpuCores').textContent = metadata.system_info.cpu_cores;
+                document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
+                
+                // Update max limit info
+                const maxLimitInfo = document.getElementById('maxLimitInfo');
+                maxLimitInfo.textContent = `(max: ${metadata.max_buffer_size})`;
+                
+                // Update limit input max value
+                const limitInput = document.getElementById('limitInput');
+                limitInput.max = metadata.max_buffer_size;
+                
+            } catch (error) {
+                console.error('Error loading metadata:', error);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                const statsDiv = document.getElementById('stats');
+                statsDiv.innerHTML = `
+                    <strong>Total data points:</strong> ${data.total_count} / ${data.max_buffer_size}<br>
+                    <strong>First record:</strong> ${data.first ? formatAbsoluteTimestamp(metadata?.system_info?.start_time + data.first.timestamp) : 'None'}<br>
+                    <strong>Last record:</strong> ${data.last ? formatAbsoluteTimestamp(metadata?.system_info?.start_time + data.last.timestamp) : 'None'}
+                `;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadData() {
+            const limitInput = document.getElementById('limitInput');
+            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
+            const errorDiv = document.getElementById('error');
+            const dataContainer = document.getElementById('dataContainer');
+            
+            try {
+                errorDiv.style.display = 'none';
+                
+                const response = await fetch(`/api/data/recent?limit=${limit}`);
+                const result = await response.json();
+                
+                if (result.data && result.data.length > 0) {
+                    displayTable(result.data);
+                } else {
+                    dataContainer.innerHTML = '<div class="loading">No data available</div>';
+                }
+                
+                await loadStats();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                errorDiv.textContent = 'Error loading data: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function displayTable(data) {
+            const container = document.getElementById('dataContainer');
+            
+            if (data.length === 0) {
+                container.innerHTML = '<div class="loading">No data available</div>';
+                return;
+            }
+
+            // Use proper column headers from metadata or fallback to generic names
+            const headers = metadata?.column_headers || ['Timestamp'];
+            
+            // Ensure we have headers for all data columns
+            const firstRow = data[0];
+            while (headers.length < firstRow.data.length) {
+                headers.push(`Data ${headers.length}`);
+            }
+
+            let tableHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            ${headers.map(h => `<th>${h}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            data.forEach(point => {
+                tableHTML += '<tr>';
+                // Format timestamp properly
+                const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
+                tableHTML += `<td class="timestamp">${formatAbsoluteTimestamp(absoluteTime)}</td>`;
+                
+                // Add all data columns except the first one (which is the relative timestamp)
+                point.data.slice(1).forEach(value => {
+                    tableHTML += `<td>${value}</td>`;
+                });
+                tableHTML += '</tr>';
+            });
+
+            tableHTML += '</tbody></table>';
+            container.innerHTML = tableHTML;
+        }
+
+        function formatAbsoluteTimestamp(unixTimestamp) {
+            if (!unixTimestamp) return 'Unknown';
+            const date = new Date(unixTimestamp * 1000);
+            return date.toLocaleString();
+        }
+
+        function setupAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+            
+            checkbox.addEventListener('change', function() {
+                if (this.checked) {
+                    autoRefreshInterval = setInterval(loadData, 5000);
+                } else {
+                    clearInterval(autoRefreshInterval);
+                }
+            });
+
+            // Start auto-refresh if checkbox is checked
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(loadData, 5000);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async function() {
+            await loadMetadata();
+            await loadData();
+            setupAutoRefresh();
+        });
+    </script>
+</body>
+</html>
