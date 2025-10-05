@@ -362,22 +362,22 @@ fn update_new_processes_stats(process_cache_data: &mut ProcessCache, sys: &mut S
     let new_processes = process_cache_data.get_differences_in_usage_processes(system_pids.iter());
 
     if !new_processes.is_empty() {
-        if new_processes.len() > 40 {
-            info!("Found {} new processes, refreshing them in batch", new_processes.len());
-            sys.refresh_all();
-        } else {
-            info!("Found {} new processes, refreshing them one by one", new_processes.len());
-            sys.refresh_processes_specifics(
-                ProcessesToUpdate::Some(&new_processes.iter().map(|i| Pid::from(*i)).collect::<Vec<_>>()),
-                true,
-                ProcessRefreshKind::nothing()
-                    .with_exe(UpdateKind::OnlyIfNotSet)
-                    .with_cmd(UpdateKind::OnlyIfNotSet)
-                    .with_cwd(UpdateKind::OnlyIfNotSet)
-                    .with_cpu()
-                    .with_memory(),
-            );
-        }
+        let refreshing_start = Instant::now();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&new_processes.iter().map(|i| Pid::from(*i)).collect::<Vec<_>>()),
+            true,
+            ProcessRefreshKind::nothing()
+                .with_exe(UpdateKind::OnlyIfNotSet)
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_cwd(UpdateKind::OnlyIfNotSet)
+                .with_cpu()
+                .with_memory(),
+        );
+        info!(
+            "Found {} new processes, refreshed them in {:?}",
+            new_processes.len(),
+            refreshing_start.elapsed()
+        );
     }
     process_cache_data.replace_checked_usage_processes(system_pids.iter());
 }

@@ -208,4 +208,3 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> std::resul
 
     Ok((swap_total, memory_total, cpu_core_count, check_interval, general_data_hashmap, start_time))
 }
-
