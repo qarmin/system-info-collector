@@ -6,6 +6,9 @@ After collecting results into csv file, html file can be created with plot.
 
 ![Screenshot](https://github.com/qarmin/czkawka/assets/41945903/58371709-996a-41cf-a352-d28addf24ad9)
 
+![Screenshot2](https://github.com/user-attachments/assets/63e6ead4-7053-43c6-af64-e06c45bba235)
+
+
 ## Why?
 
 I needed a simple and fast application to collect basic information about the amount of RAM used and CPU consumption on
@@ -173,12 +176,6 @@ Currently, fully supported is only Linux, due to using manually reading `/proc` 
 App should also fully work on Mac, but on Windows capturing process cpu/memory usage is not supported (except that,
 everything should work fine).
 
-## License
-
-MIT License
-
-Copyright (c) 2023 Rafał Mikrut and contributors
-
 ## Live HTTP Server
 
 The application has a built-in HTTP server that allows you to view live data in your web browser.
@@ -194,14 +191,14 @@ Run with the `--serve` option (optionally with `--port` and `--max-results`):
 After starting, open your browser and go to `http://localhost:5998/`.
 
 ### Web interface features
-- **CPU and RAM charts** (whole system + per program, if configured) – dynamic, with legend, dark mode.
+- **CPU and RAM charts**
 - **Data table** – with text information about current CPU and RAM usage.
-- **Auto-refresh** – ability to set the refresh interval.
-- **Responsive dark mode** – dark theme by default, readable on any screen.
-- **No internet dependency** – static files (e.g. Chart.js) are embedded in the binary and served by the backend.
+- **Auto-refresh** – ability to set the refresh interval or leave it to manual refresh
+- **Dark mode**
+- **No external dependencies** – static files (e.g. Chart.js) are embedded in the binary and served by the backend
 
-### Example view
+## License
 
-![Live server screenshot](https://github.com/qarmin/system-info-collector/assets/41945903/58371709-996a-41cf-a352-d28addf24ad9)
+MIT License
 
-The server allows you to conveniently view live data, analyze charts, and quickly browse large datasets without manually opening CSV or HTML files.
+Copyright (c) 2023-2025 Rafał Mikrut and contributors

@@ -329,20 +329,19 @@
             while (headers.length < firstRow.data.length) {
                 headers.push(`Data ${headers.length}`);
             }
-            // --- WYKRESY ---
-            // Szukamy indeksów kolumn CPU i RAM
+            // Identify CPU and RAM columns
             const cpuIndices = headers
                 .map((h, i) => ({ h, i }))
                 .filter(({ h }) => h.toLowerCase().includes('cpu'));
             const ramIndices = headers
                 .map((h, i) => ({ h, i }))
                 .filter(({ h }) => h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory'));
-            // Przygotuj dane do wykresów
+            // Prepare timestamps
             const timestamps = data.map(point => {
                 const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
                 return formatAbsoluteTimestamp(absoluteTime);
             });
-            // CPU - wiele linii
+            // CPU - split into multiple lines if needed
             let cpuDatasets = [];
             if (cpuIndices.length > 0) {
                 cpuDatasets = cpuIndices.map(({ h, i }, idx) => ({
@@ -357,7 +356,7 @@
                     tension: 0.1,
                 }));
             }
-            // RAM - wiele linii
+            // RAM - split into multiple lines if needed
             let ramDatasets = [];
             if (ramIndices.length > 0) {
                 ramDatasets = ramIndices.map(({ h, i }, idx) => ({
@@ -372,7 +371,7 @@
                     tension: 0.1,
                 }));
             }
-            // Rysuj wykres CPU
+            // Draw CPU chart
             if (cpuDatasets.length && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
                 document.getElementById('cpuChartContainer').style.display = '';
                 if (window.cpuChartObj) window.cpuChartObj.destroy();
@@ -398,7 +397,7 @@
             } else {
                 document.getElementById('cpuChartContainer').style.display = 'none';
             }
-            // Rysuj wykres RAM
+            // Draw RAM chart
             if (ramDatasets.length && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
                 document.getElementById('ramChartContainer').style.display = '';
                 if (window.ramChartObj) window.ramChartObj.destroy();
@@ -424,7 +423,7 @@
             } else {
                 document.getElementById('ramChartContainer').style.display = 'none';
             }
-            // --- TABELA ---
+            // --- Table with data ---
             let tableHTML = `
                 <table>
                     <thead>
