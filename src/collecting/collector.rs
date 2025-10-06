@@ -1,7 +1,7 @@
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, error, info};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};
 use tokio::time::interval;
 
 use std::collections::HashSet;
@@ -322,7 +322,9 @@ async fn collect_and_save_data(
 
 // Sys-info not have enough fast to check for available processes
 // In this step I don't need any info except running process pids
-pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
+#[cfg(target_os = "linux")]
+pub fn get_system_pids(
+    _sys: &mut System,) -> Result<HashSet<usize>, Error> {
     let Ok(entries) = fs::read_dir("/proc") else {
         return Err(Error::msg("Failed to read /proc directory"));
     };
@@ -343,6 +345,14 @@ pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
 
     Ok(pids)
 }
+#[cfg(not(target_os = "linux"))]
+pub fn get_system_pids(
+    sys: &mut System,
+) -> Result<HashSet<usize>, Error> {
+    sys.refresh_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet)));
+    Ok(sys.processes().keys().map(|pid| pid.as_u32() as usize).collect())
+}
+
 // Algorithm:
 // 1. Get all system pids
 // 2. Check for new processes and update them if are > 30, then use sys.refresh_processes_specific, to update them all in batch(probably cheaper than updating one by one)
@@ -352,7 +362,7 @@ pub fn check_for_new_and_old_process_data<T: ProcessSettings>(
     process_cache_data: &mut ProcessCache,
     settings: &T,
 ) -> Result<(), Error> {
-    let system_pids = get_system_pids()?;
+    let system_pids = get_system_pids(sys)?;
 
     // If all searched processes are tracked, then app don't need to check for new processes
     // Only update used
