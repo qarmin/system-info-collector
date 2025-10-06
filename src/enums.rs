@@ -37,33 +37,33 @@ pub enum DataType {
 
 impl DataType {
     pub fn get_allowed_values() -> String {
-        DataType::iter().map(|e| e.to_string()).collect::<Vec<String>>().join(", ")
+        Self::iter().map(|e| e.to_string()).collect::<Vec<String>>().join(", ")
     }
 
     pub fn is_memory(&self) -> bool {
         matches!(
             self,
-            DataType::MEMORY_USED | DataType::MEMORY_FREE | DataType::MEMORY_AVAILABLE | DataType::CUSTOM_MEMORY(_)
+            Self::MEMORY_USED | Self::MEMORY_FREE | Self::MEMORY_AVAILABLE | Self::CUSTOM_MEMORY(_)
         )
     }
     pub fn is_swap(&self) -> bool {
-        matches!(self, DataType::SWAP_USED | DataType::SWAP_FREE)
+        matches!(self, Self::SWAP_USED | Self::SWAP_FREE)
     }
     pub fn is_cpu(&self) -> bool {
-        matches!(self, DataType::CPU_USAGE_TOTAL | DataType::CPU_USAGE_PER_CORE | DataType::CUSTOM_CPU(_))
+        matches!(self, Self::CPU_USAGE_TOTAL | Self::CPU_USAGE_PER_CORE | Self::CUSTOM_CPU(_))
     }
     pub fn pretty_print(&self) -> String {
         match self {
-            DataType::SECONDS_SINCE_START => "Unix timestamp".to_string(),
-            DataType::CPU_USAGE_TOTAL => "CPU usage total".to_string(),
-            DataType::CPU_USAGE_PER_CORE => "CPU usage per core".to_string(),
-            DataType::MEMORY_USED => "Memory used".to_string(),
-            DataType::MEMORY_FREE => "Memory free".to_string(),
-            DataType::SWAP_FREE => "Swap free".to_string(),
-            DataType::SWAP_USED => "Swap used".to_string(),
-            DataType::MEMORY_AVAILABLE => "Memory available".to_string(),
-            DataType::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
-            DataType::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
+            Self::SECONDS_SINCE_START => "Unix timestamp".to_string(),
+            Self::CPU_USAGE_TOTAL => "CPU usage total".to_string(),
+            Self::CPU_USAGE_PER_CORE => "CPU usage per core".to_string(),
+            Self::MEMORY_USED => "Memory used".to_string(),
+            Self::MEMORY_FREE => "Memory free".to_string(),
+            Self::SWAP_FREE => "Swap free".to_string(),
+            Self::SWAP_USED => "Swap used".to_string(),
+            Self::MEMORY_AVAILABLE => "Memory available".to_string(),
+            Self::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
+            Self::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
         }
     }
 }

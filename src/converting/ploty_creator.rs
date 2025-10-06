@@ -88,7 +88,7 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         ),
     ];
 
-    #[allow(clippy::format_collect)]
+    #[expect(clippy::format_collect)]
     let notes = notes
         .iter()
         .map(|e| format!("<div style=\"text-align: center;\">{e}</div>"))
@@ -146,7 +146,7 @@ pub fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &Conve
             .range(AxisRange::new(0, loaded_results.swap_total.ceil() as usize))
             .title(Title::with_text("Swap Usage[MB]"));
 
-        layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis.clone(), y_axis);
+        layout = set_axes_into_layout(&mut current_axis_idx, layout, x_axis, y_axis);
     }
 
     (layout, layout_idx_info)

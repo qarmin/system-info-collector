@@ -27,7 +27,7 @@ pub struct CustomProcessData {
 
 impl CustomProcessData {
     pub fn from_process(process: &Process) -> Self {
-        CustomProcessData {
+        Self {
             pid: process.pid().into(),
             name: process.name().to_string_lossy().to_string(),
             cmd_string: process
@@ -57,7 +57,7 @@ impl ProcessCache {
         let mut processes_usage_updated = sys.processes().keys().map(|pid| (*pid).into()).collect::<HashSet<usize>>();
         processes_usage_updated.insert(process::id() as usize);
 
-        ProcessCache {
+        Self {
             processes_usage_updated,
             processes_checked_to_be_used,
             process_used: vec![None; size],

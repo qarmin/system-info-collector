@@ -1,7 +1,7 @@
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
 use log::{debug, error, info};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::time::interval;
 
 use std::collections::HashSet;
@@ -169,7 +169,7 @@ fn format_new_name(file_path: &str, item_to_add: &str) -> String {
     }
 }
 
-fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &CollectSettings) -> Result<(), Error> {
+fn write_header_into_file(sys: &System, data_file: &mut BufWriter<std::fs::File>, settings: &CollectSettings) -> Result<(), Error> {
     let custom_headers = settings
         .process_cmd_to_search
         .iter()
@@ -323,8 +323,7 @@ async fn collect_and_save_data(
 // Sys-info not have enough fast to check for available processes
 // In this step I don't need any info except running process pids
 #[cfg(target_os = "linux")]
-pub fn get_system_pids(
-    _sys: &mut System,) -> Result<HashSet<usize>, Error> {
+pub fn get_system_pids(_sys: &mut System) -> Result<HashSet<usize>, Error> {
     let Ok(entries) = fs::read_dir("/proc") else {
         return Err(Error::msg("Failed to read /proc directory"));
     };
@@ -346,9 +345,7 @@ pub fn get_system_pids(
     Ok(pids)
 }
 #[cfg(not(target_os = "linux"))]
-pub fn get_system_pids(
-    sys: &mut System,
-) -> Result<HashSet<usize>, Error> {
+pub fn get_system_pids(sys: &mut System) -> Result<HashSet<usize>, Error> {
     sys.refresh_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet)));
     Ok(sys.processes().keys().map(|pid| pid.as_u32() as usize).collect())
 }
@@ -387,12 +384,7 @@ pub fn check_for_new_and_old_process_data<T: ProcessSettings>(
     Ok(())
 }
 
-fn check_which_process_to_track<T: ProcessSettings>(
-    process_cache_data: &mut ProcessCache,
-    sys: &mut System,
-    settings: &T,
-    system_pids: &HashSet<usize>,
-) {
+fn check_which_process_to_track<T: ProcessSettings>(process_cache_data: &mut ProcessCache, sys: &System, settings: &T, system_pids: &HashSet<usize>) {
     for (idx, i) in settings.process_cmd_to_search().iter().enumerate() {
         if process_cache_data.process_used[idx].is_some() {
             // Already monitoring process from such name

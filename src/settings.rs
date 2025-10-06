@@ -84,7 +84,7 @@ impl From<CollectArgs> for CollectSettings {
             process::exit(1);
         }
 
-        CollectSettings {
+        Self {
             check_interval: cli.check_interval,
             convert: convert_settings,
             collection_mode: cli.collection_mode,
@@ -108,7 +108,7 @@ impl From<CollectArgs> for CollectSettings {
 
 impl From<ConvertArgs> for ConvertSettings {
     fn from(cli: ConvertArgs) -> Self {
-        ConvertSettings {
+        Self {
             data_path: cli.common.data_path,
             plot_path: cli.common.plot_path,
             plot_width: cli.common.plot_width,

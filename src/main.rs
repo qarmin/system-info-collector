@@ -98,6 +98,8 @@ pub fn set_ctrl_c_handler(ctx: Sender<()>) {
     .expect("Error when setting Ctrl-C handler");
 }
 
+// This is unused depending on build features
+#[allow(clippy::allow_attributes)]
 #[allow(unused_mut)]
 pub fn print_version_mode() {
     let debug_release = if cfg!(debug_assertions) { "debug" } else { "release" };
