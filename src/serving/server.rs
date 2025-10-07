@@ -117,7 +117,7 @@ async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRespons
 async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let max_size = buffer.get_max_size();
     let total_count = buffer.len().await;
-    let limit = params.limit.unwrap_or(10).min(max_size).min(total_count);
+    let limit = params.limit.unwrap_or(10000).min(max_size).min(total_count);
     let data_points = buffer.get_last_n(limit).await;
 
     let response = RecentDataResponse {

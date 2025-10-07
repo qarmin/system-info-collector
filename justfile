@@ -23,3 +23,26 @@ runs:
 
 cross_arm_32:
     cargo build --target armv7-unknown-linux-gnueabihf
+
+arm_send ip_address:
+    # To avoid glibc version issues, using zigbuild
+    #    cargo build --release --target armv7-unknown-linux-gnueabihf
+
+    cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28
+    ssh root@{{ ip_address }} 'mkdir -p /home/root/data_collector'
+    scp -O target/armv7-unknown-linux-gnueabihf/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
+
+full_send ip_address service_file:
+    just arm_send {{ip_address}}
+    ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
+    ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
+    scp -O "{{ service_file }}" root@{{ ip_address }}:/etc/systemd/system/system-info-collector.service
+    ssh root@{{ ip_address }} 'systemctl daemon-reload'
+    ssh root@{{ ip_address }} 'systemctl enable system-info-collector'
+    ssh root@{{ ip_address }} 'systemctl start system-info-collector'
+    ssh root@{{ ip_address }} 'cat /home/root/data_collector/data.csv'
+    ssh root@{{ ip_address }} 'systemctl status system-info-collector'
+
+show_data ip_address:
+    scp -O root@{{ ip_address }}:/home/root/data_collector/data.csv .
+    cargo run --release -- convert -d data.csv -p plot.html -o

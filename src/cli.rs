@@ -53,9 +53,7 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Collect system info. Use --convert-after to also convert/plot after collecting
     Collect(CollectArgs),
-    /// Convert existing data file into plot
     Convert(ConvertArgs),
 }
 
@@ -140,7 +138,7 @@ pub struct CollectArgs {
     #[arg(
         short = 'l',
         long,
-        default_value = "1000",
+        default_value = "10000",
         value_name = "MAX_RESULTS",
         help = "Maximum number of results to store and display in server (only used with --serve)"
     )]
