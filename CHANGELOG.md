@@ -1,3 +1,9 @@
+## Version 0.6.0 - 05.10.2025
+- Increased minimum rust version to 1.85
+- Updated sys-info - now less info is collected, to minimize disk requests
+- New server mode - serve simple web server with plot and text info in realtime on given port
+- Changed some options - making e.g. app mode mandatory
+
 ## Version 0.5.1 - 10.08.2023
 
 - Fixes problem with start time, which was taken from current time instead collecting start time

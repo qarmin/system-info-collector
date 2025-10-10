@@ -1,7 +1,7 @@
 use anyhow::{Context, Error};
 use crossbeam_channel::unbounded;
-use log::{debug, info};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use log::{debug, error, info};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::time::interval;
 
 use std::collections::HashSet;
@@ -12,19 +12,80 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
-use crate::model::{CustomProcessData, ProcessCache, Settings};
-use crate::ploty_creator::load_results_and_save_plot;
+use crate::model::{CustomProcessData, ProcessCache};
+use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemInfo, SystemMetadata};
 use crate::set_ctrl_c_handler;
+use crate::settings::{CollectSettings, ProcessSettings};
 
-pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), Error> {
+pub async fn collect_data(sys: &mut System, settings: &CollectSettings) -> Result<(), Error> {
+    // Create data buffer if serving is enabled
+    let data_buffer = if settings.serve {
+        Some(DataBuffer::new(settings.max_results))
+    } else {
+        None
+    };
+
+    // Set metadata for the data buffer
+    if let Some(ref buffer) = data_buffer {
+        // Create column headers based on collection mode
+        let mut column_headers = vec!["Timestamp".to_string()];
+
+        for mode in &settings.collection_mode {
+            column_headers.push(mode.to_string());
+        }
+
+        // Add custom process headers
+        for process in &settings.process_cmd_to_search {
+            column_headers.push(format!("{} CPU", process.graph_name));
+            column_headers.push(format!("{} Memory", process.graph_name));
+        }
+
+        let metadata = SystemMetadata {
+            system_info: SystemInfo {
+                total_memory_mb: convert_bytes_into_mega_bytes(sys.total_memory()),
+                total_swap_mb: convert_bytes_into_mega_bytes(sys.total_swap()),
+                cpu_cores: sys.cpus().len(),
+                start_time: settings.start_time,
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            column_headers,
+            max_buffer_size: settings.max_results,
+        };
+
+        buffer.set_metadata(metadata).await;
+    }
+
+    // Start server if serving is enabled
+    if settings.serve {
+        if let Some(ref buffer) = data_buffer {
+            let server_buffer = buffer.clone();
+            let port = settings.port;
+
+            // Spawn server in a separate OS thread with its own Tokio runtime
+            // This ensures the HTTP server runs completely independently and doesn't block data collection
+            std::thread::spawn(move || {
+                info!("Starting HTTP server thread on port {port}");
+
+                // Create a new Tokio runtime for the server thread
+                let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime for server");
+
+                runtime.block_on(async move {
+                    if let Err(e) = crate::serving::server::start_server(port, server_buffer).await {
+                        error!("Server error: {e}");
+                    }
+                });
+            });
+        }
+    }
+
     backup_old_file(settings)?;
 
     let data_file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&settings.data_path)
-        .context(format!("Failed to open data file {}", settings.data_path))?;
+        .open(&settings.convert.data_path)
+        .context(format!("Failed to open data file {}", settings.convert.data_path))?;
     let mut data_file = BufWriter::new(data_file);
     write_header_into_file(sys, &mut data_file, settings)?;
 
@@ -39,13 +100,18 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 
     info!("Started collecting data...");
     loop {
-        collect_and_save_data(sys, &mut data_file, settings, &mut collected_bytes, &mut process_cache_data)?;
+        collect_and_save_data(
+            sys,
+            &mut data_file,
+            settings,
+            &mut collected_bytes,
+            &mut process_cache_data,
+            data_buffer.as_ref(),
+        )
+        .await?;
 
         if crx.try_recv().is_ok() {
             drop(data_file);
-            if settings.app_mode == crate::enums::AppMode::COLLECT_AND_CONVERT {
-                load_results_and_save_plot(settings)?;
-            }
             return Ok(());
         }
 
@@ -54,13 +120,13 @@ pub async fn collect_data(sys: &mut System, settings: &Settings) -> Result<(), E
 }
 
 // Function to create
-fn backup_old_file(settings: &Settings) -> Result<(), Error> {
+fn backup_old_file(settings: &CollectSettings) -> Result<(), Error> {
     if settings.backup_number == 0 {
         return Ok(()); // No backup required
     }
     let mut backup_file_names = vec![];
     for i in 1..=settings.backup_number {
-        backup_file_names.push(format_new_name(&settings.data_path, &format!("__{i}")));
+        backup_file_names.push(format_new_name(&settings.convert.data_path, &format!("__{i}")));
     }
 
     // Remove last backup file
@@ -82,10 +148,10 @@ fn backup_old_file(settings: &Settings) -> Result<(), Error> {
     }
 
     // Rename current file into first backup file name
-    if Path::new(&settings.data_path).exists() {
-        fs::rename(&settings.data_path, &backup_file_names[0]).context(format!(
+    if Path::new(&settings.convert.data_path).exists() {
+        fs::rename(&settings.convert.data_path, &backup_file_names[0]).context(format!(
             "Failed to rename data file {} into {}",
-            &settings.data_path, &backup_file_names[0]
+            &settings.convert.data_path, &backup_file_names[0]
         ))?;
     }
 
@@ -103,7 +169,7 @@ fn format_new_name(file_path: &str, item_to_add: &str) -> String {
     }
 }
 
-fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::File>, settings: &Settings) -> Result<(), Error> {
+fn write_header_into_file(sys: &System, data_file: &mut BufWriter<std::fs::File>, settings: &CollectSettings) -> Result<(), Error> {
     let custom_headers = settings
         .process_cmd_to_search
         .iter()
@@ -134,7 +200,7 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
         env!("CARGO_PKG_VERSION"),
         custom_headers
     );
-    writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.data_path))?;
+    writeln!(data_file, "{general_info}").context(format!("Failed to write general into data file {}", settings.convert.data_path))?;
 
     let custom_columns = (0..settings.process_cmd_to_search.len())
         .map(|idx| format!("CUSTOM_{idx}_CPU,CUSTOM_{idx}_MEMORY"))
@@ -156,21 +222,24 @@ fn write_header_into_file(sys: &mut System, data_file: &mut BufWriter<std::fs::F
             .collect::<Vec<String>>()
             .join(",")
     );
-    writeln!(data_file, "{data_header}").context(format!("Failed to write header into data file {}", settings.data_path))?;
+    writeln!(data_file, "{data_header}").context(format!("Failed to write header into data file {}", settings.convert.data_path))?;
 
     if !settings.disable_instant_flushing {
-        data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;
+        data_file
+            .flush()
+            .context(format!("Failed to flush data file {}", settings.convert.data_path))?;
     }
 
     Ok(())
 }
 
-fn collect_and_save_data(
+async fn collect_and_save_data(
     sys: &mut System,
     data_file: &mut BufWriter<fs::File>,
-    settings: &Settings,
+    settings: &CollectSettings,
     collected_bytes: &mut usize,
     process_cache_data: &mut ProcessCache,
+    data_buffer: Option<&DataBuffer>,
 ) -> Result<(), Error> {
     let current_time = SystemTime::now();
 
@@ -236,10 +305,16 @@ fn collect_and_save_data(
         )));
     }
 
-    writeln!(data_file, "{data_to_save_str}").context(format!("Failed to write data into data file {}", settings.data_path))?;
+    writeln!(data_file, "{data_to_save_str}").context(format!("Failed to write data into data file {}", settings.convert.data_path))?;
 
     if !settings.disable_instant_flushing {
-        data_file.flush().context(format!("Failed to flush data file {}", settings.data_path))?;
+        data_file
+            .flush()
+            .context(format!("Failed to flush data file {}", settings.convert.data_path))?;
+    }
+
+    if let Some(buffer) = data_buffer {
+        buffer.add_data_point(DataPoint::from(&data_to_save_str)).await;
     }
 
     Ok(())
@@ -247,7 +322,8 @@ fn collect_and_save_data(
 
 // Sys-info not have enough fast to check for available processes
 // In this step I don't need any info except running process pids
-pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
+#[cfg(target_os = "linux")]
+pub fn get_system_pids(_sys: &mut System) -> Result<HashSet<usize>, Error> {
     let Ok(entries) = fs::read_dir("/proc") else {
         return Err(Error::msg("Failed to read /proc directory"));
     };
@@ -268,12 +344,22 @@ pub fn get_system_pids() -> Result<HashSet<usize>, Error> {
 
     Ok(pids)
 }
+#[cfg(not(target_os = "linux"))]
+pub fn get_system_pids(sys: &mut System) -> Result<HashSet<usize>, Error> {
+    sys.refresh_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet)));
+    Ok(sys.processes().keys().map(|pid| pid.as_u32() as usize).collect())
+}
+
 // Algorithm:
 // 1. Get all system pids
 // 2. Check for new processes and update them if are > 30, then use sys.refresh_processes_specific, to update them all in batch(probably cheaper than updating one by one)
 
-pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: &mut ProcessCache, settings: &Settings) -> Result<(), Error> {
-    let system_pids = get_system_pids()?;
+pub fn check_for_new_and_old_process_data<T: ProcessSettings>(
+    sys: &mut System,
+    process_cache_data: &mut ProcessCache,
+    settings: &T,
+) -> Result<(), Error> {
+    let system_pids = get_system_pids(sys)?;
 
     // If all searched processes are tracked, then app don't need to check for new processes
     // Only update used
@@ -281,7 +367,7 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
     if process_cache_data
         .process_used
         .iter()
-        .all(|e| e.is_some() && system_pids.contains(&e.as_ref().unwrap().pid))
+        .all(|e| e.as_ref().is_some_and(|p| system_pids.contains(&p.pid)))
     {
         update_usage_of_tracked_process(process_cache_data, sys);
         return Ok(());
@@ -298,8 +384,8 @@ pub fn check_for_new_and_old_process_data(sys: &mut System, process_cache_data: 
     Ok(())
 }
 
-fn check_which_process_to_track(process_cache_data: &mut ProcessCache, sys: &mut System, settings: &Settings, system_pids: &HashSet<usize>) {
-    for (idx, i) in settings.process_cmd_to_search.iter().enumerate() {
+fn check_which_process_to_track<T: ProcessSettings>(process_cache_data: &mut ProcessCache, sys: &System, settings: &T, system_pids: &HashSet<usize>) {
+    for (idx, i) in settings.process_cmd_to_search().iter().enumerate() {
         if process_cache_data.process_used[idx].is_some() {
             // Already monitoring process from such name
             continue;
@@ -360,22 +446,24 @@ fn remove_tracking_of_removed_processes(process_cache_data: &mut ProcessCache, s
 fn update_new_processes_stats(process_cache_data: &mut ProcessCache, sys: &mut System, system_pids: &HashSet<usize>) {
     let new_processes = process_cache_data.get_differences_in_usage_processes(system_pids.iter());
 
-    if new_processes.len() == 1 {
-        info!("Found {} new processes, refreshing them once", new_processes.len());
+    if !new_processes.is_empty() {
+        let refreshing_start = Instant::now();
         sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[Pid::from(new_processes[0])]),
+            ProcessesToUpdate::Some(&new_processes.iter().map(|i| Pid::from(*i)).collect::<Vec<_>>()),
             true,
-            ProcessRefreshKind::new().with_cpu(),
+            ProcessRefreshKind::nothing()
+                .with_exe(UpdateKind::OnlyIfNotSet)
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_cwd(UpdateKind::OnlyIfNotSet)
+                .with_cpu()
+                .with_memory(),
         );
-    } else if new_processes.len() > 1 {
-        info!("Found {} new processes, refreshing them one by one", new_processes.len());
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&new_processes.iter().map(|e| Pid::from(*e)).collect::<Vec<_>>()),
-            true,
-            ProcessRefreshKind::new().with_cpu(),
+        info!(
+            "Found {} new processes, refreshed them in {:?}",
+            new_processes.len(),
+            refreshing_start.elapsed()
         );
     }
-
     process_cache_data.replace_checked_usage_processes(system_pids.iter());
 }
 
@@ -384,29 +472,20 @@ fn update_usage_of_tracked_process(process_cache_data: &mut ProcessCache, sys: &
     if process_count == 0 {
         return;
     }
-    debug!("Updating data of {process_count} processes");
+    debug!("Updating data of {} processes", process_cache_data.process_used.iter().flatten().count());
 
-    let refresh_kind = ProcessRefreshKind::new().with_cpu();
-    if process_count > 1 {
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(
-                &process_cache_data
-                    .process_used
-                    .iter()
-                    .flatten()
-                    .map(|e| Pid::from(e.pid))
-                    .collect::<Vec<_>>(),
-            ),
-            true,
-            refresh_kind,
-        );
-    } else {
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[Pid::from(process_cache_data.process_used.iter().flatten().next().unwrap().pid)]),
-            true,
-            refresh_kind,
-        );
-    }
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(
+            &process_cache_data
+                .process_used
+                .iter()
+                .flatten()
+                .map(|custom_process| Pid::from(custom_process.pid))
+                .collect::<Vec<_>>(),
+        ),
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
 
     for custom_process in process_cache_data.process_used.iter_mut().flatten() {
         let Some(process) = sys.processes().get(&Pid::from(custom_process.pid)) else {
