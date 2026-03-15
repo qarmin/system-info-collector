@@ -15,6 +15,7 @@ use std::{env, process};
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
 use sysinfo::System;
+use system_info_collector_core::discovery::discover_gpus;
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
@@ -42,15 +43,30 @@ async fn main() {
             let convert_settings = settings.convert.clone();
             let convert_after = settings.convert_after;
 
+            // Always collect and log system hardware info.
+            let mut meta_sys = System::new();
+            meta_sys.refresh_memory();
+            meta_sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+
+            let cpu_logical_cores = meta_sys.cpus().len();
+            let cpu_physical_cores = sysinfo::System::physical_core_count().unwrap_or(0);
+            let cpu_model = meta_sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+            let total_memory_mb = bytes_to_mb(meta_sys.total_memory());
+            let total_swap_mb = bytes_to_mb(meta_sys.total_swap());
+
+            info!("CPU: {cpu_model}, {cpu_physical_cores} physical cores / {cpu_logical_cores} threads");
+            info!("Memory: {total_memory_mb:.0} MB total RAM, {total_swap_mb:.0} MB swap");
+
+            let display_gpus = discover_gpus();
+            let gpu_names: Vec<String> = display_gpus.iter().map(|g| g.display_name().to_string()).collect();
+            if gpu_names.is_empty() {
+                info!("GPU: none detected");
+            }
+
             // Build the HTTP data buffer before starting the engine so we can
             // pass a clone to the on_row callback.
             let data_buffer: Option<DataBuffer> = if settings.serve {
                 let buffer = DataBuffer::new(settings.max_results);
-
-                // Populate metadata with a quick System query.
-                let mut meta_sys = System::new();
-                meta_sys.refresh_memory();
-                meta_sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
 
                 let mut column_headers = vec!["Timestamp".to_string()];
                 for mode in &settings.collection_mode {
@@ -63,9 +79,12 @@ async fn main() {
 
                 let metadata = SystemMetadata {
                     system_info: SystemInfo {
-                        total_memory_mb: bytes_to_mb(meta_sys.total_memory()),
-                        total_swap_mb: bytes_to_mb(meta_sys.total_swap()),
-                        cpu_cores: meta_sys.cpus().len(),
+                        total_memory_mb,
+                        total_swap_mb,
+                        cpu_cores: cpu_logical_cores,
+                        cpu_physical_cores,
+                        cpu_model: cpu_model.clone(),
+                        gpu_names: gpu_names.clone(),
                         start_time: settings.start_time,
                         app_version: env!("CARGO_PKG_VERSION").to_string(),
                     },
@@ -92,6 +111,7 @@ async fn main() {
             } else {
                 None
             };
+            let _ = (cpu_model, gpu_names); // suppress unused warnings when !serve
 
             let engine = CollectorEngine::new(settings);
             let shutdown = engine.shutdown_handle();
