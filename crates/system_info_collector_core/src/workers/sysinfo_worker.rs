@@ -35,10 +35,14 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
         sys.refresh_cpu_usage();
         sys.refresh_memory();
 
-        // If top-N tracking is enabled, do a full process refresh first (provides data for
-        // both the top-N ranking and the tracked-process logic below).
+        // If top-N tracking is enabled, refresh all processes with only cpu+memory —
+        // disk_usage, exe, tasks are not needed for top-N grouping by name.
         if settings.top_n_processes > 0 {
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            sys.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing().with_cpu().with_memory(),
+            );
         } else if settings.need_to_refresh_processes {
             if let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings) {
                 log::warn!("Process tracking error: {e}");
