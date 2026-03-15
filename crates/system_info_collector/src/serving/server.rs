@@ -76,8 +76,7 @@ async fn index_handler() -> impl IntoResponse {
 }
 
 async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
-    let metadata = buffer.get_metadata().await;
-
+    let metadata = buffer.get_metadata();
     let response = MetadataResponse {
         system_info: SystemInfoResponse {
             total_memory_mb: metadata.system_info.total_memory_mb,
@@ -89,55 +88,40 @@ async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRes
         column_headers: metadata.column_headers,
         max_buffer_size: metadata.max_buffer_size,
     };
-
     (StatusCode::OK, Json(response))
 }
 
 async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
-    let (first, last) = buffer.get_first_and_last().await;
-    let total_count = buffer.len().await;
+    let (first, last) = buffer.get_first_and_last();
+    let total_count = buffer.len();
     let max_size = buffer.get_max_size();
 
     let response = DataResponse {
         total_count,
         max_buffer_size: max_size,
-        first: first.map(|d| DataPointResponse {
-            timestamp: d.timestamp,
-            data: d.data,
-        }),
-        last: last.map(|d| DataPointResponse {
-            timestamp: d.timestamp,
-            data: d.data,
-        }),
+        first: first.map(|d| DataPointResponse { timestamp: d.timestamp, data: d.data }),
+        last: last.map(|d| DataPointResponse { timestamp: d.timestamp, data: d.data }),
     };
-
     (StatusCode::OK, Json(response))
 }
 
 async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let max_size = buffer.get_max_size();
-    let total_count = buffer.len().await;
+    let total_count = buffer.len();
     let limit = params.limit.unwrap_or(10000).min(max_size).min(total_count);
-    let data_points = buffer.get_last_n(limit).await;
+    let data_points = buffer.get_last_n(limit);
 
     let response = RecentDataResponse {
         data: data_points
             .into_iter()
-            .map(|d| DataPointResponse {
-                timestamp: d.timestamp,
-                data: d.data,
-            })
+            .map(|d| DataPointResponse { timestamp: d.timestamp, data: d.data })
             .collect(),
         count: limit,
         max_available: total_count,
     };
-
     (StatusCode::OK, Json(response))
 }
 
 async fn chartjs_handler() -> impl IntoResponse {
-    (
-        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
-        include_bytes!("./chart.min.js") as &'static [u8],
-    )
+    ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_bytes!("./chart.min.js") as &'static [u8])
 }

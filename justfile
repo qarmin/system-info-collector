@@ -15,20 +15,18 @@ fix:
 
 run:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
-    cargo run -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o; firefox system_data_plot.html
+    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o; firefox system_data_plot.html
 
 runs:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
-    cargo run -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s -l 10000; firefox system_data_plot.html
+    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s -l 10000; firefox system_data_plot.html
 
 cross_arm_32:
-    cargo build --target armv7-unknown-linux-gnueabihf
+    cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
 
 arm_send ip_address:
     # To avoid glibc version issues, using zigbuild
-    #    cargo build --release --target armv7-unknown-linux-gnueabihf
-
-    cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28
+    cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28 -p system_info_collector
     ssh root@{{ ip_address }} 'mkdir -p /home/root/data_collector'
     scp -O target/armv7-unknown-linux-gnueabihf/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
 
@@ -45,4 +43,4 @@ full_send ip_address service_file:
 
 show_data ip_address:
     scp -O root@{{ ip_address }}:/home/root/data_collector/data.csv .
-    cargo run --release -- convert -d data.csv -p plot.html -o
+    cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o

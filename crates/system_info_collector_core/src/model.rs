@@ -30,12 +30,7 @@ impl CustomProcessData {
         Self {
             pid: process.pid().into(),
             name: process.name().to_string_lossy().to_string(),
-            cmd_string: process
-                .cmd()
-                .iter()
-                .map(|e| e.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join(" "),
+            cmd_string: process.cmd().iter().map(|e| e.to_string_lossy().to_string()).collect::<Vec<_>>().join(" "),
             memory_usage: process.memory(),
             cpu_usage: process.cpu_usage(),
         }
@@ -48,9 +43,9 @@ pub struct ProcessCache {
     pub processes_checked_to_be_used: HashSet<usize>,
     pub process_used: Vec<Option<CustomProcessData>>,
 }
+
 impl ProcessCache {
     pub fn new_with_size(size: usize, sys: &System) -> Self {
-        // Do not allow to check current process, because cmd values will always be valid for it
         let mut processes_checked_to_be_used = HashSet::default();
         processes_checked_to_be_used.insert(process::id() as usize);
 
