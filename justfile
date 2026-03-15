@@ -59,3 +59,7 @@ all:
         -c 0.5 -s -l 10000 --top-n-processes 5
     # Without cpu-usage-per-core, because it is too much data for
     just show
+
+samplyrd bin *args:
+    cargo build --bin {{bin}} --profile rdebug
+    samply record target/rdebug/{{bin}} {{args}}

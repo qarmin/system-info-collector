@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -79,20 +79,29 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
             })
             .collect();
 
-        // Collect top-N processes by CPU% and RAM.
+        // Collect top-N processes by CPU% and RAM, grouped by executable name.
         let mut top_cpu_snap: Vec<(String, f32)> = Vec::new();
         let mut top_ram_snap: Vec<(String, f64)> = Vec::new();
         if settings.top_n_processes > 0 {
             let n = settings.top_n_processes;
             let cpu_divisor = cpu_count as f32;
 
-            let mut all_procs: Vec<_> = sys.processes().values().collect();
+            // Sum CPU% and RAM across all processes sharing the same executable name.
+            let mut cpu_by_name: HashMap<String, f32> = HashMap::new();
+            let mut ram_by_name: HashMap<String, u64> = HashMap::new();
+            for proc in sys.processes().values() {
+                let name = proc.name().to_string_lossy().to_string();
+                *cpu_by_name.entry(name.clone()).or_insert(0.0) += proc.cpu_usage();
+                *ram_by_name.entry(name).or_insert(0) += proc.memory();
+            }
 
-            all_procs.sort_unstable_by(|a, b| b.cpu_usage().partial_cmp(&a.cpu_usage()).unwrap_or(std::cmp::Ordering::Equal));
-            top_cpu_snap = all_procs.iter().take(n).map(|p| (p.name().to_string_lossy().to_string(), p.cpu_usage() / cpu_divisor)).collect();
+            let mut cpu_vec: Vec<(String, f32)> = cpu_by_name.into_iter().collect();
+            cpu_vec.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            top_cpu_snap = cpu_vec.into_iter().take(n).map(|(name, cpu)| (name, cpu / cpu_divisor)).collect();
 
-            all_procs.sort_unstable_by(|a, b| b.memory().cmp(&a.memory()));
-            top_ram_snap = all_procs.iter().take(n).map(|p| (p.name().to_string_lossy().to_string(), bytes_to_mb(p.memory()))).collect();
+            let mut ram_vec: Vec<(String, u64)> = ram_by_name.into_iter().collect();
+            ram_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+            top_ram_snap = ram_vec.into_iter().take(n).map(|(name, mem)| (name, bytes_to_mb(mem))).collect();
         }
 
         {

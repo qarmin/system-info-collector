@@ -222,7 +222,7 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         );
     }
     if has_network {
-        add_chart!(ChartGroup::Network, Axis::new().title(Title::with_text("Network [bytes/s]")));
+        add_chart!(ChartGroup::Network, Axis::new().title(Title::with_text("Network [MB/s]")));
     }
     if has_gpu_util {
         add_chart!(ChartGroup::GpuUtil, Axis::new().range(vec![-1, 100]).title(Title::with_text("GPU Utilization [%]")));
@@ -268,6 +268,73 @@ fn build_process_traces(top: &TopProcessData) -> Vec<(String, Vec<Option<f64>>)>
     traces
 }
 
+/// Convert a per-timestamp optional-value trace into (xs, ys) with -1 sentinels.
+///
+/// For each contiguous block where the process is present:
+///   - emits a -1.0 point at the timestamp just BEFORE the block (if it exists)
+///   - emits all actual values in the block
+///   - emits a -1.0 point at the timestamp just AFTER the block (if it exists)
+///
+/// Between separate blocks a `None` y-value is inserted so plotly draws a gap
+/// instead of a diagonal line spanning the absence.
+fn build_sentinel_trace(
+    values: &[Option<f64>],
+    dates: &[Option<DateTime<Utc>>],
+) -> (Vec<DateTime<Utc>>, Vec<Option<f64>>) {
+    let n = values.len();
+    let mut xs: Vec<DateTime<Utc>> = Vec::new();
+    let mut ys: Vec<Option<f64>> = Vec::new();
+
+    let mut i = 0;
+    while i < n {
+        if values[i].is_none() {
+            i += 1;
+            continue;
+        }
+
+        // Found the start of a contiguous present block.
+        let block_start = i;
+        while i < n && values[i].is_some() {
+            i += 1;
+        }
+        let block_end = i - 1; // inclusive
+
+        // Gap separator between consecutive blocks so plotly doesn't draw a line.
+        if !xs.is_empty() {
+            if let Some(Some(dt)) = dates.get(block_start) {
+                xs.push(*dt);
+                ys.push(None);
+            }
+        }
+
+        // -1 sentinel one tick before the block.
+        if block_start > 0 {
+            if let Some(Some(dt)) = dates.get(block_start - 1) {
+                xs.push(*dt);
+                ys.push(Some(-1.0));
+            }
+        }
+
+        // Actual block values.
+        for j in block_start..=block_end {
+            if let Some(Some(dt)) = dates.get(j) {
+                xs.push(*dt);
+                ys.push(values[j]); // Option<f64>
+            }
+        }
+
+        // -1 sentinel one tick after the block.
+        if block_end + 1 < n {
+            if let Some(Some(dt)) = dates.get(block_end + 1) {
+                xs.push(*dt);
+                ys.push(Some(-1.0));
+            }
+        }
+    }
+
+    (xs, ys)
+}
+
 /// Render and write a standalone process plot to `path`.
 /// `kind` is "CPU" or "RAM" and drives the Y-axis label.
 fn save_top_process_plot_file(
@@ -298,11 +365,16 @@ fn save_top_process_plot_file(
 
     // Single-chart layout; height grows slightly with many traces for the legend.
     let height = settings.plot_height.max(600 + (n_traces as u32).saturating_sub(10) * 20);
+    let y_axis = if kind == "CPU" {
+        Axis::new().range(vec![-2.0_f64, 100.0]).title(Title::with_text(y_title))
+    } else {
+        Axis::new().title(Title::with_text(y_title))
+    };
     let mut layout = Layout::new()
         .width(settings.plot_width as usize)
         .height(height as usize)
         .x_axis(Axis::new().title(Title::with_text("Time")))
-        .y_axis(Axis::new().title(Title::with_text(y_title)));
+        .y_axis(y_axis);
 
     if !settings.white_plot_mode {
         layout = layout.template(&*PLOTLY_DARK);
@@ -311,12 +383,7 @@ fn save_top_process_plot_file(
 
     // One trace per unique process; color spread evenly around the hue wheel.
     for (trace_idx, (name, values)) in traces.iter().enumerate() {
-        // Build (date, value) pairs, emitting None for gaps.
-        // Plotly Scatter with connectgaps=false will leave visible gaps.
-        let xs: Vec<DateTime<Utc>> = dates.iter().zip(values.iter()).filter_map(|(dt, v)| {
-            if v.is_some() { dt.as_ref().copied() } else { None }
-        }).collect();
-        let ys: Vec<String> = values.iter().filter_map(|v| v.map(|x| format!("{x:.2}"))).collect();
+        let (xs, ys) = build_sentinel_trace(values, &dates);
 
         if xs.is_empty() {
             continue;

@@ -106,14 +106,15 @@ pub async fn run<F>(
                     row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_free_mb)));
                 }
                 // Network modes expand to one column per discovered interface.
+                // Values are written in MB/s (bytes ÷ 1 048 576) for readability.
                 SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
                     for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.2}", n.rx_bytes_per_sec)));
+                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.4}", n.rx_bytes_per_sec / 1_048_576.0)));
                     }
                 }
                 SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
                     for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.2}", n.tx_bytes_per_sec)));
+                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.4}", n.tx_bytes_per_sec / 1_048_576.0)));
                     }
                 }
                 // GPU modes expand to one column per discovered GPU.

@@ -14,6 +14,11 @@ license = "MIT"
 homepage = "https://github.com/qarmin/system-info-collector"
 repository = "https://github.com/qarmin/system-info-collector"
 
+[profile.rdebug]
+inherits = "release"
+debug = "full"
+strip = "none"
+
 [workspace.lints.clippy]
 unreachable = "allow"
 enum_variant_names = "allow"
