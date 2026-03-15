@@ -17,7 +17,7 @@ system_info_collector_core = { path = "../system_info_collector_core", features 
 
 time = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
-sysinfo = "0.38"
+sysinfo = { version ="0.38", default-features = false, features = ["component", "network", "system"] }
 tokio = { version = "1.30", features = ["full"] }
 handsome_logger = "0.9"
 log = "0.4"

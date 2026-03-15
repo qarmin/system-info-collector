@@ -60,6 +60,12 @@ all:
     # Without cpu-usage-per-core, because it is too much data for
     just show
 
-samplyrd bin *args:
-    cargo build --bin {{bin}} --profile rdebug
-    samply record target/rdebug/{{bin}} {{args}}
+samplyrd:
+    cargo build --profile rdebug
+    samply record target/rdebug/system_info_collector collect \
+        -m cpu-usage-total  \
+             memory-used memory-free memory-available \
+             swap-used swap-free \
+             network-rx-bytes-per-sec network-tx-bytes-per-sec \
+             gpu-utilization gpu-memory-used gpu-temperature \
+        -c 0.5 -s -l 10000 --top-n-processes 5
