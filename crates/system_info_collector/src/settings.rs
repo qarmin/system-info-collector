@@ -6,13 +6,16 @@ use system_info_collector_core::settings::{CollectSettings, ConvertSettings, Fin
 use crate::cli::{CollectArgs, ConvertArgs};
 
 pub fn build_convert_settings(args: ConvertArgs) -> ConvertSettings {
+    let mut paths = args.data_paths;
+    let main_path = paths.remove(0);
     ConvertSettings {
-        data_path: args.common.data_path,
-        plot_path: args.common.plot_path,
-        plot_width: args.common.plot_width,
-        plot_height: args.common.plot_height,
-        white_plot_mode: args.common.white_plot_mode,
-        open_plot_file: args.common.open_plot_file,
+        data_path: main_path,
+        extra_data_paths: paths,
+        plot_path: args.plot.plot_path,
+        plot_width: args.plot.plot_width,
+        plot_height: args.plot.plot_height,
+        white_plot_mode: args.plot.white_plot_mode,
+        open_plot_file: args.plot.open_plot_file,
     }
 }
 
@@ -38,15 +41,16 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         .collect();
 
     let convert_settings = ConvertSettings {
-        data_path: args.common.data_path,
-        plot_path: args.common.plot_path,
-        plot_width: args.common.plot_width,
-        plot_height: args.common.plot_height,
-        white_plot_mode: args.common.white_plot_mode,
-        open_plot_file: args.common.open_plot_file,
+        data_path: args.data_path,
+        extra_data_paths: vec![],
+        plot_path: args.plot.plot_path,
+        plot_width: args.plot.plot_width,
+        plot_height: args.plot.plot_height,
+        white_plot_mode: args.plot.white_plot_mode,
+        open_plot_file: args.plot.open_plot_file,
     };
 
-    if args.common.open_plot_file && !args.convert_after {
+    if args.plot.open_plot_file && !args.convert_after {
         log::error!("Cannot use --open-plot-file without --convert-after");
         process::exit(1);
     }
@@ -74,5 +78,6 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         serve: args.serve,
         port: args.port,
         max_results: args.max_results.clamp(1, 100_000),
+        top_n_processes: args.top_n_processes,
     }
 }

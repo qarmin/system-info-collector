@@ -35,7 +35,19 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
         sys.refresh_cpu_usage();
         sys.refresh_memory();
 
-        if settings.need_to_refresh_processes {
+        // If top-N tracking is enabled, do a full process refresh first (provides data for
+        // both the top-N ranking and the tracked-process logic below).
+        if settings.top_n_processes > 0 {
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        } else if settings.need_to_refresh_processes {
+            if let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings) {
+                log::warn!("Process tracking error: {e}");
+            }
+        }
+
+        // When top_n AND tracked processes are both active, update tracked processes
+        // using data that's already been refreshed by the full process refresh above.
+        if settings.top_n_processes > 0 && settings.need_to_refresh_processes {
             if let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings) {
                 log::warn!("Process tracking error: {e}");
             }
@@ -67,10 +79,30 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
             })
             .collect();
 
+        // Collect top-N processes by CPU% and RAM.
+        let mut top_cpu_snap: Vec<(String, f32)> = Vec::new();
+        let mut top_ram_snap: Vec<(String, f64)> = Vec::new();
+        if settings.top_n_processes > 0 {
+            let n = settings.top_n_processes;
+            let cpu_divisor = cpu_count as f32;
+
+            let mut all_procs: Vec<_> = sys.processes().values().collect();
+
+            all_procs.sort_unstable_by(|a, b| b.cpu_usage().partial_cmp(&a.cpu_usage()).unwrap_or(std::cmp::Ordering::Equal));
+            top_cpu_snap = all_procs.iter().take(n).map(|p| (p.name().to_string_lossy().to_string(), p.cpu_usage() / cpu_divisor)).collect();
+
+            all_procs.sort_unstable_by(|a, b| b.memory().cmp(&a.memory()));
+            top_ram_snap = all_procs.iter().take(n).map(|p| (p.name().to_string_lossy().to_string(), bytes_to_mb(p.memory()))).collect();
+        }
+
         {
             let mut guard = state.write().expect("SharedState RwLock poisoned");
             guard.latest_sysinfo = Some(snapshot);
             guard.latest_processes = process_snapshots;
+            if settings.top_n_processes > 0 {
+                guard.latest_top_cpu = top_cpu_snap;
+                guard.latest_top_ram = top_ram_snap;
+            }
         }
     }
 

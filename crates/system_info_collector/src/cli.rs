@@ -1,18 +1,16 @@
 use clap::{Parser, Subcommand};
 use system_info_collector_core::enums::SimpleDataCollectionMode;
 
+/// Plot-related settings shared between Collect and Convert commands.
 #[derive(Debug, clap::Args, Clone)]
-pub struct CommonCollect {
-    #[arg(short, long, default_value = "system_data.csv", value_name = "DATA_PATH", help = "Path to data file collected by this app or to convert.")]
-    pub data_path: String,
-
+pub struct PlotArgs {
     #[arg(short, long, default_value = "system_data_plot.html", value_name = "HTML_PLOT_PATH", help = "Path where html file with plot will be saved.")]
     pub plot_path: String,
 
     #[arg(short = 'w', long, default_value = "1700", value_name = "WIDTH", help = "Width of generated plot.")]
     pub plot_width: u32,
 
-    #[arg(short = 'r', long, default_value = "800", value_name = "HEIGHT", help = "Height of generated plot.")]
+    #[arg(short = 'r', long, default_value = "800", value_name = "HEIGHT", help = "Minimum height of generated plot (auto-scales with number of charts).")]
     pub plot_height: u32,
 
     #[arg(short = 'z', long, default_value = "false", value_name = "WHITE_PLOT_MODE", help = "White plot mode.")]
@@ -49,8 +47,11 @@ pub struct CollectArgs {
     )]
     pub check_interval: f32,
 
+    #[arg(short, long, default_value = "system_data.csv", value_name = "DATA_PATH", help = "Path to the output data file.")]
+    pub data_path: String,
+
     #[command(flatten)]
-    pub common: CommonCollect,
+    pub plot: PlotArgs,
 
     #[arg(
         short = 'm',
@@ -102,12 +103,28 @@ pub struct CollectArgs {
 
     #[arg(short = 'C', long, help = "Convert to HTML plot after collection finishes.")]
     pub convert_after: bool,
+
+    // ── Top-N processes ───────────────────────────────────────────────────────
+
+    #[arg(
+        long,
+        default_value = "0",
+        value_name = "N",
+        help = "Track the top N most CPU-hungry and RAM-hungry processes, writing them to separate files (0 = disabled)."
+    )]
+    pub top_n_processes: usize,
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct ConvertArgs {
+    /// One or more data files: first is the main CSV, the rest are top-N process files
+    /// (auto-detected from their header).
+    /// Usage: -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv
+    #[arg(short, long, num_args = 1.., default_values = &["system_data.csv"], value_name = "DATA_PATH")]
+    pub data_paths: Vec<String>,
+
     #[command(flatten)]
-    pub common: CommonCollect,
+    pub plot: PlotArgs,
 }
 
 pub(crate) fn parse_cli() -> Args {

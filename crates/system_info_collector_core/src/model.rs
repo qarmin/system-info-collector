@@ -14,6 +14,24 @@ pub struct CollectedItemModels {
     pub cpu_core_count: usize,
     pub check_interval: f32,
     pub start_time: f64,
+    /// GPU names parsed from CSV metadata (GPU_0=name, GPU_1=name, …).
+    pub gpu_names: Vec<String>,
+    /// Top N processes by CPU%, loaded from an optional extra file.
+    pub top_cpu_processes: Option<TopProcessData>,
+    /// Top N processes by RAM (MB), loaded from an optional extra file.
+    pub top_ram_processes: Option<TopProcessData>,
+}
+
+/// Data loaded from a top-N-processes file (CPU or RAM).
+#[derive(Default, Clone, Debug, Deserialize)]
+pub struct TopProcessData {
+    pub n: usize,
+    pub start_time: f64,
+    /// Timestamps (seconds since start_time) for each row.
+    pub timestamps: Vec<f64>,
+    /// `ranks[rank_index][row_index]` = `Some((process_name, value))`.
+    /// `None` when fewer than N processes were running at that moment.
+    pub ranks: Vec<Vec<Option<(String, f64)>>>,
 }
 
 #[derive(Default, Debug, Clone)]

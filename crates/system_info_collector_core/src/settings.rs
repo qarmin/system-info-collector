@@ -8,7 +8,10 @@ pub struct FindingStruct {
 
 #[derive(Default, Clone, Debug)]
 pub struct ConvertSettings {
+    /// Main data CSV (first -d argument).
     pub data_path: String,
+    /// Additional data files (extra -d arguments): top-CPU and/or top-RAM process files.
+    pub extra_data_paths: Vec<String>,
     pub plot_path: String,
     pub plot_width: u32,
     pub plot_height: u32,
@@ -40,4 +43,6 @@ pub struct CollectSettings {
     pub serve: bool,
     pub port: u16,
     pub max_results: usize,
+    /// Number of top processes to track by CPU% and RAM (0 = disabled).
+    pub top_n_processes: usize,
 }

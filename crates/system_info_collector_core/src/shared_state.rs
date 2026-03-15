@@ -61,4 +61,8 @@ pub struct SharedState {
     /// Latest per-process snapshots, indexed by search-pattern slot.
     /// Written by sysinfo_worker alongside sysinfo data.
     pub latest_processes: Vec<Option<ProcessSnapshot>>,
+    /// Top N processes by CPU% (name, cpu_pct_normalized).
+    pub latest_top_cpu: Vec<(String, f32)>,
+    /// Top N processes by RAM (name, ram_mb).
+    pub latest_top_ram: Vec<(String, f64)>,
 }

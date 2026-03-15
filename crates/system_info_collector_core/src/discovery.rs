@@ -163,13 +163,13 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                     info!("AMD card {card_name}: gpu_busy_percent not available, skipping");
                     continue;
                 }
-                let name = read_pci_label(&device_path).unwrap_or_else(|| format!("AMD GPU ({card_name})"));
+                let name = resolve_gpu_name(&device_path, &format!("AMD GPU ({card_name})"));
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu { gpu_index, vendor: GpuVendor::AmdLinux { card_device_path: device_path, name } });
             }
             "0x8086" => {
                 // Intel
-                let name = read_pci_label(&device_path).unwrap_or_else(|| format!("Intel GPU ({card_name})"));
+                let name = resolve_gpu_name(&device_path, &format!("Intel GPU ({card_name})"));
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu { gpu_index, vendor: GpuVendor::IntelLinux { card_device_path: device_path, name } });
             }
@@ -188,6 +188,98 @@ fn read_pci_label(device_path: &std::path::Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Try to look up the GPU name from the system PCI IDs database.
+/// Reads vendor/device/subsystem IDs from sysfs and searches `/usr/share/hwdata/pci.ids`.
+#[cfg(target_os = "linux")]
+fn lookup_pci_name(device_path: &std::path::Path) -> Option<String> {
+    let vendor_raw = std::fs::read_to_string(device_path.join("vendor")).ok()?;
+    let device_raw = std::fs::read_to_string(device_path.join("device")).ok()?;
+
+    let vendor_id = vendor_raw.trim().trim_start_matches("0x").to_lowercase();
+    let device_id = device_raw.trim().trim_start_matches("0x").to_lowercase();
+
+    let sub_vendor = std::fs::read_to_string(device_path.join("subsystem_vendor"))
+        .map(|s| s.trim().trim_start_matches("0x").to_lowercase())
+        .unwrap_or_default();
+    let sub_device = std::fs::read_to_string(device_path.join("subsystem_device"))
+        .map(|s| s.trim().trim_start_matches("0x").to_lowercase())
+        .unwrap_or_default();
+
+    for pci_ids_path in &["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"] {
+        if let Ok(content) = std::fs::read_to_string(pci_ids_path) {
+            if let Some(name) = search_pci_ids(&content, &vendor_id, &device_id, &sub_vendor, &sub_device) {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+/// Parse the PCI IDs database file to find the most specific GPU name.
+/// Format: vendor lines (no indent), device lines (\t), subsystem lines (\t\t).
+#[cfg(target_os = "linux")]
+fn search_pci_ids(content: &str, vendor: &str, device: &str, sub_vendor: &str, sub_device: &str) -> Option<String> {
+    let mut in_vendor = false;
+    let mut device_name: Option<String> = None;
+    let mut past_device = false;
+
+    for line in content.lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+
+        if !line.starts_with('\t') {
+            // Vendor line
+            if in_vendor && past_device {
+                // We've moved past our vendor, return the device name
+                return device_name;
+            }
+            if in_vendor && !past_device {
+                // Different vendor — stop
+                return None;
+            }
+            let id = line.split_whitespace().next().unwrap_or("");
+            in_vendor = id.eq_ignore_ascii_case(vendor);
+        } else if in_vendor && !line.starts_with("\t\t") {
+            // Device line under our vendor
+            if past_device {
+                // Moved to a different device — return device name (no subsystem match)
+                return device_name;
+            }
+            let trimmed = line.trim_start_matches('\t');
+            let id = trimmed.split_whitespace().next().unwrap_or("");
+            if id.eq_ignore_ascii_case(device) {
+                let rest = trimmed[id.len()..].trim();
+                device_name = Some(rest.to_string());
+                past_device = true;
+            }
+        } else if in_vendor && past_device && line.starts_with("\t\t") {
+            // Subsystem line: "\t\tsubvend subdev  name"
+            if sub_vendor.is_empty() || sub_device.is_empty() {
+                continue;
+            }
+            let trimmed = line.trim_start_matches('\t');
+            let mut parts = trimmed.split_whitespace();
+            let sv = parts.next().unwrap_or("");
+            let sd = parts.next().unwrap_or("");
+            if sv.eq_ignore_ascii_case(sub_vendor) && sd.eq_ignore_ascii_case(sub_device) {
+                let rest: Vec<_> = parts.collect();
+                return Some(rest.join(" "));
+            }
+        }
+    }
+
+    device_name
+}
+
+/// Best-effort GPU name: label file → pci.ids → fallback string.
+#[cfg(target_os = "linux")]
+fn resolve_gpu_name(device_path: &std::path::Path, fallback: &str) -> String {
+    read_pci_label(device_path)
+        .or_else(|| lookup_pci_name(device_path))
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 impl DiscoveredGpu {

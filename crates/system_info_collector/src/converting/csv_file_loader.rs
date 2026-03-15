@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Lines};
 use anyhow::{Context, Error, Result};
 use log::info;
 use system_info_collector_core::enums::{DataType, GeneralInfoGroup, HeaderValues};
-use system_info_collector_core::model::CollectedItemModels;
+use system_info_collector_core::model::{CollectedItemModels, TopProcessData};
 use system_info_collector_core::settings::ConvertSettings;
 
 pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModels, Error> {
@@ -23,8 +23,37 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
     let mut lines_iter = data_file.lines();
 
     let (swap_total, memory_total, cpu_core_count, check_interval, hashmap_data, start_time) = parse_file_values_data(&mut lines_iter)?;
+
+    // Extract GPU names from metadata map (GPU_0=name, GPU_1=name, …).
+    let mut gpu_name_entries: Vec<(usize, String)> = hashmap_data
+        .iter()
+        .filter_map(|(k, v)| k.strip_prefix("GPU_").and_then(|n| n.parse::<usize>().ok()).map(|idx| (idx, v.clone())))
+        .collect();
+    gpu_name_entries.sort_by_key(|(idx, _)| *idx);
+    let gpu_names: Vec<String> = gpu_name_entries.into_iter().map(|(_, name)| name).collect();
+
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
+
+    // Load optional extra data files (top-N process files).
+    let mut top_cpu_processes: Option<TopProcessData> = None;
+    let mut top_ram_processes: Option<TopProcessData> = None;
+
+    for extra_path in &settings.extra_data_paths {
+        match load_top_process_file(extra_path) {
+            Ok((kind, data)) => {
+                info!("Loaded top-{kind} process file: {extra_path}");
+                if kind == "CPU" {
+                    top_cpu_processes = Some(data);
+                } else {
+                    top_ram_processes = Some(data);
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to load extra data file {extra_path}: {e}");
+            }
+        }
+    }
 
     Ok(CollectedItemModels {
         collected_data,
@@ -34,7 +63,62 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         cpu_core_count,
         check_interval,
         start_time,
+        gpu_names,
+        top_cpu_processes,
+        top_ram_processes,
     })
+}
+
+/// Load a top-N process file.  Returns `(type_tag, data)` where type_tag is "CPU" or "RAM".
+pub fn load_top_process_file(path: &str) -> Result<(String, TopProcessData), Error> {
+    let file = File::open(path).context(format!("Failed to open top-N file {path}"))?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+
+    // Metadata line: START_TIME=xxx,TOP_N=5,TYPE=CPU
+    let meta_line = lines.next().context("Missing metadata line")?.context("Failed to read metadata line")?;
+    let mut meta: HashMap<String, String> = HashMap::new();
+    for kv in meta_line.split(',') {
+        let mut parts = kv.splitn(2, '=');
+        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+            meta.insert(k.to_string(), v.to_string());
+        }
+    }
+
+    let start_time: f64 = meta.get("START_TIME").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let n: usize = meta.get("TOP_N").and_then(|s| s.parse().ok()).unwrap_or(5);
+    let kind = meta.get("TYPE").cloned().unwrap_or_else(|| "CPU".to_string());
+
+    // Column header line: TIMESTAMP,1,2,...,N  (skip it)
+    let _header = lines.next().context("Missing header line")?.context("Failed to read header line")?;
+
+    let mut timestamps: Vec<f64> = Vec::new();
+    let mut ranks: Vec<Vec<Option<(String, f64)>>> = (0..n).map(|_| Vec::new()).collect();
+
+    for line in lines {
+        let line = line.context("Failed to read data line")?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut cols = line.split(',');
+        let ts: f64 = cols.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        timestamps.push(ts);
+
+        for rank_vec in ranks.iter_mut() {
+            let entry = cols.next().and_then(|s| {
+                if s.is_empty() {
+                    return None;
+                }
+                let mut parts = s.splitn(2, '|');
+                let name = parts.next()?.to_string();
+                let val: f64 = parts.next()?.parse().ok()?;
+                Some((name, val))
+            });
+            rank_vec.push(entry);
+        }
+    }
+
+    Ok((kind, TopProcessData { n, start_time, timestamps, ranks }))
 }
 
 fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[DataType], cpu_core_count: usize) -> Result<HashMap<DataType, Vec<String>>, Error> {
