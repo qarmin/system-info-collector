@@ -88,34 +88,33 @@ fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[D
 fn parse_header(lines_iter: &mut Lines<BufReader<File>>, hashmap_data: &HashMap<String, String>) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
     let header_line = lines_iter.next().context("Failed to read second line of data file")?.context("Failed to read second line of data file")?;
 
+    // Build name lookup maps from the metadata line.
+    // GPU_N=<name>, NET_N=<iface>, CUSTOM_N=<name>
+    let mut gpu_names: HashMap<usize, String> = HashMap::new();
+    let mut iface_names: HashMap<usize, String> = HashMap::new();
+    let mut custom_names: HashMap<usize, String> = HashMap::new();
+
+    for (key, val) in hashmap_data {
+        if let Some(rest) = key.strip_prefix("GPU_") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                gpu_names.insert(idx, val.clone());
+            }
+        } else if let Some(rest) = key.strip_prefix("NET_") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                iface_names.insert(idx, val.clone());
+            }
+        } else if let Some(rest) = key.strip_prefix("CUSTOM_") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                custom_names.insert(idx, val.clone());
+            }
+        }
+    }
+
     let collected_data_names: Vec<DataType> = header_line
         .split(',')
-        .map(|item| match item.parse::<DataType>() {
-            Ok(dt) => Ok(dt),
-            Err(_) => {
-                if let Some(s) = item.strip_prefix("CUSTOM_") {
-                    let parts = s.split('_').collect::<Vec<_>>();
-                    if parts.len() != 2 || parts[0].parse::<usize>().is_err() || !(matches!(parts[1], "CPU" | "MEMORY")) {
-                        return Err(Error::msg(format!(
-                            "Failed to parse custom column \"{item}\": expected CUSTOM_{{IDX}}_CPU or CUSTOM_{{IDX}}_MEMORY"
-                        )));
-                    }
-                    let idx: usize = parts[0].parse().expect("Validated above");
-                    let name = hashmap_data
-                        .get(&format!("CUSTOM_{idx}"))
-                        .context(format!("CUSTOM_{idx} referenced in header but missing in metadata line"))?.clone();
-                    if parts[1] == "CPU" {
-                        Ok(DataType::CUSTOM_CPU((idx, name)))
-                    } else {
-                        Ok(DataType::CUSTOM_MEMORY((idx, name)))
-                    }
-                } else {
-                    Err(Error::msg(format!(
-                        "Unknown column \"{item}\" in data file (allowed: {:?})",
-                        DataType::get_allowed_values()
-                    )))
-                }
-            }
+        .map(|item| {
+            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names)
+                .ok_or_else(|| Error::msg(format!("Unknown column \"{item}\" in data file (allowed: {})", DataType::get_allowed_values())))
         })
         .collect::<Result<_, Error>>()?;
 
@@ -130,8 +129,6 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>, hashmap_data: &HashMap<
     let cpu_cols = [DataType::CPU_USAGE_TOTAL, DataType::CPU_USAGE_PER_CORE];
     let mem_cols = [DataType::MEMORY_AVAILABLE, DataType::MEMORY_FREE, DataType::MEMORY_USED];
     let swap_cols = [DataType::SWAP_USED, DataType::SWAP_FREE];
-    let net_cols = [DataType::NETWORK_RX_BYTES_PER_SEC, DataType::NETWORK_TX_BYTES_PER_SEC];
-    let gpu_cols = [DataType::GPU_UTILIZATION, DataType::GPU_MEMORY_USED, DataType::GPU_TEMPERATURE];
 
     if collected_data_names.iter().any(|e| cpu_cols.contains(e) || e.is_cpu()) {
         collected_groups.push(GeneralInfoGroup::CPU);
@@ -142,10 +139,10 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>, hashmap_data: &HashMap<
     if collected_data_names.iter().any(|e| swap_cols.contains(e)) {
         collected_groups.push(GeneralInfoGroup::SWAP);
     }
-    if collected_data_names.iter().any(|e| net_cols.contains(e)) {
+    if collected_data_names.iter().any(|e| e.is_network()) {
         collected_groups.push(GeneralInfoGroup::NETWORK);
     }
-    if collected_data_names.iter().any(|e| gpu_cols.contains(e)) {
+    if collected_data_names.iter().any(|e| e.is_gpu()) {
         collected_groups.push(GeneralInfoGroup::GPU);
     }
 

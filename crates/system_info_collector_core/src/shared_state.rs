@@ -10,16 +10,8 @@ pub struct SysinfoSnapshot {
     pub swap_free_mb: f64,
 }
 
-/// Snapshot of network I/O metrics collected by network_worker.
-#[derive(Debug, Clone, Default)]
-pub struct NetworkSnapshot {
-    pub rx_bytes_per_sec: f64,
-    pub tx_bytes_per_sec: f64,
-    pub total_rx_bytes: u64,
-    pub total_tx_bytes: u64,
-}
-
-/// Snapshot of NVIDIA GPU metrics collected by nvidia_worker.
+/// Snapshot of a single GPU's metrics.  Produced by nvidia_worker or
+/// amd_intel_gpu_worker; indexed by `DiscoveredGpu::gpu_index`.
 #[derive(Debug, Clone, Default)]
 pub struct GpuSnapshot {
     /// GPU compute utilization in percent (0-100).
@@ -30,6 +22,16 @@ pub struct GpuSnapshot {
     pub memory_total_mb: u64,
     /// GPU core temperature in Celsius.
     pub temperature: u32,
+}
+
+/// Snapshot of a single network interface's I/O metrics.
+/// Indexed by `DiscoveredInterface::iface_index`.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkInterfaceSnapshot {
+    pub rx_bytes_per_sec: f64,
+    pub tx_bytes_per_sec: f64,
+    pub total_rx_bytes: u64,
+    pub total_tx_bytes: u64,
 }
 
 /// Per-process metrics for a single tracked process.
@@ -50,10 +52,12 @@ pub struct ProcessSnapshot {
 pub struct SharedState {
     /// Latest CPU / memory snapshot (written by sysinfo_worker).
     pub latest_sysinfo: Option<SysinfoSnapshot>,
-    /// Latest network snapshot (written by network_worker).
-    pub latest_network: Option<NetworkSnapshot>,
-    /// Latest GPU snapshot (written by nvidia_worker).
-    pub latest_gpu: Option<GpuSnapshot>,
+    /// Latest per-interface network snapshots, indexed by iface_index.
+    /// Sized to `RuntimeDiscovery::interface_count()` at engine startup.
+    pub latest_networks: Vec<Option<NetworkInterfaceSnapshot>>,
+    /// Latest per-GPU snapshots, indexed by gpu_index.
+    /// Sized to `RuntimeDiscovery::gpu_count()` at engine startup.
+    pub latest_gpus: Vec<Option<GpuSnapshot>>,
     /// Latest per-process snapshots, indexed by search-pattern slot.
     /// Written by sysinfo_worker alongside sysinfo data.
     pub latest_processes: Vec<Option<ProcessSnapshot>>,

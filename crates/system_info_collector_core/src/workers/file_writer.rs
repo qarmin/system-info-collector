@@ -9,7 +9,8 @@ use anyhow::{Context, Error};
 use log::{error, info};
 use sysinfo::System;
 
-use crate::enums::{HeaderValues, SimpleDataCollectionMode};
+use crate::discovery::RuntimeDiscovery;
+use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
 use crate::workers::sysinfo_worker::bytes_to_mb;
@@ -18,8 +19,13 @@ use crate::workers::sysinfo_worker::bytes_to_mb;
 /// latest snapshots out of `SharedState` (brief read-lock), formats a CSV row,
 /// writes it to disk and calls `on_row` so the HTTP server can update its
 /// in-memory buffer.
-pub async fn run<F>(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>, shutdown: Arc<AtomicBool>, mut data_file: BufWriter<File>, on_row: Arc<F>)
-where
+pub async fn run<F>(
+    settings: Arc<CollectSettings>,
+    state: Arc<RwLock<SharedState>>,
+    shutdown: Arc<AtomicBool>,
+    mut data_file: BufWriter<File>,
+    on_row: Arc<F>,
+) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
     let interval_ms = (settings.check_interval * 1000.0) as u64;
@@ -43,9 +49,9 @@ where
             - settings.start_time;
 
         // Brief read-lock to clone the latest snapshots.
-        let (sysinfo_snap, network_snap, gpu_snap, process_snaps) = {
+        let (sysinfo_snap, network_snaps, gpu_snaps, process_snaps) = {
             let guard = state.read().expect("SharedState RwLock poisoned");
-            (guard.latest_sysinfo.clone(), guard.latest_network.clone(), guard.latest_gpu.clone(), guard.latest_processes.clone())
+            (guard.latest_sysinfo.clone(), guard.latest_networks.clone(), guard.latest_gpus.clone(), guard.latest_processes.clone())
         };
 
         // Build the CSV row in the same column order as the header.
@@ -53,21 +59,56 @@ where
         row.push(format!("{seconds_since_start:.2}"));
 
         for mode in &settings.collection_mode {
-            let value = match mode {
-                SimpleDataCollectionMode::CPU_USAGE_TOTAL => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.cpu_usage_total)),
-                SimpleDataCollectionMode::CPU_USAGE_PER_CORE => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| s.cpu_usage_per_core.iter().map(|v| format!("{v:.2}")).collect::<Vec<_>>().join(";")),
-                SimpleDataCollectionMode::MEMORY_USED => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_used_mb)),
-                SimpleDataCollectionMode::MEMORY_FREE => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_free_mb)),
-                SimpleDataCollectionMode::MEMORY_AVAILABLE => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_available_mb)),
-                SimpleDataCollectionMode::SWAP_USED => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_used_mb)),
-                SimpleDataCollectionMode::SWAP_FREE => sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_free_mb)),
-                SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => network_snap.as_ref().map_or("-1".to_string(), |n| format!("{:.2}", n.rx_bytes_per_sec)),
-                SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => network_snap.as_ref().map_or("-1".to_string(), |n| format!("{:.2}", n.tx_bytes_per_sec)),
-                SimpleDataCollectionMode::GPU_UTILIZATION => gpu_snap.as_ref().map_or("-1".to_string(), |g| g.utilization_gpu.to_string()),
-                SimpleDataCollectionMode::GPU_MEMORY_USED => gpu_snap.as_ref().map_or("-1".to_string(), |g| g.memory_used_mb.to_string()),
-                SimpleDataCollectionMode::GPU_TEMPERATURE => gpu_snap.as_ref().map_or("-1".to_string(), |g| g.temperature.to_string()),
-            };
-            row.push(value);
+            match mode {
+                SimpleDataCollectionMode::CPU_USAGE_TOTAL => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.cpu_usage_total)));
+                }
+                SimpleDataCollectionMode::CPU_USAGE_PER_CORE => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| s.cpu_usage_per_core.iter().map(|v| format!("{v:.2}")).collect::<Vec<_>>().join(";")));
+                }
+                SimpleDataCollectionMode::MEMORY_USED => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_used_mb)));
+                }
+                SimpleDataCollectionMode::MEMORY_FREE => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_free_mb)));
+                }
+                SimpleDataCollectionMode::MEMORY_AVAILABLE => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_available_mb)));
+                }
+                SimpleDataCollectionMode::SWAP_USED => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_used_mb)));
+                }
+                SimpleDataCollectionMode::SWAP_FREE => {
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_free_mb)));
+                }
+                // Network modes expand to one column per discovered interface.
+                SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
+                    for snap in &network_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.2}", n.rx_bytes_per_sec)));
+                    }
+                }
+                SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                    for snap in &network_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.2}", n.tx_bytes_per_sec)));
+                    }
+                }
+                // GPU modes expand to one column per discovered GPU.
+                SimpleDataCollectionMode::GPU_UTILIZATION => {
+                    for snap in &gpu_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |g| g.utilization_gpu.to_string()));
+                    }
+                }
+                SimpleDataCollectionMode::GPU_MEMORY_USED => {
+                    for snap in &gpu_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |g| g.memory_used_mb.to_string()));
+                    }
+                }
+                SimpleDataCollectionMode::GPU_TEMPERATURE => {
+                    for snap in &gpu_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |g| g.temperature.to_string()));
+                    }
+                }
+            }
         }
 
         // Custom process columns (two per pattern: CPU%, memory MB)
@@ -116,25 +157,33 @@ where
 
 /// Write the two-line CSV header (metadata line + column-name line).
 /// Requires an initial `System` refresh for memory / CPU metadata.
-pub fn write_csv_header(data_file: &mut BufWriter<File>, sys: &System, settings: &CollectSettings, app_version: &str) -> Result<(), Error> {
-    let custom_headers = settings
+pub fn write_csv_header(data_file: &mut BufWriter<File>, sys: &System, settings: &CollectSettings, discovery: &RuntimeDiscovery, app_version: &str) -> Result<(), Error> {
+    // Custom process metadata entries: CUSTOM_0=NAME, CUSTOM_1=NAME, …
+    let custom_meta: String = settings
         .process_cmd_to_search
         .iter()
         .enumerate()
-        .map(|(idx, e)| format!("CUSTOM_{idx}={}", e.graph_name))
-        .collect::<Vec<_>>()
-        .join(",");
+        .map(|(idx, e)| format!(",CUSTOM_{idx}={}", e.graph_name))
+        .collect();
 
-    let custom_headers = if custom_headers.is_empty() {
-        String::new()
-    } else {
-        format!(",{custom_headers}")
-    };
+    // GPU metadata entries: GPU_0=NAME, GPU_1=NAME, …
+    let gpu_meta: String = discovery
+        .gpus
+        .iter()
+        .map(|g| format!(",GPU_{}={}", g.gpu_index, g.display_name()))
+        .collect();
+
+    // Network interface metadata entries: NET_0=eth0, NET_1=wlan0, …
+    let net_meta: String = discovery
+        .interfaces
+        .iter()
+        .map(|i| format!(",NET_{}={}", i.iface_index, i.name))
+        .collect();
 
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());
     let general_info = format!(
-        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}",
+        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -145,28 +194,54 @@ pub fn write_csv_header(data_file: &mut BufWriter<File>, sys: &System, settings:
         settings.start_time,
         HeaderValues::APP_VERSION,
         app_version,
-        custom_headers
+        custom_meta,
+        gpu_meta,
+        net_meta,
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write header to {}", settings.convert.data_path))?;
 
-    let custom_cols = (0..settings.process_cmd_to_search.len())
-        .map(|idx| format!("CUSTOM_{idx}_CPU,CUSTOM_{idx}_MEMORY"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let custom_cols = if custom_cols.is_empty() {
-        String::new()
-    } else {
-        format!(",{custom_cols}")
-    };
+    // Column header line.
+    // GPU/network modes expand to one column per discovered GPU/interface.
+    let mut columns: Vec<String> = vec![DataType::SECONDS_SINCE_START.column_name()];
 
-    use crate::enums::DataType;
-    let data_header = format!(
-        "{},{}{}",
-        DataType::SECONDS_SINCE_START,
-        settings.collection_mode.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(","),
-        custom_cols
-    );
-    writeln!(data_file, "{data_header}").context(format!("Failed to write column header to {}", settings.convert.data_path))?;
+    for mode in &settings.collection_mode {
+        match mode {
+            SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
+                for iface in &discovery.interfaces {
+                    columns.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                for iface in &discovery.interfaces {
+                    columns.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::GPU_UTILIZATION => {
+                for gpu in &discovery.gpus {
+                    columns.push(DataType::GPU_N_UTIL((gpu.gpu_index, gpu.display_name().to_string())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::GPU_MEMORY_USED => {
+                for gpu in &discovery.gpus {
+                    columns.push(DataType::GPU_N_VRAM_MB((gpu.gpu_index, gpu.display_name().to_string())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::GPU_TEMPERATURE => {
+                for gpu in &discovery.gpus {
+                    columns.push(DataType::GPU_N_TEMP_C((gpu.gpu_index, gpu.display_name().to_string())).column_name());
+                }
+            }
+            other => columns.push(other.to_string()),
+        }
+    }
+
+    // Custom process columns (two per pattern: CPU%, memory MB)
+    for (idx, _) in settings.process_cmd_to_search.iter().enumerate() {
+        columns.push(format!("CUSTOM_{idx}_CPU"));
+        columns.push(format!("CUSTOM_{idx}_MEMORY"));
+    }
+
+    writeln!(data_file, "{}", columns.join(",")).context(format!("Failed to write column header to {}", settings.convert.data_path))?;
 
     if !settings.disable_instant_flushing {
         data_file.flush().context(format!("Failed to flush {}", settings.convert.data_path))?;
