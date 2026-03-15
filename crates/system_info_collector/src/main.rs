@@ -15,8 +15,9 @@ use std::{env, process};
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
 use sysinfo::System;
-use system_info_collector_core::discovery::discover_gpus;
+use system_info_collector_core::discovery::{discover_gpus, discover_interfaces};
 use system_info_collector_core::engine::CollectorEngine;
+use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode};
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
 use crate::cli::{parse_cli, Commands};
@@ -68,9 +69,42 @@ async fn main() {
             let data_buffer: Option<DataBuffer> = if settings.serve {
                 let buffer = DataBuffer::new(settings.max_results);
 
+                // Discover network interfaces if needed (for header expansion).
+                let needs_network = settings.collection_mode.iter().any(|m| m.is_network());
+                let interfaces = if needs_network { discover_interfaces() } else { vec![] };
+
+                // Build column headers that match the expanded per-GPU / per-interface
+                // format produced by file_writer, so the JS chart detector can find them.
                 let mut column_headers = vec!["Timestamp".to_string()];
                 for mode in &settings.collection_mode {
-                    column_headers.push(mode.to_string());
+                    match mode {
+                        SimpleDataCollectionMode::GPU_UTILIZATION => {
+                            for (idx, name) in gpu_names.iter().enumerate() {
+                                column_headers.push(DataType::GPU_N_UTIL((idx, name.clone())).column_name());
+                            }
+                        }
+                        SimpleDataCollectionMode::GPU_MEMORY_USED => {
+                            for (idx, name) in gpu_names.iter().enumerate() {
+                                column_headers.push(DataType::GPU_N_VRAM_MB((idx, name.clone())).column_name());
+                            }
+                        }
+                        SimpleDataCollectionMode::GPU_TEMPERATURE => {
+                            for (idx, name) in gpu_names.iter().enumerate() {
+                                column_headers.push(DataType::GPU_N_TEMP_C((idx, name.clone())).column_name());
+                            }
+                        }
+                        SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
+                            for iface in &interfaces {
+                                column_headers.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                            }
+                        }
+                        SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                            for iface in &interfaces {
+                                column_headers.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                            }
+                        }
+                        other => column_headers.push(other.to_string()),
+                    }
                 }
                 for p in &settings.process_cmd_to_search {
                     column_headers.push(format!("{} CPU", p.graph_name));
