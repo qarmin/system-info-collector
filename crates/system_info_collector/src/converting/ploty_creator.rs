@@ -22,9 +22,23 @@ pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Erro
     let loaded_results = load_csv_results(settings)?;
     info!("Loading data took {:?}", time_start.elapsed());
 
+    let timezone_ms = local_timezone_ms();
+
     let time_start = Instant::now();
-    save_plot_into_file(&loaded_results, settings)?;
+    save_plot_into_file(&loaded_results, settings, timezone_ms)?;
     info!("Creating plot took {:?}", time_start.elapsed());
+
+    // Generate a separate HTML for each top-N process dataset.
+    if let Some(top) = &loaded_results.top_cpu_processes {
+        let path = top_process_plot_path(&settings.plot_path, "cpu");
+        info!("Creating top-CPU process plot: {path}");
+        save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "CPU", &path, settings)?;
+    }
+    if let Some(top) = &loaded_results.top_ram_processes {
+        let path = top_process_plot_path(&settings.plot_path, "ram");
+        info!("Creating top-RAM process plot: {path}");
+        save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "RAM", &path, settings)?;
+    }
 
     if settings.open_plot_file {
         info!("Opening file {}", settings.plot_path);
@@ -34,8 +48,40 @@ pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Erro
     Ok(())
 }
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fn local_timezone_ms() -> i64 {
+    match UtcOffset::from_whole_seconds(chrono::offset::Local::now().offset().local_minus_utc()) {
+        Ok(offset) => offset.whole_seconds() as i64 * 1000,
+        Err(_) => 0,
+    }
+}
+
+/// Derive the output path for a top-process plot from the main plot path.
+/// `plot.html` → `plot_top_cpu.html` / `plot_top_ram.html`
+fn top_process_plot_path(plot_path: &str, kind: &str) -> String {
+    if let Some(base) = plot_path.strip_suffix(".html") {
+        format!("{base}_top_{kind}.html")
+    } else {
+        format!("{plot_path}_top_{kind}.html")
+    }
+}
+
+fn minify_html(html: String) -> String {
+    let regex = Regex::new(r"\n[ ]+").expect("Regex is invalid");
+    regex.replace_all(&html, "").into_owned()
+}
+
+fn apply_dark_style(mut html: String) -> String {
+    html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
+    html
+}
+
+// ── main plot ─────────────────────────────────────────────────────────────────
+
 /// Fine-grained chart groups.  GPU is split into three separate charts so that
 /// utilisation (%), VRAM (MB), and temperature (°C) each get their own axis.
+/// Top-N process data is rendered as separate standalone HTML files.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum ChartGroup {
     Memory,
@@ -45,17 +91,10 @@ enum ChartGroup {
     GpuUtil,
     GpuVram,
     GpuTemp,
-    TopCpu,
-    TopRam,
 }
 
-pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings) -> Result<(), Error> {
+pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
     info!("Trying to create html file...");
-
-    let timezone_ms = match UtcOffset::from_whole_seconds(chrono::offset::Local::now().offset().local_minus_utc()) {
-        Ok(offset) => offset.whole_seconds() as i64 * 1000,
-        Err(_) => 0,
-    };
 
     let dates = loaded_results.collected_data[&DataType::SECONDS_SINCE_START]
         .iter()
@@ -94,16 +133,10 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
     if let Some(&i) = layout_info.get(&ChartGroup::GpuTemp) {
         create_gpu_temp_plot(&mut plot, &dates, loaded_results, i);
     }
-    if let (Some(&i), Some(top)) = (layout_info.get(&ChartGroup::TopCpu), loaded_results.top_cpu_processes.as_ref()) {
-        create_top_process_plot(&mut plot, top, loaded_results.start_time, timezone_ms, i);
-    }
-    if let (Some(&i), Some(top)) = (layout_info.get(&ChartGroup::TopRam), loaded_results.top_ram_processes.as_ref()) {
-        create_top_process_plot(&mut plot, top, loaded_results.start_time, timezone_ms, i);
-    }
 
     let mut html = plot.to_html();
     if !settings.white_plot_mode {
-        html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
+        html = apply_dark_style(html);
     }
 
     let mut notes_vec = vec![
@@ -113,15 +146,14 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         format!("Swap total: {}", humansize::format_size((loaded_results.swap_total * 1024.0 * 1024.0) as u64, humansize::BINARY)),
     ];
     for (idx, name) in loaded_results.gpu_names.iter().enumerate() {
-        notes_vec.push(format!("GPU {}: {name}", idx));
+        notes_vec.push(format!("GPU {idx}: {name}"));
     }
 
     #[expect(clippy::format_collect)]
     let notes = notes_vec.iter().map(|e| format!("<div style=\"text-align: center;\">{e}</div>")).collect::<String>();
     html = html.replace("</body>", &format!("{}\n</body>", &notes));
 
-    let regex = Regex::new(r"\n[ ]+").expect("Regex is invalid");
-    let html = regex.replace_all(&html, "");
+    let html = minify_html(html);
     fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
 
     Ok(())
@@ -139,18 +171,13 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     let has_gpu_vram = loaded_results.collected_data.keys().any(|dt| matches!(dt, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)));
     let has_gpu_temp = loaded_results.collected_data.keys().any(|dt| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)));
 
-    let has_top_cpu = loaded_results.top_cpu_processes.is_some();
-    let has_top_ram = loaded_results.top_ram_processes.is_some();
-
     let rows = has_memory as usize
         + has_cpu as usize
         + has_swap as usize
         + has_network as usize
         + has_gpu_util as usize
         + has_gpu_vram as usize
-        + has_gpu_temp as usize
-        + has_top_cpu as usize
-        + has_top_ram as usize;
+        + has_gpu_temp as usize;
 
     // plotly 0.14 supports up to 8 named axes; cap the grid accordingly.
     let capped_rows = rows.min(8);
@@ -169,8 +196,6 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     let x_axis = Axis::new().title(Title::with_text("Time"));
     let mut current = 1u32;
 
-    // Helper closure: register a chart group and advance the counter.
-    // Stops silently once we reach the axis limit (8).
     macro_rules! add_chart {
         ($group:expr, $y:expr) => {
             if current <= 8 {
@@ -208,16 +233,117 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     if has_gpu_temp {
         add_chart!(ChartGroup::GpuTemp, Axis::new().title(Title::with_text("GPU Temperature [°C]")));
     }
-    if has_top_cpu {
-        add_chart!(ChartGroup::TopCpu, Axis::new().title(Title::with_text("Top CPU Processes [%]")));
-    }
-    if has_top_ram {
-        add_chart!(ChartGroup::TopRam, Axis::new().title(Title::with_text("Top RAM Processes [MB]")));
-    }
 
-    let _ = current; // last increment in the macro is intentionally unused
+    let _ = current;
     (layout, idx_info)
 }
+
+// ── top-N process standalone plot ────────────────────────────────────────────
+
+/// For each unique process name that ever appeared in the top-N ranking,
+/// build a value vector aligned to `top.timestamps`.  Slots where the process
+/// was not in the ranking hold `None` (rendered as gaps in the chart).
+/// Returns entries sorted by activity (most ticks in top-N first), then name.
+fn build_process_traces(top: &TopProcessData) -> Vec<(String, Vec<Option<f64>>)> {
+    let n_ts = top.timestamps.len();
+    let mut map: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+
+    // ranks[rank_idx][ts_idx]
+    for ts_idx in 0..n_ts {
+        for rank_vec in &top.ranks {
+            if let Some(Some((name, val))) = rank_vec.get(ts_idx) {
+                map.entry(name.clone()).or_insert_with(|| vec![None; n_ts])[ts_idx] = Some(*val);
+            }
+        }
+    }
+
+    // Sort: most active (most non-None ticks) first, then alphabetically.
+    let mut traces: Vec<(String, Vec<Option<f64>>)> = map.into_iter().collect();
+    traces.sort_by(|(na, va), (nb, vb)| {
+        let count_a = va.iter().filter(|v| v.is_some()).count();
+        let count_b = vb.iter().filter(|v| v.is_some()).count();
+        count_b.cmp(&count_a).then_with(|| na.cmp(nb))
+    });
+
+    traces
+}
+
+/// Render and write a standalone process plot to `path`.
+/// `kind` is "CPU" or "RAM" and drives the Y-axis label.
+fn save_top_process_plot_file(
+    top: &TopProcessData,
+    start_time: f64,
+    timezone_ms: i64,
+    kind: &str,
+    path: &str,
+    settings: &ConvertSettings,
+) -> Result<(), Error> {
+    let traces = build_process_traces(top);
+    if traces.is_empty() {
+        info!("No process data — skipping {path}");
+        return Ok(());
+    }
+
+    let y_title = if kind == "CPU" { "CPU Usage [%]" } else { "RAM [MB]" };
+    let n_traces = traces.len();
+
+    // Build timestamp X-axis values once (aligned to absolute time).
+    let dates: Vec<Option<DateTime<Utc>>> = top
+        .timestamps
+        .iter()
+        .map(|&ts| DateTime::from_timestamp_millis(((ts + start_time) * 1000.0) as i64 + timezone_ms))
+        .collect();
+
+    let mut plot = Plot::new();
+
+    // Single-chart layout; height grows slightly with many traces for the legend.
+    let height = settings.plot_height.max(600 + (n_traces as u32).saturating_sub(10) * 20);
+    let mut layout = Layout::new()
+        .width(settings.plot_width as usize)
+        .height(height as usize)
+        .x_axis(Axis::new().title(Title::with_text("Time")))
+        .y_axis(Axis::new().title(Title::with_text(y_title)));
+
+    if !settings.white_plot_mode {
+        layout = layout.template(&*PLOTLY_DARK);
+    }
+    plot.set_layout(layout);
+
+    // One trace per unique process; color spread evenly around the hue wheel.
+    for (trace_idx, (name, values)) in traces.iter().enumerate() {
+        // Build (date, value) pairs, emitting None for gaps.
+        // Plotly Scatter with connectgaps=false will leave visible gaps.
+        let xs: Vec<DateTime<Utc>> = dates.iter().zip(values.iter()).filter_map(|(dt, v)| {
+            if v.is_some() { dt.as_ref().copied() } else { None }
+        }).collect();
+        let ys: Vec<String> = values.iter().filter_map(|v| v.map(|x| format!("{x:.2}"))).collect();
+
+        if xs.is_empty() {
+            continue;
+        }
+
+        let hue = (trace_idx * 360) / n_traces.max(1);
+        let color = format!("hsl({hue}, 75%, 60%)");
+
+        let trace = Scatter::new(xs, ys)
+            .name(name.clone())
+            .web_gl_mode(false)
+            .connect_gaps(false)
+            .line(plotly::common::Line::new().color(color));
+        plot.add_trace(trace);
+    }
+
+    let mut html = plot.to_html();
+    if !settings.white_plot_mode {
+        html = apply_dark_style(html);
+    }
+    let html = minify_html(html);
+    fs::write(path, html.as_bytes()).context(format!("Failed to write top-process plot: {path}"))?;
+
+    Ok(())
+}
+
+// ── per-metric trace builders ─────────────────────────────────────────────────
 
 fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
@@ -297,36 +423,6 @@ fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
     }
 }
 
-/// Render a top-N process dataset.  Each rank slot becomes its own trace so
-/// the viewer can toggle individual ranks on/off.
-fn create_top_process_plot(plot: &mut Plot, top: &TopProcessData, start_time: f64, timezone_ms: i64, i: u32) {
-    for (rank_idx, rank_vec) in top.ranks.iter().enumerate() {
-        let mut xs: Vec<DateTime<Utc>> = Vec::new();
-        let mut ys: Vec<String> = Vec::new();
-        let mut label = format!("#{}", rank_idx + 1);
-
-        for (row_idx, entry) in rank_vec.iter().enumerate() {
-            if let Some((name, val)) = entry {
-                if xs.is_empty() {
-                    label = format!("#{} ({}...)", rank_idx + 1, name.chars().take(12).collect::<String>());
-                }
-                let ts = top.timestamps.get(row_idx).copied().unwrap_or(0.0);
-                if let Some(dt) = DateTime::from_timestamp_millis(((ts + start_time) * 1000.0) as i64 + timezone_ms) {
-                    xs.push(dt);
-                    ys.push(format!("{val:.2}"));
-                }
-            }
-        }
-
-        if xs.is_empty() {
-            continue;
-        }
-
-        let trace = Scatter::new(xs, ys).name(label).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-}
-
 fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {
     match idx {
         1 => layout.x_axis(x).y_axis(y),
@@ -337,6 +433,6 @@ fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {
         6 => layout.x_axis6(x).y_axis6(y),
         7 => layout.x_axis7(x).y_axis7(y),
         8 => layout.x_axis8(x).y_axis8(y),
-        _ => layout, // capped at 8 above; unreachable in normal operation
+        _ => layout,
     }
 }

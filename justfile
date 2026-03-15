@@ -46,15 +46,16 @@ show_data ip_address:
     cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o
 
 show:
-    cargo run --release -p system_info_collector -- convert -d system_data.csv -p plot.html -o; firefox plot.html
+    cargo run --release -p system_info_collector -- convert -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv -p plot.html -o; firefox plot.html
 
 all:
     # Run with all collection modes enabled + HTTP live data server + top-N processes
     cargo run --release -p system_info_collector -- collect \
-        -m cpu-usage-total cpu-usage-per-core \
+        -m cpu-usage-total  \
            memory-used memory-free memory-available \
            swap-used swap-free \
            network-rx-bytes-per-sec network-tx-bytes-per-sec \
            gpu-utilization gpu-memory-used gpu-temperature \
         -c 0.5 -s -l 10000 --top-n-processes 5
+    # Without cpu-usage-per-core, because it is too much data for
     just show
