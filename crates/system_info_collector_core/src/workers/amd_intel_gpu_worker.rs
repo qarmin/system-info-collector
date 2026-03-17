@@ -73,7 +73,12 @@ fn read_amd_snapshot(device_path: &std::path::Path) -> GpuSnapshot {
     let memory_total_mb = read_u64_from_sysfs(&device_path.join("mem_info_vram_total")).unwrap_or(0) / 1024 / 1024;
     let temperature = read_amd_temperature(device_path).unwrap_or(0);
 
-    GpuSnapshot { utilization_gpu, memory_used_mb, memory_total_mb, temperature }
+    GpuSnapshot {
+        utilization_gpu,
+        memory_used_mb,
+        memory_total_mb,
+        temperature,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -97,9 +102,9 @@ fn read_intel_snapshot(card_path: &std::path::Path, prev: Option<&(u64, std::tim
 
     GpuSnapshot {
         utilization_gpu,
-        memory_used_mb: 0,    // Intel integrated — VRAM is shared with system RAM
+        memory_used_mb: 0, // Intel integrated — VRAM is shared with system RAM
         memory_total_mb: 0,
-        temperature: 0,       // Intel GPU temp not universally available via sysfs
+        temperature: 0, // Intel GPU temp not universally available via sysfs
     }
 }
 

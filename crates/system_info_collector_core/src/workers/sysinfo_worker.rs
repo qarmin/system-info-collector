@@ -258,14 +258,7 @@ fn update_usage_of_tracked_process(process_cache: &mut ProcessCache, sys: &mut S
     debug!("Updating {count} tracked processes");
 
     sys.refresh_processes_specifics(
-        ProcessesToUpdate::Some(
-            &process_cache
-                .process_used
-                .iter()
-                .flatten()
-                .map(|p| Pid::from(p.pid))
-                .collect::<Vec<_>>(),
-        ),
+        ProcessesToUpdate::Some(&process_cache.process_used.iter().flatten().map(|p| Pid::from(p.pid)).collect::<Vec<_>>()),
         true,
         ProcessRefreshKind::nothing().with_cpu().with_memory(),
     );

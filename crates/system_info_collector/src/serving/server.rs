@@ -105,8 +105,14 @@ async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRespons
     let response = DataResponse {
         total_count,
         max_buffer_size: max_size,
-        first: first.map(|d| DataPointResponse { timestamp: d.timestamp, data: d.data }),
-        last: last.map(|d| DataPointResponse { timestamp: d.timestamp, data: d.data }),
+        first: first.map(|d| DataPointResponse {
+            timestamp: d.timestamp,
+            data: d.data,
+        }),
+        last: last.map(|d| DataPointResponse {
+            timestamp: d.timestamp,
+            data: d.data,
+        }),
     };
     (StatusCode::OK, Json(response))
 }
@@ -120,7 +126,10 @@ async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): Sta
     let response = RecentDataResponse {
         data: data_points
             .into_iter()
-            .map(|d| DataPointResponse { timestamp: d.timestamp, data: d.data })
+            .map(|d| DataPointResponse {
+                timestamp: d.timestamp,
+                data: d.data,
+            })
             .collect(),
         count: limit,
         max_available: total_count,
@@ -129,5 +138,8 @@ async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): Sta
 }
 
 async fn chartjs_handler() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_bytes!("./chart.min.js") as &'static [u8])
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        include_bytes!("./chart.min.js") as &'static [u8],
+    )
 }

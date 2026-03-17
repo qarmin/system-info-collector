@@ -108,7 +108,12 @@ impl DataType {
     /// Parse a CSV column name back into a `DataType`.
     /// Dynamic variants require the caller to supply a name resolver
     /// (`gpu_names` / `iface_names` from the metadata line).
-    pub fn from_column_name(s: &str, gpu_names: &std::collections::HashMap<usize, String>, iface_names: &std::collections::HashMap<usize, String>, custom_names: &std::collections::HashMap<usize, String>) -> Option<Self> {
+    pub fn from_column_name(
+        s: &str,
+        gpu_names: &std::collections::HashMap<usize, String>,
+        iface_names: &std::collections::HashMap<usize, String>,
+        custom_names: &std::collections::HashMap<usize, String>,
+    ) -> Option<Self> {
         match s {
             "SECONDS_SINCE_START" => Some(Self::SECONDS_SINCE_START),
             "CPU_USAGE_TOTAL" => Some(Self::CPU_USAGE_TOTAL),
@@ -172,14 +177,28 @@ impl DataType {
     pub fn get_allowed_values() -> String {
         // Only list the static variants for error messages.
         [
-            "SECONDS_SINCE_START", "CPU_USAGE_TOTAL", "CPU_USAGE_PER_CORE",
-            "SWAP_FREE", "SWAP_USED", "MEMORY_USED", "MEMORY_FREE", "MEMORY_AVAILABLE",
-            "NETWORK_RX_BYTES_PER_SEC", "NETWORK_TX_BYTES_PER_SEC",
-            "GPU_UTILIZATION", "GPU_MEMORY_USED", "GPU_TEMPERATURE",
-            "GPU_N_UTIL", "GPU_N_VRAM_MB", "GPU_N_TEMP_C",
-            "NET_N_RX_BPS", "NET_N_TX_BPS",
-            "CUSTOM_N_CPU", "CUSTOM_N_MEMORY",
-        ].join(", ")
+            "SECONDS_SINCE_START",
+            "CPU_USAGE_TOTAL",
+            "CPU_USAGE_PER_CORE",
+            "SWAP_FREE",
+            "SWAP_USED",
+            "MEMORY_USED",
+            "MEMORY_FREE",
+            "MEMORY_AVAILABLE",
+            "NETWORK_RX_BYTES_PER_SEC",
+            "NETWORK_TX_BYTES_PER_SEC",
+            "GPU_UTILIZATION",
+            "GPU_MEMORY_USED",
+            "GPU_TEMPERATURE",
+            "GPU_N_UTIL",
+            "GPU_N_VRAM_MB",
+            "GPU_N_TEMP_C",
+            "NET_N_RX_BPS",
+            "NET_N_TX_BPS",
+            "CUSTOM_N_CPU",
+            "CUSTOM_N_MEMORY",
+        ]
+        .join(", ")
     }
 
     pub fn is_memory(&self) -> bool {
@@ -198,14 +217,21 @@ impl DataType {
     }
 
     pub fn is_network(&self) -> bool {
-        matches!(self, Self::NETWORK_RX_BYTES_PER_SEC | Self::NETWORK_TX_BYTES_PER_SEC | Self::NET_N_RX_BPS(_) | Self::NET_N_TX_BPS(_))
+        matches!(
+            self,
+            Self::NETWORK_RX_BYTES_PER_SEC | Self::NETWORK_TX_BYTES_PER_SEC | Self::NET_N_RX_BPS(_) | Self::NET_N_TX_BPS(_)
+        )
     }
 
     pub fn is_gpu(&self) -> bool {
         matches!(
             self,
-            Self::GPU_UTILIZATION | Self::GPU_MEMORY_USED | Self::GPU_TEMPERATURE
-            | Self::GPU_N_UTIL(_) | Self::GPU_N_VRAM_MB(_) | Self::GPU_N_TEMP_C(_)
+            Self::GPU_UTILIZATION
+                | Self::GPU_MEMORY_USED
+                | Self::GPU_TEMPERATURE
+                | Self::GPU_N_UTIL(_)
+                | Self::GPU_N_VRAM_MB(_)
+                | Self::GPU_N_TEMP_C(_)
         )
     }
 

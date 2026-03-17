@@ -77,6 +77,45 @@ fn apply_dark_style(mut html: String) -> String {
     html
 }
 
+// ── per-chart legend injection ────────────────────────────────────────────────
+
+/// Returns a `<script type="module">` block that redistributes the single
+/// Plotly legend into one legend per subplot, each positioned at the vertical
+/// mid-point of its subplot.
+///
+/// Plotly.js ≥ 2.16 supports multiple legends (`legend`, `legend2`, …) in the
+/// layout and the `legend` property on each trace.  plotly-rs 0.14 does not
+/// expose this API directly, so we inject the post-processing via JavaScript.
+fn per_chart_legends_script() -> &'static str {
+    r#"<script type="module">
+    (async () => {
+        const plotDiv = document.getElementById('plotly-html-element');
+        while (!plotDiv._fullLayout) await new Promise(r => setTimeout(r, 50));
+        const fl = plotDiv._fullLayout;
+        const data = plotDiv.data;
+        const yaxisOrder = [];
+        const yaxisSeen = new Set();
+        data.forEach(t => {
+            const y = t.yaxis || 'y';
+            if (!yaxisSeen.has(y)) { yaxisSeen.add(y); yaxisOrder.push(y); }
+        });
+        if (yaxisOrder.length <= 1) return;
+        const legendMap = {};
+        yaxisOrder.forEach((y, i) => { legendMap[y] = i === 0 ? 'legend' : 'legend' + (i + 1); });
+        const layoutUpdate = {};
+        yaxisOrder.forEach(y => {
+            const axisKey = y === 'y' ? 'yaxis' : 'yaxis' + y.slice(1);
+            const domain = fl[axisKey]?.domain ?? [0, 1];
+            const yMid = (domain[0] + domain[1]) / 2;
+            layoutUpdate[legendMap[y]] = { y: yMid, yanchor: 'middle', x: 1.02, xanchor: 'left', tracegroupgap: 0 };
+        });
+        const legendRefs = data.map(t => legendMap[t.yaxis || 'y']);
+        await Plotly.relayout(plotDiv, layoutUpdate);
+        await Plotly.restyle(plotDiv, { legend: legendRefs });
+    })();
+</script>"#
+}
+
 // ── main plot ─────────────────────────────────────────────────────────────────
 
 /// Fine-grained chart groups.  GPU is split into three separate charts so that
@@ -142,16 +181,25 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
     let mut notes_vec = vec![
         format!("Cpu count: {}", loaded_results.cpu_core_count),
         format!("Check interval: {}s", loaded_results.check_interval),
-        format!("Memory total: {}", humansize::format_size((loaded_results.memory_total * 1024.0 * 1024.0) as u64, humansize::BINARY)),
-        format!("Swap total: {}", humansize::format_size((loaded_results.swap_total * 1024.0 * 1024.0) as u64, humansize::BINARY)),
+        format!(
+            "Memory total: {}",
+            humansize::format_size((loaded_results.memory_total * 1024.0 * 1024.0) as u64, humansize::BINARY)
+        ),
+        format!(
+            "Swap total: {}",
+            humansize::format_size((loaded_results.swap_total * 1024.0 * 1024.0) as u64, humansize::BINARY)
+        ),
     ];
     for (idx, name) in loaded_results.gpu_names.iter().enumerate() {
         notes_vec.push(format!("GPU {idx}: {name}"));
     }
 
     #[expect(clippy::format_collect)]
-    let notes = notes_vec.iter().map(|e| format!("<div style=\"text-align: center;\">{e}</div>")).collect::<String>();
-    html = html.replace("</body>", &format!("{}\n</body>", &notes));
+    let notes = notes_vec
+        .iter()
+        .map(|e| format!("<div style=\"text-align: center;\">{e}</div>"))
+        .collect::<String>();
+    html = html.replace("</body>", &format!("{}\n{}\n</body>", &notes, per_chart_legends_script()));
 
     let html = minify_html(html);
     fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
@@ -167,9 +215,18 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     let has_network = groups.contains(&GeneralInfoGroup::NETWORK);
 
     // GPU split into three independent sub-charts based on what data is present.
-    let has_gpu_util = loaded_results.collected_data.keys().any(|dt| matches!(dt, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)));
-    let has_gpu_vram = loaded_results.collected_data.keys().any(|dt| matches!(dt, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)));
-    let has_gpu_temp = loaded_results.collected_data.keys().any(|dt| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)));
+    let has_gpu_util = loaded_results
+        .collected_data
+        .keys()
+        .any(|dt| matches!(dt, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)));
+    let has_gpu_vram = loaded_results
+        .collected_data
+        .keys()
+        .any(|dt| matches!(dt, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)));
+    let has_gpu_temp = loaded_results
+        .collected_data
+        .keys()
+        .any(|dt| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)));
 
     let rows = has_memory as usize
         + has_cpu as usize
@@ -209,7 +266,9 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     if has_memory {
         add_chart!(
             ChartGroup::Memory,
-            Axis::new().range(AxisRange::new(0, loaded_results.memory_total.ceil() as usize)).title(Title::with_text("Memory Usage [MB]"))
+            Axis::new()
+                .range(AxisRange::new(0, loaded_results.memory_total.ceil() as usize))
+                .title(Title::with_text("Memory Usage [MB]"))
         );
     }
     if has_cpu {
@@ -218,14 +277,19 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     if has_swap {
         add_chart!(
             ChartGroup::Swap,
-            Axis::new().range(AxisRange::new(0, loaded_results.swap_total.ceil() as usize)).title(Title::with_text("Swap Usage [MB]"))
+            Axis::new()
+                .range(AxisRange::new(0, loaded_results.swap_total.ceil() as usize))
+                .title(Title::with_text("Swap Usage [MB]"))
         );
     }
     if has_network {
         add_chart!(ChartGroup::Network, Axis::new().title(Title::with_text("Network [MB/s]")));
     }
     if has_gpu_util {
-        add_chart!(ChartGroup::GpuUtil, Axis::new().range(vec![-1, 100]).title(Title::with_text("GPU Utilization [%]")));
+        add_chart!(
+            ChartGroup::GpuUtil,
+            Axis::new().range(vec![-1, 100]).title(Title::with_text("GPU Utilization [%]"))
+        );
     }
     if has_gpu_vram {
         add_chart!(ChartGroup::GpuVram, Axis::new().title(Title::with_text("GPU VRAM [MB]")));
@@ -277,10 +341,7 @@ fn build_process_traces(top: &TopProcessData) -> Vec<(String, Vec<Option<f64>>)>
 ///
 /// Between separate blocks a `None` y-value is inserted so plotly draws a gap
 /// instead of a diagonal line spanning the absence.
-fn build_sentinel_trace(
-    values: &[Option<f64>],
-    dates: &[Option<DateTime<Utc>>],
-) -> (Vec<DateTime<Utc>>, Vec<Option<f64>>) {
+fn build_sentinel_trace(values: &[Option<f64>], dates: &[Option<DateTime<Utc>>]) -> (Vec<DateTime<Utc>>, Vec<Option<f64>>) {
     let n = values.len();
     let mut xs: Vec<DateTime<Utc>> = Vec::new();
     let mut ys: Vec<Option<f64>> = Vec::new();
@@ -417,7 +478,10 @@ fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: 
         if !data_type.is_memory() {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }
@@ -427,7 +491,10 @@ fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &C
         if !data_type.is_swap() {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }
@@ -437,14 +504,20 @@ fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &Co
         if !data_type.is_cpu() || data_type == &DataType::CPU_USAGE_PER_CORE {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 
     if let Some(per_core) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
         for (idx, core_data) in per_core.iter().enumerate() {
             let values: Vec<String> = core_data.split(';').map(ToString::to_string).collect();
-            let trace = Scatter::new(dates.to_owned(), values).name(format!("Core {idx}")).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+            let trace = Scatter::new(dates.to_owned(), values)
+                .name(format!("Core {idx}"))
+                .y_axis(format!("y{i}"))
+                .x_axis(format!("x{i}"));
             plot.add_trace(trace);
         }
     }
@@ -455,7 +528,10 @@ fn create_network_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results:
         if !data_type.is_network() {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }
@@ -465,7 +541,10 @@ fn create_gpu_util_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
         if !matches!(data_type, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)) {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }
@@ -475,7 +554,10 @@ fn create_gpu_vram_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
         if !matches!(data_type, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)) {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }
@@ -485,7 +567,10 @@ fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
         if !matches!(data_type, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)) {
             continue;
         }
-        let trace = Scatter::new(dates.to_owned(), data.clone()).name(data_type.pretty_print()).y_axis(format!("y{i}")).x_axis(format!("x{i}"));
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
         plot.add_trace(trace);
     }
 }

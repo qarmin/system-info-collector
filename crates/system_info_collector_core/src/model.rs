@@ -48,7 +48,12 @@ impl CustomProcessData {
         Self {
             pid: process.pid().into(),
             name: process.name().to_string_lossy().to_string(),
-            cmd_string: process.cmd().iter().map(|e| e.to_string_lossy().to_string()).collect::<Vec<_>>().join(" "),
+            cmd_string: process
+                .cmd()
+                .iter()
+                .map(|e| e.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
             memory_usage: process.memory(),
             cpu_usage: process.cpu_usage(),
         }

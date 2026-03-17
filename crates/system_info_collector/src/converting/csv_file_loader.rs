@@ -104,7 +104,7 @@ pub fn load_top_process_file(path: &str) -> Result<(String, TopProcessData), Err
         let ts: f64 = cols.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
         timestamps.push(ts);
 
-        for rank_vec in ranks.iter_mut() {
+        for rank_vec in &mut ranks {
             let entry = cols.next().and_then(|s| {
                 if s.is_empty() {
                     return None;
@@ -118,10 +118,22 @@ pub fn load_top_process_file(path: &str) -> Result<(String, TopProcessData), Err
         }
     }
 
-    Ok((kind, TopProcessData { n, start_time, timestamps, ranks }))
+    Ok((
+        kind,
+        TopProcessData {
+            n,
+            start_time,
+            timestamps,
+            ranks,
+        },
+    ))
 }
 
-fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[DataType], cpu_core_count: usize) -> Result<HashMap<DataType, Vec<String>>, Error> {
+fn parse_data(
+    lines_iter: &mut Lines<BufReader<File>>,
+    collected_data_names: &[DataType],
+    cpu_core_count: usize,
+) -> Result<HashMap<DataType, Vec<String>>, Error> {
     let mut collected_vec_data: Vec<Vec<String>> = Vec::new();
     for _ in 0..collected_data_names.len() {
         collected_vec_data.push(Vec::new());
@@ -169,8 +181,14 @@ fn parse_data(lines_iter: &mut Lines<BufReader<File>>, collected_data_names: &[D
     Ok(collected_data)
 }
 
-fn parse_header(lines_iter: &mut Lines<BufReader<File>>, hashmap_data: &HashMap<String, String>) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
-    let header_line = lines_iter.next().context("Failed to read second line of data file")?.context("Failed to read second line of data file")?;
+fn parse_header(
+    lines_iter: &mut Lines<BufReader<File>>,
+    hashmap_data: &HashMap<String, String>,
+) -> Result<(Vec<DataType>, Vec<GeneralInfoGroup>), Error> {
+    let header_line = lines_iter
+        .next()
+        .context("Failed to read second line of data file")?
+        .context("Failed to read second line of data file")?;
 
     // Build name lookup maps from the metadata line.
     // GPU_N=<name>, NET_N=<iface>, CUSTOM_N=<name>
@@ -197,8 +215,12 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>, hashmap_data: &HashMap<
     let collected_data_names: Vec<DataType> = header_line
         .split(',')
         .map(|item| {
-            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names)
-                .ok_or_else(|| Error::msg(format!("Unknown column \"{item}\" in data file (allowed: {})", DataType::get_allowed_values())))
+            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names).ok_or_else(|| {
+                Error::msg(format!(
+                    "Unknown column \"{item}\" in data file (allowed: {})",
+                    DataType::get_allowed_values()
+                ))
+            })
         })
         .collect::<Result<_, Error>>()?;
 
@@ -236,7 +258,10 @@ fn parse_header(lines_iter: &mut Lines<BufReader<File>>, hashmap_data: &HashMap<
 type ParsedOkResult = (f64, f64, usize, f32, HashMap<String, String>, f64);
 
 fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<ParsedOkResult, Error> {
-    let line = lines_iter.next().context("Failed to read first line of data file")?.context("Failed to read first line of data file")?;
+    let line = lines_iter
+        .next()
+        .context("Failed to read first line of data file")?
+        .context("Failed to read first line of data file")?;
 
     let mut map: HashMap<String, String> = HashMap::new();
     for item in line.split(',') {
@@ -246,11 +271,31 @@ fn parse_file_values_data(lines_iter: &mut Lines<BufReader<File>>) -> Result<Par
         map.insert(key, val);
     }
 
-    let swap_total = map.remove(&HeaderValues::SWAP_TOTAL.to_string()).context("Missing SWAP_TOTAL")?.parse::<f64>().context("Failed to parse SWAP_TOTAL")?;
-    let memory_total = map.remove(&HeaderValues::MEMORY_TOTAL.to_string()).context("Missing MEMORY_TOTAL")?.parse::<f64>().context("Failed to parse MEMORY_TOTAL")?;
-    let cpu_core_count = map.remove(&HeaderValues::CPU_CORE_COUNT.to_string()).context("Missing CPU_CORE_COUNT")?.parse::<usize>().context("Failed to parse CPU_CORE_COUNT")?;
-    let check_interval = map.remove(&HeaderValues::INTERVAL_SECONDS.to_string()).context("Missing INTERVAL_SECONDS")?.parse::<f32>().context("Failed to parse INTERVAL_SECONDS")?;
-    let start_time = map.remove(&HeaderValues::UNIX_TIMESTAMP_START_TIME.to_string()).context("Missing UNIX_TIMESTAMP_START_TIME")?.parse::<f64>().context("Failed to parse UNIX_TIMESTAMP_START_TIME")?;
+    let swap_total = map
+        .remove(&HeaderValues::SWAP_TOTAL.to_string())
+        .context("Missing SWAP_TOTAL")?
+        .parse::<f64>()
+        .context("Failed to parse SWAP_TOTAL")?;
+    let memory_total = map
+        .remove(&HeaderValues::MEMORY_TOTAL.to_string())
+        .context("Missing MEMORY_TOTAL")?
+        .parse::<f64>()
+        .context("Failed to parse MEMORY_TOTAL")?;
+    let cpu_core_count = map
+        .remove(&HeaderValues::CPU_CORE_COUNT.to_string())
+        .context("Missing CPU_CORE_COUNT")?
+        .parse::<usize>()
+        .context("Failed to parse CPU_CORE_COUNT")?;
+    let check_interval = map
+        .remove(&HeaderValues::INTERVAL_SECONDS.to_string())
+        .context("Missing INTERVAL_SECONDS")?
+        .parse::<f32>()
+        .context("Failed to parse INTERVAL_SECONDS")?;
+    let start_time = map
+        .remove(&HeaderValues::UNIX_TIMESTAMP_START_TIME.to_string())
+        .context("Missing UNIX_TIMESTAMP_START_TIME")?
+        .parse::<f64>()
+        .context("Failed to parse UNIX_TIMESTAMP_START_TIME")?;
 
     Ok((swap_total, memory_total, cpu_core_count, check_interval, map, start_time))
 }

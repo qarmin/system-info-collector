@@ -90,32 +90,67 @@ impl CollectorEngine {
         let mut join_set: JoinSet<()> = JoinSet::new();
 
         // sysinfo worker — always runs (CPU / memory / processes)
-        join_set.spawn(sysinfo_worker::run(Arc::clone(&self.settings), Arc::clone(&self.state), Arc::clone(&self.shutdown)));
+        join_set.spawn(sysinfo_worker::run(
+            Arc::clone(&self.settings),
+            Arc::clone(&self.state),
+            Arc::clone(&self.shutdown),
+        ));
 
         // network worker — only when network modes are selected and interfaces found
         if needs_network && !discovery.interfaces.is_empty() {
-            join_set.spawn(network_worker::run(Arc::clone(&self.settings), Arc::clone(&self.state), Arc::clone(&self.shutdown), Arc::clone(&discovery)));
+            join_set.spawn(network_worker::run(
+                Arc::clone(&self.settings),
+                Arc::clone(&self.state),
+                Arc::clone(&self.shutdown),
+                Arc::clone(&discovery),
+            ));
         }
 
         if needs_gpu && !discovery.gpus.is_empty() {
             // NVIDIA worker — handles all discovered NVIDIA GPUs
-            let nvidia_gpus: Vec<_> = discovery.gpus.iter().filter(|g| matches!(g.vendor, GpuVendor::Nvidia { .. })).cloned().collect();
+            let nvidia_gpus: Vec<_> = discovery
+                .gpus
+                .iter()
+                .filter(|g| matches!(g.vendor, GpuVendor::Nvidia { .. }))
+                .cloned()
+                .collect();
             if !nvidia_gpus.is_empty() {
-                join_set.spawn(nvidia_worker::run(Arc::clone(&self.settings), Arc::clone(&self.state), Arc::clone(&self.shutdown), Arc::new(nvidia_gpus)));
+                join_set.spawn(nvidia_worker::run(
+                    Arc::clone(&self.settings),
+                    Arc::clone(&self.state),
+                    Arc::clone(&self.shutdown),
+                    Arc::new(nvidia_gpus),
+                ));
             }
 
             // AMD/Intel GPU worker — Linux only
             #[cfg(target_os = "linux")]
             {
-                let amd_intel_gpus: Vec<_> = discovery.gpus.iter().filter(|g| !matches!(g.vendor, GpuVendor::Nvidia { .. })).cloned().collect();
+                let amd_intel_gpus: Vec<_> = discovery
+                    .gpus
+                    .iter()
+                    .filter(|g| !matches!(g.vendor, GpuVendor::Nvidia { .. }))
+                    .cloned()
+                    .collect();
                 if !amd_intel_gpus.is_empty() {
-                    join_set.spawn(amd_intel_gpu_worker::run(Arc::clone(&self.settings), Arc::clone(&self.state), Arc::clone(&self.shutdown), Arc::new(amd_intel_gpus)));
+                    join_set.spawn(amd_intel_gpu_worker::run(
+                        Arc::clone(&self.settings),
+                        Arc::clone(&self.state),
+                        Arc::clone(&self.shutdown),
+                        Arc::new(amd_intel_gpus),
+                    ));
                 }
             }
         }
 
         // file_writer — the "coordinator" that aggregates snapshots into CSV rows
-        join_set.spawn(file_writer::run(Arc::clone(&self.settings), Arc::clone(&self.state), Arc::clone(&self.shutdown), data_file, on_row));
+        join_set.spawn(file_writer::run(
+            Arc::clone(&self.settings),
+            Arc::clone(&self.state),
+            Arc::clone(&self.shutdown),
+            data_file,
+            on_row,
+        ));
 
         info!("All workers started, collecting data…");
 

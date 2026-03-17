@@ -4,19 +4,37 @@ use system_info_collector_core::enums::SimpleDataCollectionMode;
 /// Plot-related settings shared between Collect and Convert commands.
 #[derive(Debug, clap::Args, Clone)]
 pub struct PlotArgs {
-    #[arg(short, long, default_value = "system_data_plot.html", value_name = "HTML_PLOT_PATH", help = "Path where html file with plot will be saved.")]
+    #[arg(
+        short,
+        long,
+        default_value = "system_data_plot.html",
+        value_name = "HTML_PLOT_PATH",
+        help = "Path where html file with plot will be saved."
+    )]
     pub plot_path: String,
 
     #[arg(short = 'w', long, default_value = "1700", value_name = "WIDTH", help = "Width of generated plot.")]
     pub plot_width: u32,
 
-    #[arg(short = 'r', long, default_value = "800", value_name = "HEIGHT", help = "Minimum height of generated plot (auto-scales with number of charts).")]
+    #[arg(
+        short = 'r',
+        long,
+        default_value = "800",
+        value_name = "HEIGHT",
+        help = "Minimum height of generated plot (auto-scales with number of charts)."
+    )]
     pub plot_height: u32,
 
     #[arg(short = 'z', long, default_value = "false", value_name = "WHITE_PLOT_MODE", help = "White plot mode.")]
     pub white_plot_mode: bool,
 
-    #[arg(short, long, default_value = "false", value_name = "OPEN_PLOT_FILE", help = "Open generated plot file in default html viewer")]
+    #[arg(
+        short,
+        long,
+        default_value = "false",
+        value_name = "OPEN_PLOT_FILE",
+        help = "Open generated plot file in default html viewer"
+    )]
     pub open_plot_file: bool,
 }
 
@@ -47,7 +65,13 @@ pub struct CollectArgs {
     )]
     pub check_interval: f32,
 
-    #[arg(short, long, default_value = "system_data.csv", value_name = "DATA_PATH", help = "Path to the output data file.")]
+    #[arg(
+        short,
+        long,
+        default_value = "system_data.csv",
+        value_name = "DATA_PATH",
+        help = "Path to the output data file."
+    )]
     pub data_path: String,
 
     #[command(flatten)]
@@ -63,20 +87,42 @@ pub struct CollectArgs {
     )]
     pub collection_mode: Vec<SimpleDataCollectionMode>,
 
-    #[arg(short = 'i', long, default_value = "false", value_name = "INSTANT_FLUSHING", help = "Disable automatic file flushing after each write.")]
+    #[arg(
+        short = 'i',
+        long,
+        default_value = "false",
+        value_name = "INSTANT_FLUSHING",
+        help = "Disable automatic file flushing after each write."
+    )]
     pub disable_instant_flushing: bool,
 
-    #[arg(short, long, default_value = "5", value_name = "BACKUP_NUMBER", help = "Number of rotating backup files to keep.")]
+    #[arg(
+        short,
+        long,
+        default_value = "5",
+        value_name = "BACKUP_NUMBER",
+        help = "Number of rotating backup files to keep."
+    )]
     pub backup_number: u32,
 
-    #[arg(short = 'k', long, default_value = "100.0", value_name = "MAXIMUM_FILE_SIZE_MB", help = "Maximum data-file size in MB before collection stops.")]
+    #[arg(
+        short = 'k',
+        long,
+        default_value = "100.0",
+        value_name = "MAXIMUM_FILE_SIZE_MB",
+        help = "Maximum data-file size in MB before collection stops."
+    )]
     pub maximum_data_file_size_mb: f32,
 
-    #[arg(short = 'e', long, value_name = "NAME|SEARCH_TEXT", help = "Track a process whose command line contains SEARCH_TEXT, labelled NAME in the plot.")]
+    #[arg(
+        short = 'e',
+        long,
+        value_name = "NAME|SEARCH_TEXT",
+        help = "Track a process whose command line contains SEARCH_TEXT, labelled NAME in the plot."
+    )]
     pub process_cmd_to_search: Vec<String>,
 
     // ── Per-worker intervals ──────────────────────────────────────────────────
-
     #[arg(
         long,
         value_name = "SYSINFO_INTERVAL",
@@ -84,28 +130,54 @@ pub struct CollectArgs {
     )]
     pub sysinfo_interval: Option<f32>,
 
-    #[arg(long, default_value = "0.5", value_name = "NETWORK_INTERVAL", help = "Interval (seconds) at which the network worker polls interface counters.")]
+    #[arg(
+        long,
+        default_value = "0.5",
+        value_name = "NETWORK_INTERVAL",
+        help = "Interval (seconds) at which the network worker polls interface counters."
+    )]
     pub network_interval: f32,
 
-    #[arg(long, default_value = "0.2", value_name = "GPU_INTERVAL", help = "Interval (seconds) at which the NVIDIA GPU worker polls via NVML.")]
+    #[arg(
+        long,
+        default_value = "0.2",
+        value_name = "GPU_INTERVAL",
+        help = "Interval (seconds) at which the NVIDIA GPU worker polls via NVML."
+    )]
     pub gpu_interval: f32,
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-
-    #[arg(short = 's', long, default_value = "false", value_name = "SERVE", help = "Start HTTP server to serve real-time data.")]
+    #[arg(
+        short = 's',
+        long,
+        default_value = "false",
+        value_name = "SERVE",
+        help = "Start HTTP server to serve real-time data."
+    )]
     pub serve: bool,
 
-    #[arg(short = 'P', long, default_value = "5998", value_name = "PORT", help = "Port for the HTTP server (requires --serve).")]
+    #[arg(
+        short = 'P',
+        long,
+        default_value = "5998",
+        value_name = "PORT",
+        help = "Port for the HTTP server (requires --serve)."
+    )]
     pub port: u16,
 
-    #[arg(short = 'l', long, default_value = "10000", value_name = "MAX_RESULTS", help = "Maximum data points held in the server buffer.")]
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "10000",
+        value_name = "MAX_RESULTS",
+        help = "Maximum data points held in the server buffer."
+    )]
     pub max_results: usize,
 
     #[arg(short = 'C', long, help = "Convert to HTML plot after collection finishes.")]
     pub convert_after: bool,
 
     // ── Top-N processes ───────────────────────────────────────────────────────
-
     #[arg(
         long,
         default_value = "0",

@@ -13,15 +13,9 @@ pub enum GpuVendor {
         name: String,
     },
     /// AMD GPU on Linux, monitored via `/sys/class/drm/cardN/device/`.
-    AmdLinux {
-        card_device_path: PathBuf,
-        name: String,
-    },
+    AmdLinux { card_device_path: PathBuf, name: String },
     /// Intel GPU on Linux, monitored via `/sys/class/drm/cardN/`.
-    IntelLinux {
-        card_device_path: PathBuf,
-        name: String,
-    },
+    IntelLinux { card_device_path: PathBuf, name: String },
 }
 
 /// A single discovered GPU entry.
@@ -109,7 +103,10 @@ fn discover_nvidia_gpus(gpus: &mut Vec<DiscoveredGpu>) {
             Ok(device) => {
                 let name = device.name().unwrap_or_else(|_| format!("NVIDIA GPU {i}"));
                 let gpu_index = gpus.len();
-                gpus.push(DiscoveredGpu { gpu_index, vendor: GpuVendor::Nvidia { nvml_index: i, name } });
+                gpus.push(DiscoveredGpu {
+                    gpu_index,
+                    vendor: GpuVendor::Nvidia { nvml_index: i, name },
+                });
             }
             Err(e) => warn!("Failed to access NVIDIA GPU {i}: {e}"),
         }
@@ -165,13 +162,25 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                 }
                 let name = resolve_gpu_name(&device_path, &format!("AMD GPU ({card_name})"));
                 let gpu_index = gpus.len();
-                gpus.push(DiscoveredGpu { gpu_index, vendor: GpuVendor::AmdLinux { card_device_path: device_path, name } });
+                gpus.push(DiscoveredGpu {
+                    gpu_index,
+                    vendor: GpuVendor::AmdLinux {
+                        card_device_path: device_path,
+                        name,
+                    },
+                });
             }
             "0x8086" => {
                 // Intel
                 let name = resolve_gpu_name(&device_path, &format!("Intel GPU ({card_name})"));
                 let gpu_index = gpus.len();
-                gpus.push(DiscoveredGpu { gpu_index, vendor: GpuVendor::IntelLinux { card_device_path: device_path, name } });
+                gpus.push(DiscoveredGpu {
+                    gpu_index,
+                    vendor: GpuVendor::IntelLinux {
+                        card_device_path: device_path,
+                        name,
+                    },
+                });
             }
             _ => {} // Unknown vendor
         }
@@ -308,7 +317,10 @@ pub fn discover_interfaces() -> Vec<DiscoveredInterface> {
         .iter()
         .filter(|(name, _)| is_real_interface(name))
         .enumerate()
-        .map(|(idx, (name, _))| DiscoveredInterface { iface_index: idx, name: name.clone() })
+        .map(|(idx, (name, _))| DiscoveredInterface {
+            iface_index: idx,
+            name: name.clone(),
+        })
         .collect();
 
     // Sort by name for deterministic column ordering.

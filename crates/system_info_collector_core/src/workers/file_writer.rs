@@ -102,7 +102,9 @@ pub async fn run<F>(
                     row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.cpu_usage_total)));
                 }
                 SimpleDataCollectionMode::CPU_USAGE_PER_CORE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| s.cpu_usage_per_core.iter().map(|v| fmt_f64(*v)).collect::<Vec<_>>().join(";")));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| {
+                        s.cpu_usage_per_core.iter().map(|v| fmt_f64(*v)).collect::<Vec<_>>().join(";")
+                    }));
                 }
                 SimpleDataCollectionMode::MEMORY_USED => {
                     row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_used_mb)));
@@ -208,7 +210,13 @@ pub async fn run<F>(
 
 /// Write the two-line CSV header (metadata line + column-name line).
 /// Requires an initial `System` refresh for memory / CPU metadata.
-pub fn write_csv_header(data_file: &mut BufWriter<File>, sys: &System, settings: &CollectSettings, discovery: &RuntimeDiscovery, app_version: &str) -> Result<(), Error> {
+pub fn write_csv_header(
+    data_file: &mut BufWriter<File>,
+    sys: &System,
+    settings: &CollectSettings,
+    discovery: &RuntimeDiscovery,
+    app_version: &str,
+) -> Result<(), Error> {
     // Custom process metadata entries: CUSTOM_0=NAME, CUSTOM_1=NAME, …
     let custom_meta: String = settings
         .process_cmd_to_search
@@ -372,8 +380,7 @@ fn open_top_n_file(path: &str, type_tag: &str, n: usize, start_time: f64) -> Res
     let mut writer = BufWriter::new(file);
 
     // Metadata line
-    writeln!(writer, "START_TIME={start_time},TOP_N={n},TYPE={type_tag}")
-        .context(format!("Failed to write header to {path}"))?;
+    writeln!(writer, "START_TIME={start_time},TOP_N={n},TYPE={type_tag}").context(format!("Failed to write header to {path}"))?;
 
     // Column header: TIMESTAMP,1,2,...,N
     let cols: Vec<String> = std::iter::once("TIMESTAMP".to_string()).chain((1..=n).map(|i| i.to_string())).collect();
