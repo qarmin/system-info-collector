@@ -45,4 +45,6 @@ pub struct CollectSettings {
     pub max_results: usize,
     /// Number of top processes to track by CPU% and RAM (0 = disabled).
     pub top_n_processes: usize,
+    /// Disk mount points to track (empty = no disk monitoring).
+    pub disk_mount_points: Vec<String>,
 }

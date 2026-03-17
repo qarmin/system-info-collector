@@ -21,9 +21,9 @@ fn fmt_f64(v: f64) -> String {
 
 use anyhow::{Context, Error};
 use log::{error, info};
-use sysinfo::System;
+use sysinfo::{Disks, System};
 
-use crate::discovery::RuntimeDiscovery;
+use crate::discovery::{DiscoveredDisk, RuntimeDiscovery};
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
@@ -39,6 +39,7 @@ pub async fn run<F>(
     shutdown: Arc<AtomicBool>,
     mut data_file: BufWriter<File>,
     on_row: Arc<F>,
+    disks: Arc<Vec<DiscoveredDisk>>,
 ) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
@@ -46,6 +47,13 @@ pub async fn run<F>(
     let mut interval = tokio::time::interval(Duration::from_millis(interval_ms.max(100)));
     // consume the first instant tick
     interval.tick().await;
+
+    // Initialize disk monitor if any disks are requested.
+    let mut sysinfo_disks = if disks.is_empty() {
+        None
+    } else {
+        Some(Disks::new_with_refreshed_list())
+    };
 
     let mut collected_bytes: usize = 0;
 
@@ -163,6 +171,26 @@ pub async fn run<F>(
             }
         }
 
+        // Disk columns: refresh stats and append two columns per tracked disk.
+        if let Some(ref mut sd) = sysinfo_disks {
+            sd.refresh(false);
+            for disk_entry in disks.iter() {
+                let stats = sd.iter().find(|d| d.mount_point().to_string_lossy() == disk_entry.mount_point.as_str());
+                match stats {
+                    Some(d) => {
+                        let avail = d.available_space();
+                        let used = d.total_space().saturating_sub(avail);
+                        row.push((used / 1_048_576).to_string());
+                        row.push((avail / 1_048_576).to_string());
+                    }
+                    None => {
+                        row.push("-1".to_string());
+                        row.push("-1".to_string());
+                    }
+                }
+            }
+        }
+
         let row_str = row.join(",");
         collected_bytes += row_str.len();
 
@@ -216,6 +244,7 @@ pub fn write_csv_header(
     settings: &CollectSettings,
     discovery: &RuntimeDiscovery,
     app_version: &str,
+    disks: &[DiscoveredDisk],
 ) -> Result<(), Error> {
     // Custom process metadata entries: CUSTOM_0=NAME, CUSTOM_1=NAME, …
     let custom_meta: String = settings
@@ -254,10 +283,13 @@ pub fn write_csv_header(
         .map(|i| format!(",NET_{}={}", i.iface_index, i.name))
         .collect();
 
+    // Disk metadata entries: DISK_0=/,DISK_1=/home,…
+    let disk_meta: String = disks.iter().map(|d| format!(",DISK_{}={}", d.disk_index, d.mount_point)).collect();
+
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());
     let general_info = format!(
-        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}",
+        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -273,6 +305,7 @@ pub fn write_csv_header(
         net_meta,
         cpu_model_meta,
         gpu_vram_meta,
+        disk_meta,
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write header to {}", settings.convert.data_path))?;
 
@@ -315,6 +348,12 @@ pub fn write_csv_header(
     for (idx, _) in settings.process_cmd_to_search.iter().enumerate() {
         columns.push(format!("CUSTOM_{idx}_CPU"));
         columns.push(format!("CUSTOM_{idx}_MEMORY"));
+    }
+
+    // Disk columns (two per disk: USED_MB, AVAIL_MB)
+    for disk_entry in disks {
+        columns.push(DataType::DISK_N_USED_MB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
+        columns.push(DataType::DISK_N_AVAIL_MB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
     }
 
     writeln!(data_file, "{}", columns.join(",")).context(format!("Failed to write column header to {}", settings.convert.data_path))?;

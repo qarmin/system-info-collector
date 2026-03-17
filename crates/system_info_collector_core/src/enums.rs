@@ -70,6 +70,9 @@ pub enum DataType {
     // Custom process columns: (index, process_graph_name)
     CUSTOM_CPU((usize, String)),
     CUSTOM_MEMORY((usize, String)),
+    // Dynamic per-disk columns: (disk_index, mount_point)
+    DISK_N_USED_MB((usize, String)),
+    DISK_N_AVAIL_MB((usize, String)),
 }
 
 impl std::fmt::Display for DataType {
@@ -102,6 +105,8 @@ impl DataType {
             Self::NET_N_TX_BPS((idx, _)) => format!("NET_{idx}_TX_BPS"),
             Self::CUSTOM_CPU((idx, _)) => format!("CUSTOM_{idx}_CPU"),
             Self::CUSTOM_MEMORY((idx, _)) => format!("CUSTOM_{idx}_MEMORY"),
+            Self::DISK_N_USED_MB((idx, _)) => format!("DISK_{idx}_USED_MB"),
+            Self::DISK_N_AVAIL_MB((idx, _)) => format!("DISK_{idx}_AVAIL_MB"),
         }
     }
 
@@ -113,6 +118,7 @@ impl DataType {
         gpu_names: &std::collections::HashMap<usize, String>,
         iface_names: &std::collections::HashMap<usize, String>,
         custom_names: &std::collections::HashMap<usize, String>,
+        disk_names: &std::collections::HashMap<usize, String>,
     ) -> Option<Self> {
         match s {
             "SECONDS_SINCE_START" => Some(Self::SECONDS_SINCE_START),
@@ -169,6 +175,21 @@ impl DataType {
                         }
                     }
                 }
+                if let Some(rest) = s.strip_prefix("DISK_") {
+                    // "DISK_0_USED_MB" → strip "DISK_" → "0_USED_MB"
+                    // splitn(2, '_') → ["0", "USED_MB"]
+                    let parts: Vec<&str> = rest.splitn(2, '_').collect();
+                    if parts.len() == 2 {
+                        if let Ok(idx) = parts[0].parse::<usize>() {
+                            let name = disk_names.get(&idx).cloned().unwrap_or_else(|| format!("disk{idx}"));
+                            return match parts[1] {
+                                "USED_MB" => Some(Self::DISK_N_USED_MB((idx, name))),
+                                "AVAIL_MB" => Some(Self::DISK_N_AVAIL_MB((idx, name))),
+                                _ => None,
+                            };
+                        }
+                    }
+                }
                 None
             }
         }
@@ -197,6 +218,8 @@ impl DataType {
             "NET_N_TX_BPS",
             "CUSTOM_N_CPU",
             "CUSTOM_N_MEMORY",
+            "DISK_N_USED_MB",
+            "DISK_N_AVAIL_MB",
         ]
         .join(", ")
     }
@@ -235,6 +258,10 @@ impl DataType {
         )
     }
 
+    pub fn is_disk(&self) -> bool {
+        matches!(self, Self::DISK_N_USED_MB(_) | Self::DISK_N_AVAIL_MB(_))
+    }
+
     pub fn pretty_print(&self) -> String {
         match self {
             Self::SECONDS_SINCE_START => "Unix timestamp".to_string(),
@@ -257,6 +284,8 @@ impl DataType {
             Self::NET_N_TX_BPS((_, name)) => format!("{name} TX MB/s"),
             Self::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
             Self::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
+            Self::DISK_N_USED_MB((_, mount)) => format!("{mount} used MB"),
+            Self::DISK_N_AVAIL_MB((_, mount)) => format!("{mount} avail MB"),
         }
     }
 }
@@ -282,4 +311,5 @@ pub enum GeneralInfoGroup {
     SWAP,
     NETWORK,
     GPU,
+    DISK,
 }

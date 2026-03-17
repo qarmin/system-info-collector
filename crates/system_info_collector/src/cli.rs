@@ -185,6 +185,14 @@ pub struct CollectArgs {
         help = "Track the top N most CPU-hungry and RAM-hungry processes, writing them to separate files (0 = disabled)."
     )]
     pub top_n_processes: usize,
+
+    // ── Disk monitoring ───────────────────────────────────────────────────────
+    #[arg(
+        long,
+        value_name = "MOUNT_POINT",
+        help = "Track disk used/available space for a mount point (repeatable, e.g. --disk / --disk /home)."
+    )]
+    pub disk: Vec<String>,
 }
 
 #[derive(Parser, Debug, Clone)]

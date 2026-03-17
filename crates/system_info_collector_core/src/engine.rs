@@ -6,7 +6,7 @@ use log::info;
 use sysinfo::{ProcessesToUpdate, System};
 use tokio::task::JoinSet;
 
-use crate::discovery::{discover_gpus, discover_interfaces, GpuVendor, RuntimeDiscovery};
+use crate::discovery::{discover_disks, discover_gpus, discover_interfaces, GpuVendor, RuntimeDiscovery};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
 use crate::workers::{file_writer, network_worker, nvidia_worker, sysinfo_worker};
@@ -61,6 +61,7 @@ impl CollectorEngine {
         // Discover GPUs and network interfaces at startup.
         let gpus = if needs_gpu { discover_gpus() } else { vec![] };
         let interfaces = if needs_network { discover_interfaces() } else { vec![] };
+        let disks = discover_disks(&self.settings.disk_mount_points);
 
         // Pre-size the shared state vectors.
         {
@@ -69,7 +70,7 @@ impl CollectorEngine {
             guard.latest_networks = vec![None; interfaces.len()];
         }
 
-        let discovery = Arc::new(RuntimeDiscovery { gpus, interfaces });
+        let discovery = Arc::new(RuntimeDiscovery { gpus, interfaces, disks });
 
         // Initial System refresh — used only to read metadata for the CSV header.
         let mut sys = System::new_all();
@@ -82,7 +83,7 @@ impl CollectorEngine {
         // Rotate old backups and open the data file.
         file_writer::backup_old_file(&self.settings)?;
         let mut data_file = file_writer::open_data_file(&self.settings)?;
-        file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version)?;
+        file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version, &discovery.disks)?;
         drop(sys); // no longer needed; workers create their own System instances
 
         let on_row = Arc::new(on_row);
@@ -150,6 +151,7 @@ impl CollectorEngine {
             Arc::clone(&self.shutdown),
             data_file,
             on_row,
+            Arc::new(discovery.disks.clone()),
         ));
 
         info!("All workers started, collecting data…");

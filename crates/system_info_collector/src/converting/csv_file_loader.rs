@@ -47,6 +47,14 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
     // CPU model string (absent in old CSV files).
     let cpu_model = hashmap_data.get("CPU_MODEL").cloned().unwrap_or_default();
 
+    // Extract disk mount points (DISK_0=path, DISK_1=path, …).
+    let mut disk_name_entries: Vec<(usize, String)> = hashmap_data
+        .iter()
+        .filter_map(|(k, v)| k.strip_prefix("DISK_").and_then(|n| n.parse::<usize>().ok()).map(|idx| (idx, v.clone())))
+        .collect();
+    disk_name_entries.sort_by_key(|(idx, _)| *idx);
+    let disk_names: Vec<String> = disk_name_entries.into_iter().map(|(_, name)| name).collect();
+
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
@@ -81,6 +89,7 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         cpu_model,
         gpu_names,
         gpu_vram_mb,
+        disk_names,
         top_cpu_processes,
         top_ram_processes,
     })
@@ -212,6 +221,7 @@ fn parse_header(
     let mut gpu_names: HashMap<usize, String> = HashMap::new();
     let mut iface_names: HashMap<usize, String> = HashMap::new();
     let mut custom_names: HashMap<usize, String> = HashMap::new();
+    let mut disk_names: HashMap<usize, String> = HashMap::new();
 
     for (key, val) in hashmap_data {
         if let Some(rest) = key.strip_prefix("GPU_") {
@@ -226,13 +236,17 @@ fn parse_header(
             if let Ok(idx) = rest.parse::<usize>() {
                 custom_names.insert(idx, val.clone());
             }
+        } else if let Some(rest) = key.strip_prefix("DISK_") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                disk_names.insert(idx, val.clone());
+            }
         }
     }
 
     let collected_data_names: Vec<DataType> = header_line
         .split(',')
         .map(|item| {
-            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names).ok_or_else(|| {
+            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names, &disk_names).ok_or_else(|| {
                 Error::msg(format!(
                     "Unknown column \"{item}\" in data file (allowed: {})",
                     DataType::get_allowed_values()
@@ -267,6 +281,9 @@ fn parse_header(
     }
     if collected_data_names.iter().any(|e| e.is_gpu()) {
         collected_groups.push(GeneralInfoGroup::GPU);
+    }
+    if collected_data_names.iter().any(|e| e.is_disk()) {
+        collected_groups.push(GeneralInfoGroup::DISK);
     }
 
     Ok((collected_data_names, collected_groups))

@@ -73,7 +73,7 @@ normal:
            memory-used memory-free memory-available \
            network-rx-bytes-per-sec network-tx-bytes-per-sec \
            gpu-utilization gpu-memory-used gpu-temperature \
-        -c 0.5 -s -l 10000
+        -c 0.5 -s -l 10000 --disk /
 
 samplyrd:
     cargo build --profile rdebug

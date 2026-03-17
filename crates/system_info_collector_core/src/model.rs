@@ -24,6 +24,8 @@ pub struct CollectedItemModels {
     pub top_cpu_processes: Option<TopProcessData>,
     /// Top N processes by RAM (MB), loaded from an optional extra file.
     pub top_ram_processes: Option<TopProcessData>,
+    /// Disk mount points parsed from CSV metadata (DISK_0=path, …).
+    pub disk_names: Vec<String>,
 }
 
 /// Data loaded from a top-N-processes file (CPU or RAM).

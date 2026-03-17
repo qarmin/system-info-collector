@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use log::{info, warn};
-use sysinfo::Networks;
+use sysinfo::{Disks, Networks};
 
 /// Which GPU technology backs this device.
 #[derive(Debug, Clone)]
@@ -44,12 +44,47 @@ pub struct DiscoveredInterface {
     pub name: String,
 }
 
+/// Filesystem types considered virtual/pseudo — excluded from disk tracking.
+const VIRTUAL_FS_TYPES: &[&str] = &[
+    "tmpfs",
+    "devtmpfs",
+    "proc",
+    "sysfs",
+    "cgroup",
+    "cgroup2",
+    "debugfs",
+    "securityfs",
+    "tracefs",
+    "pstore",
+    "hugetlbfs",
+    "mqueue",
+    "autofs",
+    "fusectl",
+    "efivarfs",
+    "bpf",
+    "ramfs",
+    "overlay",
+    "squashfs",
+    "devpts",
+    "configfs",
+];
+
+/// A single disk mount point the user wants to track.
+#[derive(Debug, Clone)]
+pub struct DiscoveredDisk {
+    /// Slot index used for column naming (DISK_N_USED_MB / DISK_N_AVAIL_MB).
+    pub disk_index: usize,
+    /// Mount point path string, e.g. "/" or "/home/rafal/Projekty".
+    pub mount_point: String,
+}
+
 /// Everything discovered at startup.  Workers receive an `Arc` of this so
 /// they know which GPUs / interfaces to poll.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeDiscovery {
     pub gpus: Vec<DiscoveredGpu>,
     pub interfaces: Vec<DiscoveredInterface>,
+    pub disks: Vec<DiscoveredDisk>,
 }
 
 impl RuntimeDiscovery {
@@ -58,6 +93,9 @@ impl RuntimeDiscovery {
     }
     pub fn interface_count(&self) -> usize {
         self.interfaces.len()
+    }
+    pub fn disk_count(&self) -> usize {
+        self.disks.len()
     }
 }
 
@@ -316,6 +354,49 @@ impl DiscoveredGpu {
 
 /// Interface name prefixes considered "virtual" / container-related.
 const VIRTUAL_PREFIXES: &[&str] = &["docker", "veth", "br-", "virbr", "tun", "tap", "dummy", "lo"];
+
+// ─── Disk discovery ───────────────────────────────────────────────────────────
+
+/// Validate user-requested disk mount points against the live disk list.
+///
+/// Logs all available real (non-virtual) mount points and warns about any
+/// requested mount point that is not found.  The returned `Vec` preserves the
+/// same order as `requested`, with one entry per valid mount point.
+pub fn discover_disks(requested: &[String]) -> Vec<DiscoveredDisk> {
+    if requested.is_empty() {
+        return vec![];
+    }
+
+    let disks = Disks::new_with_refreshed_list();
+    let available: Vec<String> = disks
+        .iter()
+        .filter(|d| {
+            let fs = d.file_system().to_string_lossy().to_lowercase();
+            !VIRTUAL_FS_TYPES.contains(&fs.as_str())
+        })
+        .map(|d| d.mount_point().to_string_lossy().to_string())
+        .collect();
+
+    info!("Available disk mount points: {}", available.join(", "));
+
+    let mut discovered: Vec<DiscoveredDisk> = Vec::new();
+    for mount in requested {
+        if available.contains(mount) {
+            let disk_index = discovered.len();
+            info!("Tracking disk {disk_index}: {mount}");
+            discovered.push(DiscoveredDisk {
+                disk_index,
+                mount_point: mount.clone(),
+            });
+        } else {
+            warn!("Requested disk mount point \"{mount}\" not found (available: {})", available.join(", "));
+        }
+    }
+
+    discovered
+}
+
+// ─── Network interface discovery ─────────────────────────────────────────────
 
 /// Discover "real" network interfaces to track.
 ///

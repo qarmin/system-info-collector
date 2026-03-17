@@ -130,6 +130,7 @@ enum ChartGroup {
     GpuUtil,
     GpuVram,
     GpuTemp,
+    Disk,
 }
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
@@ -171,6 +172,9 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
     }
     if let Some(&i) = layout_info.get(&ChartGroup::GpuTemp) {
         create_gpu_temp_plot(&mut plot, &dates, loaded_results, i);
+    }
+    if let Some(&i) = layout_info.get(&ChartGroup::Disk) {
+        create_disk_plot(&mut plot, &dates, loaded_results, i);
     }
 
     let mut html = plot.to_html();
@@ -238,6 +242,7 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         .collected_data
         .keys()
         .any(|dt| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)));
+    let has_disk = groups.contains(&GeneralInfoGroup::DISK);
 
     let rows = has_memory as usize
         + has_cpu as usize
@@ -245,7 +250,8 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         + has_network as usize
         + has_gpu_util as usize
         + has_gpu_vram as usize
-        + has_gpu_temp as usize;
+        + has_gpu_temp as usize
+        + has_disk as usize;
 
     // plotly 0.14 supports up to 8 named axes; cap the grid accordingly.
     let capped_rows = rows.min(8);
@@ -307,6 +313,9 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     }
     if has_gpu_temp {
         add_chart!(ChartGroup::GpuTemp, Axis::new().title(Title::with_text("GPU Temperature [°C]")));
+    }
+    if has_disk {
+        add_chart!(ChartGroup::Disk, Axis::new().title(Title::with_text("Disk Space [MB]")));
     }
 
     let _ = current;
@@ -576,6 +585,19 @@ fn create_gpu_vram_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
 fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
     for (data_type, data) in &loaded_results.collected_data {
         if !matches!(data_type, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)) {
+            continue;
+        }
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
+        plot.add_trace(trace);
+    }
+}
+
+fn create_disk_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
+    for (data_type, data) in &loaded_results.collected_data {
+        if !data_type.is_disk() {
             continue;
         }
         let trace = Scatter::new(dates.to_owned(), data.clone())

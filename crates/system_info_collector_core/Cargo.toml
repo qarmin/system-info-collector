@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 tokio = { version = "1.30", features = ["full"] }
-sysinfo = { version ="0.38", default-features = false, features = ["component", "network", "system"] }
+sysinfo = { version ="0.38", default-features = false, features = ["component", "disk", "network", "system"] }
 anyhow = "1.0"
 log = "0.4"
 regex = "1.9.3"
