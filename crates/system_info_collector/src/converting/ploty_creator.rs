@@ -315,7 +315,7 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         add_chart!(ChartGroup::GpuTemp, Axis::new().title(Title::with_text("GPU Temperature [°C]")));
     }
     if has_disk {
-        add_chart!(ChartGroup::Disk, Axis::new().title(Title::with_text("Disk Space [MB]")));
+        add_chart!(ChartGroup::Disk, Axis::new().title(Title::with_text("Disk Space [GB]")));
     }
 
     let _ = current;

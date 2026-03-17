@@ -180,8 +180,8 @@ pub async fn run<F>(
                     Some(d) => {
                         let avail = d.available_space();
                         let used = d.total_space().saturating_sub(avail);
-                        row.push((used / 1_048_576).to_string());
-                        row.push((avail / 1_048_576).to_string());
+                        row.push((used / 1_073_741_824).to_string());
+                        row.push((avail / 1_073_741_824).to_string());
                     }
                     None => {
                         row.push("-1".to_string());
@@ -350,10 +350,10 @@ pub fn write_csv_header(
         columns.push(format!("CUSTOM_{idx}_MEMORY"));
     }
 
-    // Disk columns (two per disk: USED_MB, AVAIL_MB)
+    // Disk columns (two per disk: USED_GB, AVAIL_GB)
     for disk_entry in disks {
-        columns.push(DataType::DISK_N_USED_MB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
-        columns.push(DataType::DISK_N_AVAIL_MB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
+        columns.push(DataType::DISK_N_USED_GB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
+        columns.push(DataType::DISK_N_AVAIL_GB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
     }
 
     writeln!(data_file, "{}", columns.join(",")).context(format!("Failed to write column header to {}", settings.convert.data_path))?;

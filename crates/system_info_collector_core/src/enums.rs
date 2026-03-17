@@ -71,8 +71,8 @@ pub enum DataType {
     CUSTOM_CPU((usize, String)),
     CUSTOM_MEMORY((usize, String)),
     // Dynamic per-disk columns: (disk_index, mount_point)
-    DISK_N_USED_MB((usize, String)),
-    DISK_N_AVAIL_MB((usize, String)),
+    DISK_N_USED_GB((usize, String)),
+    DISK_N_AVAIL_GB((usize, String)),
 }
 
 impl std::fmt::Display for DataType {
@@ -105,8 +105,8 @@ impl DataType {
             Self::NET_N_TX_BPS((idx, _)) => format!("NET_{idx}_TX_BPS"),
             Self::CUSTOM_CPU((idx, _)) => format!("CUSTOM_{idx}_CPU"),
             Self::CUSTOM_MEMORY((idx, _)) => format!("CUSTOM_{idx}_MEMORY"),
-            Self::DISK_N_USED_MB((idx, _)) => format!("DISK_{idx}_USED_MB"),
-            Self::DISK_N_AVAIL_MB((idx, _)) => format!("DISK_{idx}_AVAIL_MB"),
+            Self::DISK_N_USED_GB((idx, _)) => format!("DISK_{idx}_USED_GB"),
+            Self::DISK_N_AVAIL_GB((idx, _)) => format!("DISK_{idx}_AVAIL_GB"),
         }
     }
 
@@ -183,8 +183,8 @@ impl DataType {
                         if let Ok(idx) = parts[0].parse::<usize>() {
                             let name = disk_names.get(&idx).cloned().unwrap_or_else(|| format!("disk{idx}"));
                             return match parts[1] {
-                                "USED_MB" => Some(Self::DISK_N_USED_MB((idx, name))),
-                                "AVAIL_MB" => Some(Self::DISK_N_AVAIL_MB((idx, name))),
+                                "USED_GB" => Some(Self::DISK_N_USED_GB((idx, name))),
+                                "AVAIL_GB" => Some(Self::DISK_N_AVAIL_GB((idx, name))),
                                 _ => None,
                             };
                         }
@@ -218,8 +218,8 @@ impl DataType {
             "NET_N_TX_BPS",
             "CUSTOM_N_CPU",
             "CUSTOM_N_MEMORY",
-            "DISK_N_USED_MB",
-            "DISK_N_AVAIL_MB",
+            "DISK_N_USED_GB",
+            "DISK_N_AVAIL_GB",
         ]
         .join(", ")
     }
@@ -259,7 +259,7 @@ impl DataType {
     }
 
     pub fn is_disk(&self) -> bool {
-        matches!(self, Self::DISK_N_USED_MB(_) | Self::DISK_N_AVAIL_MB(_))
+        matches!(self, Self::DISK_N_USED_GB(_) | Self::DISK_N_AVAIL_GB(_))
     }
 
     pub fn pretty_print(&self) -> String {
@@ -284,8 +284,8 @@ impl DataType {
             Self::NET_N_TX_BPS((_, name)) => format!("{name} TX MB/s"),
             Self::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
             Self::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
-            Self::DISK_N_USED_MB((_, mount)) => format!("{mount} used MB"),
-            Self::DISK_N_AVAIL_MB((_, mount)) => format!("{mount} avail MB"),
+            Self::DISK_N_USED_GB((_, mount)) => format!("{mount} used GB"),
+            Self::DISK_N_AVAIL_GB((_, mount)) => format!("{mount} avail GB"),
         }
     }
 }
