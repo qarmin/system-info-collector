@@ -5,6 +5,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
+/// Format a float with at most 2 decimal places, stripping trailing zeros
+/// (and the decimal point itself when not needed).
+/// e.g. 0.0000 → "0", 17332.7700 → "17332.77", 1.50 → "1.5"
+fn fmt_f64(v: f64) -> String {
+    let s = format!("{v:.2}");
+    if s.contains('.') {
+        let s = s.trim_end_matches('0');
+        let s = s.trim_end_matches('.');
+        s.to_string()
+    } else {
+        s
+    }
+}
+
 use anyhow::{Context, Error};
 use log::{error, info};
 use sysinfo::System;
@@ -80,41 +94,41 @@ pub async fn run<F>(
 
         // Build the CSV row in the same column order as the header.
         let mut row: Vec<String> = Vec::with_capacity(16);
-        row.push(format!("{seconds_since_start:.2}"));
+        row.push(fmt_f64(seconds_since_start));
 
         for mode in &settings.collection_mode {
             match mode {
                 SimpleDataCollectionMode::CPU_USAGE_TOTAL => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.cpu_usage_total)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.cpu_usage_total)));
                 }
                 SimpleDataCollectionMode::CPU_USAGE_PER_CORE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| s.cpu_usage_per_core.iter().map(|v| format!("{v:.2}")).collect::<Vec<_>>().join(";")));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| s.cpu_usage_per_core.iter().map(|v| fmt_f64(*v)).collect::<Vec<_>>().join(";")));
                 }
                 SimpleDataCollectionMode::MEMORY_USED => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_used_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_used_mb)));
                 }
                 SimpleDataCollectionMode::MEMORY_FREE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_free_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_free_mb)));
                 }
                 SimpleDataCollectionMode::MEMORY_AVAILABLE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.memory_available_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_available_mb)));
                 }
                 SimpleDataCollectionMode::SWAP_USED => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_used_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.swap_used_mb)));
                 }
                 SimpleDataCollectionMode::SWAP_FREE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| format!("{:.2}", s.swap_free_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.swap_free_mb)));
                 }
                 // Network modes expand to one column per discovered interface.
                 // Values are written in MB/s (bytes ÷ 1 048 576) for readability.
                 SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
                     for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.4}", n.rx_bytes_per_sec / 1_048_576.0)));
+                        row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.rx_bytes_per_sec / 1_048_576.0)));
                     }
                 }
                 SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
                     for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| format!("{:.4}", n.tx_bytes_per_sec / 1_048_576.0)));
+                        row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.tx_bytes_per_sec / 1_048_576.0)));
                     }
                 }
                 // GPU modes expand to one column per discovered GPU.
@@ -139,8 +153,8 @@ pub async fn run<F>(
         // Custom process columns (two per pattern: CPU%, memory MB)
         for proc_opt in &process_snaps {
             if let Some(p) = proc_opt {
-                row.push(format!("{:.2}", p.cpu_usage));
-                row.push(format!("{:.2}", p.memory_mb));
+                row.push(fmt_f64(p.cpu_usage as f64));
+                row.push(fmt_f64(p.memory_mb));
             } else {
                 row.push("-1".to_string());
                 row.push("-1".to_string());
@@ -373,10 +387,10 @@ fn open_top_n_file(path: &str, type_tag: &str, n: usize, start_time: f64) -> Res
 /// Pads with empty entries if fewer than `n` processes are present.
 fn write_top_n_row(file: &mut BufWriter<File>, timestamp: f64, entries: &[(String, f32)], n: usize, flush: bool) {
     let mut cols: Vec<String> = Vec::with_capacity(n + 1);
-    cols.push(format!("{timestamp:.2}"));
+    cols.push(fmt_f64(timestamp));
     for i in 0..n {
         if let Some((name, val)) = entries.get(i) {
-            cols.push(format!("{name}|{val:.2}"));
+            cols.push(format!("{name}|{}", fmt_f64(*val as f64)));
         } else {
             cols.push(String::new());
         }
