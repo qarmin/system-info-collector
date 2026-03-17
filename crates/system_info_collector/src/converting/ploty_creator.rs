@@ -67,9 +67,9 @@ fn top_process_plot_path(plot_path: &str, kind: &str) -> String {
     }
 }
 
-fn minify_html(html: String) -> String {
+fn minify_html(html: &str) -> String {
     let regex = Regex::new(r"\n[ ]+").expect("Regex is invalid");
-    regex.replace_all(&html, "").into_owned()
+    regex.replace_all(html, "").into_owned()
 }
 
 fn apply_dark_style(mut html: String) -> String {
@@ -178,8 +178,13 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         html = apply_dark_style(html);
     }
 
+    let cpu_label = if loaded_results.cpu_model.is_empty() {
+        format!("CPU: {} cores", loaded_results.cpu_core_count)
+    } else {
+        format!("CPU: {} ({} cores)", loaded_results.cpu_model, loaded_results.cpu_core_count)
+    };
     let mut notes_vec = vec![
-        format!("Cpu count: {}", loaded_results.cpu_core_count),
+        cpu_label,
         format!("Check interval: {}s", loaded_results.check_interval),
         format!(
             "Memory total: {}",
@@ -191,7 +196,13 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         ),
     ];
     for (idx, name) in loaded_results.gpu_names.iter().enumerate() {
-        notes_vec.push(format!("GPU {idx}: {name}"));
+        let vram_str = loaded_results
+            .gpu_vram_mb
+            .get(idx)
+            .filter(|&&mb| mb > 0)
+            .map(|&mb| format!(" ({} VRAM)", humansize::format_size(mb * 1024 * 1024, humansize::BINARY)))
+            .unwrap_or_default();
+        notes_vec.push(format!("GPU {idx}: {name}{vram_str}"));
     }
 
     #[expect(clippy::format_collect)]
@@ -201,7 +212,7 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         .collect::<String>();
     html = html.replace("</body>", &format!("{}\n{}\n</body>", &notes, per_chart_legends_script()));
 
-    let html = minify_html(html);
+    let html = minify_html(&html);
     fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
 
     Ok(())
@@ -465,7 +476,7 @@ fn save_top_process_plot_file(
     if !settings.white_plot_mode {
         html = apply_dark_style(html);
     }
-    let html = minify_html(html);
+    let html = minify_html(&html);
     fs::write(path, html.as_bytes()).context(format!("Failed to write top-process plot: {path}"))?;
 
     Ok(())

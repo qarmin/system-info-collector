@@ -32,6 +32,21 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
     gpu_name_entries.sort_by_key(|(idx, _)| *idx);
     let gpu_names: Vec<String> = gpu_name_entries.into_iter().map(|(_, name)| name).collect();
 
+    // Extract GPU VRAM totals (GPU_VRAM_0=MB, …).
+    let mut gpu_vram_entries: Vec<(usize, u64)> = hashmap_data
+        .iter()
+        .filter_map(|(k, v)| {
+            k.strip_prefix("GPU_VRAM_")
+                .and_then(|n| n.parse::<usize>().ok())
+                .and_then(|idx| v.parse::<u64>().ok().map(|mb| (idx, mb)))
+        })
+        .collect();
+    gpu_vram_entries.sort_by_key(|(idx, _)| *idx);
+    let gpu_vram_mb: Vec<u64> = gpu_vram_entries.into_iter().map(|(_, mb)| mb).collect();
+
+    // CPU model string (absent in old CSV files).
+    let cpu_model = hashmap_data.get("CPU_MODEL").cloned().unwrap_or_default();
+
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
 
@@ -63,7 +78,9 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         cpu_core_count,
         check_interval,
         start_time,
+        cpu_model,
         gpu_names,
+        gpu_vram_mb,
         top_cpu_processes,
         top_ram_processes,
     })

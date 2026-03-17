@@ -24,6 +24,8 @@ pub struct DiscoveredGpu {
     /// Slot index in `SharedState.latest_gpus`.
     pub gpu_index: usize,
     pub vendor: GpuVendor,
+    /// Total VRAM in megabytes (0 if unknown).
+    pub vram_total_mb: u64,
 }
 
 impl DiscoveredGpu {
@@ -102,10 +104,12 @@ fn discover_nvidia_gpus(gpus: &mut Vec<DiscoveredGpu>) {
         match nvml.device_by_index(i) {
             Ok(device) => {
                 let name = device.name().unwrap_or_else(|_| format!("NVIDIA GPU {i}"));
+                let vram_total_mb = device.memory_info().map(|m| m.total / 1024 / 1024).unwrap_or(0);
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu {
                     gpu_index,
                     vendor: GpuVendor::Nvidia { nvml_index: i, name },
+                    vram_total_mb,
                 });
             }
             Err(e) => warn!("Failed to access NVIDIA GPU {i}: {e}"),
@@ -161,6 +165,10 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                     continue;
                 }
                 let name = resolve_gpu_name(&device_path, &format!("AMD GPU ({card_name})"));
+                let vram_total_mb = fs::read_to_string(device_path.join("mem_info_vram_total"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .map_or(0, |b| b / 1024 / 1024);
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu {
                     gpu_index,
@@ -168,6 +176,7 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                         card_device_path: device_path,
                         name,
                     },
+                    vram_total_mb,
                 });
             }
             "0x8086" => {
@@ -180,6 +189,7 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                         card_device_path: device_path,
                         name,
                     },
+                    vram_total_mb: 0,
                 });
             }
             _ => {} // Unknown vendor
@@ -260,6 +270,7 @@ fn search_pci_ids(content: &str, vendor: &str, device: &str, sub_vendor: &str, s
             let trimmed = line.trim_start_matches('\t');
             let id = trimmed.split_whitespace().next().unwrap_or("");
             if id.eq_ignore_ascii_case(device) {
+                #[expect(clippy::string_slice)]
                 let rest = trimmed[id.len()..].trim();
                 device_name = Some(rest.to_string());
                 past_device = true;

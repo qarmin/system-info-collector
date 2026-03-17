@@ -14,8 +14,12 @@ pub struct CollectedItemModels {
     pub cpu_core_count: usize,
     pub check_interval: f32,
     pub start_time: f64,
+    /// CPU model string from CSV metadata (empty on old files).
+    pub cpu_model: String,
     /// GPU names parsed from CSV metadata (GPU_0=name, GPU_1=name, …).
     pub gpu_names: Vec<String>,
+    /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 if unknown).
+    pub gpu_vram_mb: Vec<u64>,
     /// Top N processes by CPU%, loaded from an optional extra file.
     pub top_cpu_processes: Option<TopProcessData>,
     /// Top N processes by RAM (MB), loaded from an optional extra file.

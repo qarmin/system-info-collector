@@ -7,9 +7,9 @@ use std::time::{Duration, SystemTime};
 
 /// Format a float with at most 2 decimal places, stripping trailing zeros
 /// (and the decimal point itself when not needed).
-/// e.g. 0.0000 → "0", 17332.7700 → "17332.77", 1.50 → "1.5"
+/// e.g. 0.0000 → "0", 17332.7700 → "17332.8", 1.01 → "1"
 fn fmt_f64(v: f64) -> String {
-    let s = format!("{v:.2}");
+    let s = format!("{v:.1}");
     if s.contains('.') {
         let s = s.trim_end_matches('0');
         let s = s.trim_end_matches('.');
@@ -232,6 +232,21 @@ pub fn write_csv_header(
         .map(|g| format!(",GPU_{}={}", g.gpu_index, g.display_name()))
         .collect();
 
+    // GPU VRAM metadata: GPU_VRAM_0=MB, GPU_VRAM_1=MB, …
+    let gpu_vram_meta: String = discovery
+        .gpus
+        .iter()
+        .filter(|g| g.vram_total_mb > 0)
+        .map(|g| format!(",GPU_VRAM_{}={}", g.gpu_index, g.vram_total_mb))
+        .collect();
+
+    // CPU model from first CPU (commas replaced to avoid breaking the CSV metadata line).
+    let cpu_model_meta = sys
+        .cpus()
+        .first()
+        .map(|c| format!(",CPU_MODEL={}", c.brand().replace(',', " ")))
+        .unwrap_or_default();
+
     // Network interface metadata entries: NET_0=eth0, NET_1=wlan0, …
     let net_meta: String = discovery
         .interfaces
@@ -242,7 +257,7 @@ pub fn write_csv_header(
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());
     let general_info = format!(
-        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}",
+        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -256,6 +271,8 @@ pub fn write_csv_header(
         custom_meta,
         gpu_meta,
         net_meta,
+        cpu_model_meta,
+        gpu_vram_meta,
     );
     writeln!(data_file, "{general_info}").context(format!("Failed to write header to {}", settings.convert.data_path))?;
 
