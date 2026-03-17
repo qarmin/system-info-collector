@@ -160,20 +160,26 @@ fn parse_data(
     collected_data_names: &[DataType],
     cpu_core_count: usize,
 ) -> Result<HashMap<DataType, Vec<String>>, Error> {
-    let mut collected_vec_data: Vec<Vec<String>> = Vec::new();
-    for _ in 0..collected_data_names.len() {
-        collected_vec_data.push(Vec::new());
-    }
+    let col_count = collected_data_names.len();
+    let mut collected_vec_data: Vec<Vec<String>> = vec![Vec::new(); col_count];
+
+    // Stores the last fully-resolved row for compact CSV decoding.
+    // Empty cells at index >= 1 are filled from the corresponding entry here.
+    let mut prev_row: Vec<String> = vec![String::new(); col_count];
 
     for line in lines_iter {
         let line = line.context("Failed to read line of data file")?;
         let mut split = line.split(',');
-        if split.clone().count() != collected_data_names.len() {
+        if split.clone().count() != col_count {
             info!("Line \"{line}\" is broken - not enough items, skipping it");
             continue;
         }
-        for i in &mut collected_vec_data {
-            i.push(split.next().expect("Validated before").to_string());
+        for (i, col_data) in collected_vec_data.iter_mut().enumerate() {
+            let raw = split.next().expect("Validated before");
+            // Compact CSV: empty cells at data columns carry the previous value.
+            let value = if i > 0 && raw.is_empty() { prev_row[i].clone() } else { raw.to_string() };
+            prev_row[i] = value.clone();
+            col_data.push(value);
         }
     }
 

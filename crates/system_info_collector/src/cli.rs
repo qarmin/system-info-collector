@@ -92,9 +92,16 @@ pub struct CollectArgs {
         long,
         default_value = "false",
         value_name = "INSTANT_FLUSHING",
-        help = "Disable automatic file flushing after each write."
+        help = "Disable automatic file flushing after each write - may improve performance a little, but increases risk of data loss on crash."
     )]
     pub disable_instant_flushing: bool,
+
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Disable compact CSV mode. By default, repeated values are omitted (written as empty) to reduce file size; the reader fills them back in automatically."
+    )]
+    pub no_compact: bool,
 
     #[arg(
         short,
@@ -132,7 +139,7 @@ pub struct CollectArgs {
 
     #[arg(
         long,
-        default_value = "0.5",
+        default_value = "1.0",
         value_name = "NETWORK_INTERVAL",
         help = "Interval (seconds) at which the network worker polls interface counters."
     )]
@@ -140,7 +147,7 @@ pub struct CollectArgs {
 
     #[arg(
         long,
-        default_value = "0.2",
+        default_value = "1.0",
         value_name = "GPU_INTERVAL",
         help = "Interval (seconds) at which the NVIDIA GPU worker polls via NVML."
     )]
@@ -182,7 +189,7 @@ pub struct CollectArgs {
         long,
         default_value = "0",
         value_name = "N",
-        help = "Track the top N most CPU-hungry and RAM-hungry processes, writing them to separate files (0 = disabled)."
+        help = "Track the top N most CPU-hungry and RAM-hungry processes, writing them to separate files (0 = disabled) VERY RESOURCE-INTENSIVE, because it needs to refresh all processes"
     )]
     pub top_n_processes: usize,
 

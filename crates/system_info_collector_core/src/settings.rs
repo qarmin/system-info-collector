@@ -53,4 +53,8 @@ pub struct CollectSettings {
     pub network_interfaces: Vec<String>,
     /// If true, track all available non-virtual network interfaces.
     pub all_networks: bool,
+    /// If true, repeated values are omitted from CSV rows (written as empty strings).
+    /// The reader fills them back in from the previous row.  Reduces file size significantly
+    /// for slow-changing metrics.  Disable with --no-compact.
+    pub compact_csv: bool,
 }

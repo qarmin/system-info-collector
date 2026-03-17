@@ -83,5 +83,6 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         all_disks: args.all_disks,
         network_interfaces: args.network,
         all_networks: args.all_networks,
+        compact_csv: !args.no_compact,
     }
 }

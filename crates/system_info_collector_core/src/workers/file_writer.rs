@@ -60,6 +60,10 @@ pub async fn run<F>(
 
     let mut collected_bytes: usize = 0;
 
+    // Previous data-row values used for compact CSV encoding.
+    // Index 0 = timestamp (always written), indices 1..N = data columns.
+    let mut prev_row: Vec<String> = Vec::new();
+
     // Open optional top-N process files.
     let mut top_cpu_file: Option<BufWriter<File>> = None;
     let mut top_ram_file: Option<BufWriter<File>> = None;
@@ -205,7 +209,25 @@ pub async fn run<F>(
             }
         }
 
-        let row_str = row.join(",");
+        // In compact mode, replace data values that haven't changed with empty strings.
+        // The timestamp (index 0) is always written in full.
+        // `on_row` always receives the full row so the HTTP server has complete data.
+        let row_str = if settings.compact_csv && !prev_row.is_empty() {
+            let compact: Vec<&str> = row
+                .iter()
+                .enumerate()
+                .map(|(i, v)| if i == 0 || prev_row.get(i).map_or(true, |p| p != v) { v.as_str() } else { "" })
+                .collect();
+            compact.join(",")
+        } else {
+            row.join(",")
+        };
+
+        // Update the previous row with the current full values.
+        if settings.compact_csv {
+            prev_row.clone_from(&row);
+        }
+
         collected_bytes += row_str.len();
 
         if collected_bytes >= settings.maximum_data_file_size_bytes {
