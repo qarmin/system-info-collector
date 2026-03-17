@@ -3,7 +3,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Format a float with at most 2 decimal places, stripping trailing zeros
 /// (and the decimal point itself when not needed).
@@ -20,6 +20,7 @@ fn fmt_f64(v: f64) -> String {
 }
 
 use anyhow::{Context, Error};
+use chrono::Utc;
 use log::{error, info};
 use sysinfo::{Disks, System};
 
@@ -40,6 +41,7 @@ pub async fn run<F>(
     mut data_file: BufWriter<File>,
     on_row: Arc<F>,
     discovery: Arc<RuntimeDiscovery>,
+    csv_header: String,
 ) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
@@ -63,6 +65,10 @@ pub async fn run<F>(
     // Previous data-row values used for compact CSV encoding.
     // Index 0 = timestamp (always written), indices 1..N = data columns.
     let mut prev_row: Vec<String> = Vec::new();
+
+    // Track last disk refresh time to honour disk_interval_secs.
+    let mut last_disk_refresh: Option<Instant> = None;
+    let disk_interval_ms = (settings.disk_interval_secs * 1000.0) as u128;
 
     // Open optional top-N process files.
     let mut top_cpu_file: Option<BufWriter<File>> = None;
@@ -107,9 +113,13 @@ pub async fn run<F>(
             )
         };
 
-        // Refresh disk stats once per iteration (before the mode loop).
+        // Refresh disk stats at disk_interval_secs rate.
         if let Some(ref mut sd) = sysinfo_disks {
-            sd.refresh(false);
+            let should_refresh = last_disk_refresh.is_none_or(|t: Instant| t.elapsed().as_millis() >= disk_interval_ms);
+            if should_refresh {
+                sd.refresh(false);
+                last_disk_refresh = Some(Instant::now());
+            }
         }
 
         // Build the CSV row in the same column order as the header.
@@ -216,7 +226,7 @@ pub async fn run<F>(
             let compact: Vec<&str> = row
                 .iter()
                 .enumerate()
-                .map(|(i, v)| if i == 0 || prev_row.get(i).map_or(true, |p| p != v) { v.as_str() } else { "" })
+                .map(|(i, v)| if i == 0 || (prev_row.get(i) != Some(v)) { v.as_str() } else { "" })
                 .collect();
             compact.join(",")
         } else {
@@ -231,13 +241,22 @@ pub async fn run<F>(
         collected_bytes += row_str.len();
 
         if collected_bytes >= settings.maximum_data_file_size_bytes {
-            let _ = data_file.flush();
-            error!(
-                "Exceeded allowed data size ({}), stopping collection",
+            info!(
+                "Data file reached size limit ({}), rotating to a new file",
                 humansize::format_size(settings.maximum_data_file_size_bytes, humansize::BINARY)
             );
-            shutdown.store(true, Ordering::Relaxed);
-            break;
+            match rotate_data_file(&mut data_file, &settings.convert.data_path, &csv_header) {
+                Ok(new_file) => {
+                    data_file = new_file;
+                    collected_bytes = 0;
+                    prev_row.clear();
+                }
+                Err(e) => {
+                    error!("Failed to rotate data file: {e}, stopping collection");
+                    shutdown.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
         }
 
         if let Err(e) = writeln!(data_file, "{row_str}").context(format!("Failed to write to {}", settings.convert.data_path)) {
@@ -274,13 +293,14 @@ pub async fn run<F>(
 
 /// Write the two-line CSV header (metadata line + column-name line).
 /// Requires an initial `System` refresh for memory / CPU metadata.
+/// Returns the header content so it can be reused when rotating files.
 pub fn write_csv_header(
     data_file: &mut BufWriter<File>,
     sys: &System,
     settings: &CollectSettings,
     discovery: &RuntimeDiscovery,
     app_version: &str,
-) -> Result<(), Error> {
+) -> Result<String, Error> {
     let disks = &discovery.disks;
     // Custom process metadata entries: CUSTOM_0=NAME, CUSTOM_1=NAME, …
     let custom_meta: String = settings
@@ -343,8 +363,6 @@ pub fn write_csv_header(
         gpu_vram_meta,
         disk_meta,
     );
-    writeln!(data_file, "{general_info}").context(format!("Failed to write header to {}", settings.convert.data_path))?;
-
     // Column header line.
     // GPU/network modes expand to one column per discovered GPU/interface.
     let mut columns: Vec<String> = vec![DataType::SECONDS_SINCE_START.column_name()];
@@ -396,13 +414,87 @@ pub fn write_csv_header(
         columns.push(format!("CUSTOM_{idx}_MEMORY"));
     }
 
-    writeln!(data_file, "{}", columns.join(",")).context(format!("Failed to write column header to {}", settings.convert.data_path))?;
+    let header = format!("{general_info}\n{}\n", columns.join(","));
+    write!(data_file, "{header}").context(format!("Failed to write header to {}", settings.convert.data_path))?;
 
     if !settings.disable_instant_flushing {
         data_file.flush().context(format!("Failed to flush {}", settings.convert.data_path))?;
     }
 
-    Ok(())
+    Ok(header)
+}
+
+/// Flush the current data file, rename it with a UTC datetime stamp, clean up
+/// old rotated files (keep at most `MAX_ROTATED_FILES`), open a fresh file at
+/// the original path, write the CSV header, and return the new `BufWriter`.
+fn rotate_data_file(data_file: &mut BufWriter<File>, data_path: &str, csv_header: &str) -> Result<BufWriter<File>, Error> {
+    const MAX_ROTATED_FILES: usize = 10;
+
+    data_file.flush().context("Failed to flush data file before rotation")?;
+
+    let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let rotated_path = insert_before_extension(data_path, &format!("_{timestamp}"));
+    fs::rename(data_path, &rotated_path).context(format!("Failed to rename {data_path} to {rotated_path}"))?;
+    info!("Rotated data file to {rotated_path}");
+
+    cleanup_rotated_files(data_path, MAX_ROTATED_FILES);
+
+    let mut writer = open_data_file_at(data_path)?;
+    write!(writer, "{csv_header}").context(format!("Failed to write header to new file {data_path}"))?;
+    writer.flush().context(format!("Failed to flush new file {data_path}"))?;
+
+    Ok(writer)
+}
+
+/// Delete the oldest rotated files so at most `max_count` remain.
+/// Rotated files are named `{base}_{YYYY-MM-DD_HH-MM-SS}{ext}`.
+fn cleanup_rotated_files(data_path: &str, max_count: usize) {
+    let path = Path::new(data_path);
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let base = match path.file_stem() {
+        Some(s) => s.to_string_lossy().into_owned(),
+        None => return,
+    };
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+
+    let mut rotated: Vec<_> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if is_rotated_filename(&name, &base, &ext) { Some(e.path()) } else { None }
+        })
+        .collect();
+
+    rotated.sort();
+
+    while rotated.len() > max_count {
+        let oldest = rotated.remove(0);
+        if let Err(e) = fs::remove_file(&oldest) {
+            error!("Failed to remove old rotated file {}: {e}", oldest.display());
+        } else {
+            info!("Removed old rotated file {}", oldest.display());
+        }
+    }
+}
+
+/// Returns `true` if `file_name` looks like a rotated file for the given `base` and `ext`.
+/// Expected middle part: `_YYYY-MM-DD_HH-MM-SS` (20 chars including the leading underscore).
+fn is_rotated_filename(file_name: &str, base: &str, ext: &str) -> bool {
+    let prefix = format!("{base}_");
+    if !file_name.starts_with(&prefix) || !file_name.ends_with(ext) {
+        return false;
+    }
+    #[expect(clippy::string_slice)]
+    let middle = &file_name[prefix.len()..file_name.len() - ext.len()];
+    // middle must be exactly "YYYY-MM-DD_HH-MM-SS" (19 chars)
+    middle.len() == 19
+        && middle.chars().enumerate().all(|(i, c)| match i {
+            4 | 7 | 13 | 16 => c == '-',
+            10 => c == '_',
+            _ => c.is_ascii_digit(),
+        })
 }
 
 /// Rotate existing backup files and rename the current data file.
@@ -445,12 +537,16 @@ fn insert_before_extension(path: &str, suffix: &str) -> String {
 
 /// Open / create the data CSV file.
 pub fn open_data_file(settings: &CollectSettings) -> Result<BufWriter<File>, Error> {
+    open_data_file_at(&settings.convert.data_path)
+}
+
+fn open_data_file_at(path: &str) -> Result<BufWriter<File>, Error> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&settings.convert.data_path)
-        .context(format!("Failed to open data file {}", settings.convert.data_path))?;
+        .open(path)
+        .context(format!("Failed to open data file {path}"))?;
     Ok(BufWriter::new(file))
 }
 

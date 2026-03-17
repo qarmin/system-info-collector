@@ -153,6 +153,14 @@ pub struct CollectArgs {
     )]
     pub gpu_interval: f32,
 
+    #[arg(
+        long,
+        default_value = "5.0",
+        value_name = "DISK_INTERVAL",
+        help = "Interval (seconds) at which disk space stats are refreshed."
+    )]
+    pub disk_interval: f32,
+
     // ── HTTP server ───────────────────────────────────────────────────────────
     #[arg(
         short = 's',

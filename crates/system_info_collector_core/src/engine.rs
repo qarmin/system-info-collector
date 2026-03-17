@@ -96,7 +96,7 @@ impl CollectorEngine {
         // Rotate old backups and open the data file.
         file_writer::backup_old_file(&self.settings)?;
         let mut data_file = file_writer::open_data_file(&self.settings)?;
-        file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version)?;
+        let csv_header = file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version)?;
         drop(sys); // no longer needed; workers create their own System instances
 
         let on_row = Arc::new(on_row);
@@ -165,6 +165,7 @@ impl CollectorEngine {
             data_file,
             on_row,
             Arc::clone(&discovery),
+            csv_header,
         ));
 
         info!("All workers started, collecting data…");

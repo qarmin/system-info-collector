@@ -29,6 +29,8 @@ pub struct CollectSettings {
     pub network_interval_secs: f32,
     /// Interval at which nvidia_worker polls the GPU.
     pub gpu_interval_secs: f32,
+    /// Interval at which disk stats are refreshed inside file_writer.
+    pub disk_interval_secs: f32,
 
     pub convert: ConvertSettings,
     pub collection_mode: Vec<SimpleDataCollectionMode>,

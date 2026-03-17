@@ -494,10 +494,9 @@ fn save_top_process_plot_file(
 // ── per-metric trace builders ─────────────────────────────────────────────────
 
 fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !data_type.is_memory() {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_memory()).collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -507,10 +506,9 @@ fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: 
 }
 
 fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !data_type.is_swap() {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_swap()).collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -520,10 +518,13 @@ fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &C
 }
 
 fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !data_type.is_cpu() || data_type == &DataType::CPU_USAGE_PER_CORE {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results
+        .collected_data
+        .iter()
+        .filter(|(dt, _)| dt.is_cpu() && *dt != &DataType::CPU_USAGE_PER_CORE)
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -544,10 +545,9 @@ fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &Co
 }
 
 fn create_network_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !data_type.is_network() {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_network()).collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -557,10 +557,13 @@ fn create_network_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results:
 }
 
 fn create_gpu_util_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !matches!(data_type, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)) {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results
+        .collected_data
+        .iter()
+        .filter(|(dt, _)| matches!(dt, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)))
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -570,10 +573,13 @@ fn create_gpu_util_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
 }
 
 fn create_gpu_vram_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !matches!(data_type, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)) {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results
+        .collected_data
+        .iter()
+        .filter(|(dt, _)| matches!(dt, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)))
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -583,10 +589,13 @@ fn create_gpu_vram_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
 }
 
 fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !matches!(data_type, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)) {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results
+        .collected_data
+        .iter()
+        .filter(|(dt, _)| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)))
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
@@ -596,10 +605,9 @@ fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
 }
 
 fn create_disk_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    for (data_type, data) in &loaded_results.collected_data {
-        if !data_type.is_disk() {
-            continue;
-        }
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_disk()).collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
