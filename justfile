@@ -67,11 +67,10 @@ all:
     just show
 
 normal:
-    # All without top-N processes and cpu-usage-per-core
+    # All without top-N processes and cpu-usage-per-core and swap, because it is not needed for normal usage and takes more resources to collect and plot
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
-           swap-used swap-free \
            network-rx-bytes-per-sec network-tx-bytes-per-sec \
            gpu-utilization gpu-memory-used gpu-temperature \
         -c 0.5 -s -l 10000
