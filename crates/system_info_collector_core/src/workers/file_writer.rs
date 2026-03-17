@@ -23,7 +23,7 @@ use anyhow::{Context, Error};
 use log::{error, info};
 use sysinfo::{Disks, System};
 
-use crate::discovery::{DiscoveredDisk, RuntimeDiscovery};
+use crate::discovery::RuntimeDiscovery;
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
@@ -39,7 +39,7 @@ pub async fn run<F>(
     shutdown: Arc<AtomicBool>,
     mut data_file: BufWriter<File>,
     on_row: Arc<F>,
-    disks: Arc<Vec<DiscoveredDisk>>,
+    discovery: Arc<RuntimeDiscovery>,
 ) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
@@ -48,8 +48,11 @@ pub async fn run<F>(
     // consume the first instant tick
     interval.tick().await;
 
-    // Initialize disk monitor if any disks are requested.
-    let mut sysinfo_disks = if disks.is_empty() {
+    let disks = &discovery.disks;
+
+    // Initialize disk monitor if any disks are requested and disk modes are active.
+    let has_disk_modes = settings.collection_mode.iter().any(|m| m.is_disk());
+    let mut sysinfo_disks = if disks.is_empty() || !has_disk_modes {
         None
     } else {
         Some(Disks::new_with_refreshed_list())
@@ -99,6 +102,11 @@ pub async fn run<F>(
                 guard.latest_top_ram.clone(),
             )
         };
+
+        // Refresh disk stats once per iteration (before the mode loop).
+        if let Some(ref mut sd) = sysinfo_disks {
+            sd.refresh(false);
+        }
 
         // Build the CSV row in the same column order as the header.
         let mut row: Vec<String> = Vec::with_capacity(16);
@@ -157,6 +165,32 @@ pub async fn run<F>(
                         row.push(snap.as_ref().map_or("-1".to_string(), |g| g.temperature.to_string()));
                     }
                 }
+                // Disk modes expand to one column per tracked disk.
+                SimpleDataCollectionMode::DISK_USED => {
+                    for disk_entry in disks {
+                        let val = sysinfo_disks
+                            .as_ref()
+                            .and_then(|sd| sd.iter().find(|d| d.mount_point().to_string_lossy() == disk_entry.mount_point.as_str()));
+                        match val {
+                            Some(d) => {
+                                let used = d.total_space().saturating_sub(d.available_space());
+                                row.push((used / 1_073_741_824).to_string());
+                            }
+                            None => row.push("-1".to_string()),
+                        }
+                    }
+                }
+                SimpleDataCollectionMode::DISK_AVAILABLE => {
+                    for disk_entry in disks {
+                        let val = sysinfo_disks
+                            .as_ref()
+                            .and_then(|sd| sd.iter().find(|d| d.mount_point().to_string_lossy() == disk_entry.mount_point.as_str()));
+                        match val {
+                            Some(d) => row.push((d.available_space() / 1_073_741_824).to_string()),
+                            None => row.push("-1".to_string()),
+                        }
+                    }
+                }
             }
         }
 
@@ -168,26 +202,6 @@ pub async fn run<F>(
             } else {
                 row.push("-1".to_string());
                 row.push("-1".to_string());
-            }
-        }
-
-        // Disk columns: refresh stats and append two columns per tracked disk.
-        if let Some(ref mut sd) = sysinfo_disks {
-            sd.refresh(false);
-            for disk_entry in disks.iter() {
-                let stats = sd.iter().find(|d| d.mount_point().to_string_lossy() == disk_entry.mount_point.as_str());
-                match stats {
-                    Some(d) => {
-                        let avail = d.available_space();
-                        let used = d.total_space().saturating_sub(avail);
-                        row.push((used / 1_073_741_824).to_string());
-                        row.push((avail / 1_073_741_824).to_string());
-                    }
-                    None => {
-                        row.push("-1".to_string());
-                        row.push("-1".to_string());
-                    }
-                }
             }
         }
 
@@ -244,8 +258,8 @@ pub fn write_csv_header(
     settings: &CollectSettings,
     discovery: &RuntimeDiscovery,
     app_version: &str,
-    disks: &[DiscoveredDisk],
 ) -> Result<(), Error> {
+    let disks = &discovery.disks;
     // Custom process metadata entries: CUSTOM_0=NAME, CUSTOM_1=NAME, …
     let custom_meta: String = settings
         .process_cmd_to_search
@@ -340,6 +354,16 @@ pub fn write_csv_header(
                     columns.push(DataType::GPU_N_TEMP_C((gpu.gpu_index, gpu.display_name().to_string())).column_name());
                 }
             }
+            SimpleDataCollectionMode::DISK_USED => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_AVAILABLE => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
             other => columns.push(other.to_string()),
         }
     }
@@ -348,12 +372,6 @@ pub fn write_csv_header(
     for (idx, _) in settings.process_cmd_to_search.iter().enumerate() {
         columns.push(format!("CUSTOM_{idx}_CPU"));
         columns.push(format!("CUSTOM_{idx}_MEMORY"));
-    }
-
-    // Disk columns (two per disk: USED_GB, AVAIL_GB)
-    for disk_entry in disks {
-        columns.push(DataType::DISK_N_USED_GB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
-        columns.push(DataType::DISK_N_AVAIL_GB((disk_entry.disk_index, disk_entry.mount_point.clone())).column_name());
     }
 
     writeln!(data_file, "{}", columns.join(",")).context(format!("Failed to write column header to {}", settings.convert.data_path))?;

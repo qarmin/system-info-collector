@@ -6,7 +6,7 @@ use log::info;
 use sysinfo::{ProcessesToUpdate, System};
 use tokio::task::JoinSet;
 
-use crate::discovery::{discover_disks, discover_gpus, discover_interfaces, GpuVendor, RuntimeDiscovery};
+use crate::discovery::{GpuVendor, RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
 use crate::workers::{file_writer, network_worker, nvidia_worker, sysinfo_worker};
@@ -23,19 +23,44 @@ pub struct CollectorEngine {
     settings: Arc<CollectSettings>,
     state: Arc<RwLock<SharedState>>,
     shutdown: Arc<AtomicBool>,
+    discovery: Arc<RuntimeDiscovery>,
 }
 
 impl CollectorEngine {
-    pub fn new(settings: CollectSettings) -> Self {
+    /// Create the engine and run hardware discovery once.
+    /// Discovery results are stored and exposed via [`CollectorEngine::discovery`].
+    pub fn new(settings: Arc<CollectSettings>) -> Self {
+        let needs_gpu = settings.collection_mode.iter().any(|m| m.is_gpu());
+        let needs_network = settings.collection_mode.iter().any(|m| m.is_network());
+
+        let gpus = if needs_gpu { discover_gpus() } else { vec![] };
+        let interfaces = if needs_network {
+            discover_interfaces(&settings.network_interfaces, settings.all_networks)
+        } else {
+            vec![]
+        };
+        let disks = discover_disks(&settings.disk_mount_points, settings.all_disks);
+
         let state = SharedState {
             latest_processes: vec![None; settings.process_cmd_to_search.len()],
+            latest_gpus: vec![None; gpus.len()],
+            latest_networks: vec![None; interfaces.len()],
             ..SharedState::default()
         };
+
+        let discovery = Arc::new(RuntimeDiscovery { gpus, interfaces, disks });
+
         Self {
-            settings: Arc::new(settings),
+            settings,
             state: Arc::new(RwLock::new(state)),
             shutdown: Arc::new(AtomicBool::new(false)),
+            discovery,
         }
+    }
+
+    /// Returns a reference to the hardware discovery results.
+    pub fn discovery(&self) -> &RuntimeDiscovery {
+        &self.discovery
     }
 
     /// Returns a clone of the shutdown flag.  Set it to `true` to request a
@@ -55,22 +80,10 @@ impl CollectorEngine {
     where
         F: Fn(Vec<String>) + Send + Sync + 'static,
     {
-        let needs_network = self.settings.collection_mode.iter().any(|m| m.is_network());
         let needs_gpu = self.settings.collection_mode.iter().any(|m| m.is_gpu());
+        let needs_network = self.settings.collection_mode.iter().any(|m| m.is_network());
 
-        // Discover GPUs and network interfaces at startup.
-        let gpus = if needs_gpu { discover_gpus() } else { vec![] };
-        let interfaces = if needs_network { discover_interfaces() } else { vec![] };
-        let disks = discover_disks(&self.settings.disk_mount_points);
-
-        // Pre-size the shared state vectors.
-        {
-            let mut guard = self.state.write().expect("SharedState RwLock poisoned");
-            guard.latest_gpus = vec![None; gpus.len()];
-            guard.latest_networks = vec![None; interfaces.len()];
-        }
-
-        let discovery = Arc::new(RuntimeDiscovery { gpus, interfaces, disks });
+        let discovery = Arc::clone(&self.discovery);
 
         // Initial System refresh — used only to read metadata for the CSV header.
         let mut sys = System::new_all();
@@ -83,7 +96,7 @@ impl CollectorEngine {
         // Rotate old backups and open the data file.
         file_writer::backup_old_file(&self.settings)?;
         let mut data_file = file_writer::open_data_file(&self.settings)?;
-        file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version, &discovery.disks)?;
+        file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version)?;
         drop(sys); // no longer needed; workers create their own System instances
 
         let on_row = Arc::new(on_row);
@@ -151,7 +164,7 @@ impl CollectorEngine {
             Arc::clone(&self.shutdown),
             data_file,
             on_row,
-            Arc::new(discovery.disks.clone()),
+            Arc::clone(&discovery),
         ));
 
         info!("All workers started, collecting data…");

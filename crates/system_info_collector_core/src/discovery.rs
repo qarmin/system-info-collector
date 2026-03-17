@@ -357,39 +357,80 @@ const VIRTUAL_PREFIXES: &[&str] = &["docker", "veth", "br-", "virbr", "tun", "ta
 
 // ─── Disk discovery ───────────────────────────────────────────────────────────
 
-/// Validate user-requested disk mount points against the live disk list.
-///
-/// Logs all available real (non-virtual) mount points and warns about any
-/// requested mount point that is not found.  The returned `Vec` preserves the
-/// same order as `requested`, with one entry per valid mount point.
-pub fn discover_disks(requested: &[String]) -> Vec<DiscoveredDisk> {
-    if requested.is_empty() {
-        return vec![];
-    }
-
-    let disks = Disks::new_with_refreshed_list();
-    let available: Vec<String> = disks
+/// Returns all real (non-virtual) disks as `(device_name, mount_point)` pairs.
+fn real_disks(disks: &Disks) -> Vec<(String, String)> {
+    disks
         .iter()
         .filter(|d| {
             let fs = d.file_system().to_string_lossy().to_lowercase();
             !VIRTUAL_FS_TYPES.contains(&fs.as_str())
         })
-        .map(|d| d.mount_point().to_string_lossy().to_string())
-        .collect();
+        .map(|d| {
+            let dev = d.name().to_string_lossy().to_string();
+            let mount = d.mount_point().to_string_lossy().to_string();
+            (dev, mount)
+        })
+        .collect()
+}
 
-    info!("Available disk mount points: {}", available.join(", "));
+/// Print available disks to the log (used by --list-disks).
+pub fn list_real_disks() {
+    let disks = Disks::new_with_refreshed_list();
+    let pairs = real_disks(&disks);
+    if pairs.is_empty() {
+        info!("No real disks found");
+    } else {
+        info!("Available disks:");
+        for (dev, mount) in &pairs {
+            info!("  device: {dev}  mount: {mount}");
+        }
+    }
+}
+
+/// Discover disks to track.
+///
+/// If `all_disks` is true, tracks all real (non-virtual) disks.
+/// Otherwise each entry in `requested` is matched against either the device
+/// name (e.g. `/dev/sda1`) or the mount point (e.g. `/home`).
+pub fn discover_disks(requested: &[String], all_disks: bool) -> Vec<DiscoveredDisk> {
+    if !all_disks && requested.is_empty() {
+        return vec![];
+    }
+
+    let sysinfo_disks = Disks::new_with_refreshed_list();
+    let pairs = real_disks(&sysinfo_disks);
+
+    let available_display: Vec<String> = pairs.iter().map(|(dev, mount)| format!("{dev} ({mount})")).collect();
+    info!("Available disks: {}", available_display.join(", "));
 
     let mut discovered: Vec<DiscoveredDisk> = Vec::new();
-    for mount in requested {
-        if available.contains(mount) {
+
+    if all_disks {
+        for (_, mount) in &pairs {
             let disk_index = discovered.len();
             info!("Tracking disk {disk_index}: {mount}");
             discovered.push(DiscoveredDisk {
                 disk_index,
                 mount_point: mount.clone(),
             });
-        } else {
-            warn!("Requested disk mount point \"{mount}\" not found (available: {})", available.join(", "));
+        }
+    } else {
+        for req in requested {
+            // Match by mount point OR device name.
+            let found = pairs.iter().find(|(dev, mount)| mount == req || dev == req);
+            match found {
+                Some((_, mount)) => {
+                    let disk_index = discovered.len();
+                    info!("Tracking disk {disk_index}: {mount}");
+                    discovered.push(DiscoveredDisk {
+                        disk_index,
+                        mount_point: mount.clone(),
+                    });
+                }
+                None => {
+                    warn!("Requested disk \"{req}\" not found (available: {})", available_display.join(", "));
+                }
+            }
         }
     }
 
@@ -398,24 +439,65 @@ pub fn discover_disks(requested: &[String]) -> Vec<DiscoveredDisk> {
 
 // ─── Network interface discovery ─────────────────────────────────────────────
 
-/// Discover "real" network interfaces to track.
-///
-/// Excludes loopback and virtual/container interfaces.  The set discovered at
-/// startup is used for the lifetime of the collection run.
-pub fn discover_interfaces() -> Vec<DiscoveredInterface> {
+/// Print available real network interfaces to the log (used by --list-networks).
+pub fn list_real_interfaces() {
     let networks = Networks::new_with_refreshed_list();
-
-    let mut interfaces: Vec<DiscoveredInterface> = networks
+    let mut names: Vec<&str> = networks
         .iter()
         .filter(|(name, _)| is_real_interface(name))
-        .enumerate()
-        .map(|(idx, (name, _))| DiscoveredInterface {
-            iface_index: idx,
-            name: name.clone(),
-        })
+        .map(|(name, _)| name.as_str())
         .collect();
+    names.sort_unstable();
+    if names.is_empty() {
+        info!("No real network interfaces found");
+    } else {
+        info!("Available network interfaces: {}", names.join(", "));
+    }
+}
 
-    // Sort by name for deterministic column ordering.
+/// Discover network interfaces to track.
+///
+/// If `all_networks` is true: discovers all real (non-virtual) interfaces.
+/// If `all_networks` is false and `requested` is non-empty: discovers only the
+/// interfaces whose names are in `requested`, warning about any not found.
+/// If `all_networks` is false and `requested` is empty: returns nothing.
+pub fn discover_interfaces(requested: &[String], all_networks: bool) -> Vec<DiscoveredInterface> {
+    if !all_networks && requested.is_empty() {
+        return vec![];
+    }
+
+    let networks = Networks::new_with_refreshed_list();
+
+    let mut interfaces: Vec<DiscoveredInterface> = if all_networks {
+        networks
+            .iter()
+            .filter(|(name, _)| is_real_interface(name))
+            .map(|(name, _)| DiscoveredInterface {
+                iface_index: 0, // re-assigned below
+                name: name.clone(),
+            })
+            .collect()
+    } else {
+        let mut result = Vec::new();
+        let available: Vec<&str> = networks
+            .iter()
+            .filter(|(name, _)| is_real_interface(name))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        for req in requested {
+            if available.contains(&req.as_str()) {
+                result.push(DiscoveredInterface {
+                    iface_index: 0, // re-assigned below
+                    name: req.clone(),
+                });
+            } else {
+                warn!("Requested network interface \"{req}\" not found (available: {})", available.join(", "));
+            }
+        }
+        result
+    };
+
+    // Sort by name for deterministic column ordering and assign indices.
     interfaces.sort_by(|a, b| a.name.cmp(&b.name));
     for (i, iface) in interfaces.iter_mut().enumerate() {
         iface.iface_index = i;

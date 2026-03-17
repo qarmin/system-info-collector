@@ -189,10 +189,26 @@ pub struct CollectArgs {
     // ── Disk monitoring ───────────────────────────────────────────────────────
     #[arg(
         long,
-        value_name = "MOUNT_POINT",
-        help = "Track disk used/available space for a mount point (repeatable, e.g. --disk / --disk /home)."
+        value_name = "MOUNT_OR_DEVICE",
+        help = "Track a disk by mount point (e.g. /) or device name (e.g. /dev/nvme0n1p2). Repeatable."
     )]
     pub disk: Vec<String>,
+
+    #[arg(long, default_value = "false", help = "Track all available non-virtual disks.")]
+    pub all_disks: bool,
+
+    #[arg(long, default_value = "false", help = "List available disks and exit.")]
+    pub list_disks: bool,
+
+    // ── Network interface selection ───────────────────────────────────────────
+    #[arg(long, value_name = "INTERFACE", help = "Track a specific network interface (e.g. enp8s0). Repeatable.")]
+    pub network: Vec<String>,
+
+    #[arg(long, default_value = "false", help = "Track all available non-virtual network interfaces.")]
+    pub all_networks: bool,
+
+    #[arg(long, default_value = "false", help = "List available network interfaces and exit.")]
+    pub list_networks: bool,
 }
 
 #[derive(Parser, Debug, Clone)]

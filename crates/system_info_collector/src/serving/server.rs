@@ -1,8 +1,8 @@
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::get;
-use axum::Router;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

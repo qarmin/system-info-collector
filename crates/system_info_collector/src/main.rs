@@ -15,12 +15,12 @@ use std::{env, process};
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
 use sysinfo::System;
-use system_info_collector_core::discovery::{discover_gpus, discover_interfaces};
+use system_info_collector_core::discovery::{list_real_disks, list_real_interfaces};
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode};
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
-use crate::cli::{parse_cli, Commands};
+use crate::cli::{Commands, parse_cli};
 use crate::converting::ploty_creator::load_results_and_save_plot;
 use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemInfo, SystemMetadata};
 use crate::settings::{build_collect_settings, build_convert_settings};
@@ -40,7 +40,17 @@ async fn main() {
 
     match args.command {
         Commands::Collect(collect_args) => {
-            let settings = build_collect_settings(collect_args);
+            // Handle --list-* flags before doing anything else.
+            if collect_args.list_disks {
+                list_real_disks();
+                return;
+            }
+            if collect_args.list_networks {
+                list_real_interfaces();
+                return;
+            }
+
+            let settings = std::sync::Arc::new(build_collect_settings(collect_args));
             let convert_settings = settings.convert.clone();
             let convert_after = settings.convert_after;
 
@@ -58,20 +68,23 @@ async fn main() {
             info!("CPU: {cpu_model}, {cpu_physical_cores} physical cores / {cpu_logical_cores} threads");
             info!("Memory: {total_memory_mb:.0} MB total RAM, {total_swap_mb:.0} MB swap");
 
-            let display_gpus = discover_gpus();
-            let gpu_names: Vec<String> = display_gpus.iter().map(|g| g.display_name().to_string()).collect();
+            // Create the engine — this runs hardware discovery exactly once.
+            let engine = CollectorEngine::new(std::sync::Arc::clone(&settings));
+
+            let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
             if gpu_names.is_empty() {
                 info!("GPU: none detected");
             }
+
+            let shutdown = engine.shutdown_handle();
 
             // Build the HTTP data buffer before starting the engine so we can
             // pass a clone to the on_row callback.
             let data_buffer: Option<DataBuffer> = if settings.serve {
                 let buffer = DataBuffer::new(settings.max_results);
 
-                // Discover network interfaces if needed (for header expansion).
-                let needs_network = settings.collection_mode.iter().any(|m| m.is_network());
-                let interfaces = if needs_network { discover_interfaces() } else { vec![] };
+                let interfaces = engine.discovery().interfaces.clone();
+                let disks = engine.discovery().disks.clone();
 
                 // Build column headers that match the expanded per-GPU / per-interface
                 // format produced by file_writer, so the JS chart detector can find them.
@@ -101,6 +114,16 @@ async fn main() {
                         SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
                             for iface in &interfaces {
                                 column_headers.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                            }
+                        }
+                        SimpleDataCollectionMode::DISK_USED => {
+                            for disk in &disks {
+                                column_headers.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                            }
+                        }
+                        SimpleDataCollectionMode::DISK_AVAILABLE => {
+                            for disk in &disks {
+                                column_headers.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
                             }
                         }
                         other => column_headers.push(other.to_string()),
@@ -146,9 +169,6 @@ async fn main() {
                 None
             };
             let _ = (cpu_model, gpu_names); // suppress unused warnings when !serve
-
-            let engine = CollectorEngine::new(settings);
-            let shutdown = engine.shutdown_handle();
 
             // Register Ctrl-C handler: first press → graceful stop, second → immediate exit.
             let shutdown_for_ctrlc = shutdown.clone();

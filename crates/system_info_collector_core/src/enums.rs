@@ -15,11 +15,19 @@ pub enum SimpleDataCollectionMode {
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
+    #[cfg_attr(feature = "clap", clap(name = "network-rx"))]
     NETWORK_RX_BYTES_PER_SEC,
+    #[cfg_attr(feature = "clap", clap(name = "network-tx"))]
     NETWORK_TX_BYTES_PER_SEC,
     GPU_UTILIZATION,
     GPU_MEMORY_USED,
     GPU_TEMPERATURE,
+    /// Write used-space column for each tracked disk (requires --disk or --all-disks).
+    #[cfg_attr(feature = "clap", clap(name = "disk-used"))]
+    DISK_USED,
+    /// Write available-space column for each tracked disk (requires --disk or --all-disks).
+    #[cfg_attr(feature = "clap", clap(name = "disk-available"))]
+    DISK_AVAILABLE,
 }
 
 impl SimpleDataCollectionMode {
@@ -29,6 +37,10 @@ impl SimpleDataCollectionMode {
 
     pub fn is_gpu(self) -> bool {
         matches!(self, Self::GPU_UTILIZATION | Self::GPU_MEMORY_USED | Self::GPU_TEMPERATURE)
+    }
+
+    pub fn is_disk(self) -> bool {
+        matches!(self, Self::DISK_USED | Self::DISK_AVAILABLE)
     }
 }
 

@@ -15,11 +15,11 @@ fix:
 
 run:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
-    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o; firefox system_data_plot.html
+    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o --all-networks; firefox system_data_plot.html
 
 runs:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
-    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s -l 10000; firefox system_data_plot.html
+    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s -l 10000 --all-networks; firefox system_data_plot.html
 
 cross_arm_32:
     cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
@@ -60,8 +60,10 @@ all:
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
            swap-used swap-free \
-           network-rx-bytes-per-sec network-tx-bytes-per-sec \
+           network-rx network-tx \
            gpu-utilization gpu-memory-used gpu-temperature \
+           disk-used disk-available \
+        --all-networks --all-disks \
         -c 0.5 -s -l 10000 --top-n-processes 5
     # Without cpu-usage-per-core, because it is too much data for
     just show
@@ -71,9 +73,11 @@ normal:
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
-           network-rx-bytes-per-sec network-tx-bytes-per-sec \
+           network-rx network-tx \
            gpu-utilization gpu-memory-used gpu-temperature \
-        -c 0.5 -s -l 10000 --disk /
+           disk-used disk-available \
+        --all-networks --all-disks \
+        -c 0.5 -s -l 10000
 
 samplyrd:
     cargo build --profile rdebug
@@ -81,6 +85,8 @@ samplyrd:
         -m cpu-usage-total  \
              memory-used memory-free memory-available \
              swap-used swap-free \
-             network-rx-bytes-per-sec network-tx-bytes-per-sec \
+             network-rx network-tx \
              gpu-utilization gpu-memory-used gpu-temperature \
+             disk-used disk-available \
+        --all-networks --all-disk \
         -c 0.5 -s -l 10000 --top-n-processes 5

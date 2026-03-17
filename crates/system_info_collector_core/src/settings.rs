@@ -45,6 +45,12 @@ pub struct CollectSettings {
     pub max_results: usize,
     /// Number of top processes to track by CPU% and RAM (0 = disabled).
     pub top_n_processes: usize,
-    /// Disk mount points to track (empty = no disk monitoring).
+    /// Disk mount points or device names to track (empty + !all_disks = no disk monitoring).
     pub disk_mount_points: Vec<String>,
+    /// If true, track all available non-virtual disks.
+    pub all_disks: bool,
+    /// Specific network interface names to track (empty + !all_networks = no network collection).
+    pub network_interfaces: Vec<String>,
+    /// If true, track all available non-virtual network interfaces.
+    pub all_networks: bool,
 }

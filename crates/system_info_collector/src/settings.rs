@@ -80,5 +80,8 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         max_results: args.max_results.clamp(1, 100_000),
         top_n_processes: args.top_n_processes,
         disk_mount_points: args.disk,
+        all_disks: args.all_disks,
+        network_interfaces: args.network,
+        all_networks: args.all_networks,
     }
 }

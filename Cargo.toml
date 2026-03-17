@@ -6,9 +6,9 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.8.0"
+version = "0.7.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
-edition = "2021"
+edition = "2024"
 rust-version = "1.85.0"
 license = "MIT"
 homepage = "https://github.com/qarmin/system-info-collector"

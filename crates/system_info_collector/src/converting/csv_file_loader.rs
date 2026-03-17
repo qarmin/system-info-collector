@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{metadata, File};
+use std::fs::{File, metadata};
 use std::io::{BufRead, BufReader, Lines};
 
 use anyhow::{Context, Error, Result};
