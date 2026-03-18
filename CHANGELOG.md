@@ -1,4 +1,5 @@
 ## Version 0.7.0 - 18.03.2026
+- Increased minimum rust version to 1.92
 - Refactored code to use cargo workspace with two crates - `system_info_collector_core` and `system_info_collector`
 - Added support for collecting network info (bytes sent/received)
 - Added support for collecting GPU info (temperature, memory usage, gpu usage) - the 
