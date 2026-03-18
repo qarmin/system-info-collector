@@ -1,13 +1,13 @@
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::get;
-use axum::Router;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::data_buffer::DataBuffer;
+use super::data_buffer::{DataBuffer, TopDataPoint};
 
 #[derive(Deserialize)]
 struct DataQuery {
@@ -26,6 +26,9 @@ struct SystemInfoResponse {
     total_memory_mb: f64,
     total_swap_mb: f64,
     cpu_cores: usize,
+    cpu_physical_cores: usize,
+    cpu_model: String,
+    gpu_names: Vec<String>,
     start_time: f64,
     app_version: String,
 }
@@ -51,6 +54,12 @@ struct RecentDataResponse {
     max_available: usize,
 }
 
+#[derive(Serialize)]
+struct RecentTopResponse {
+    data: Vec<TopDataPoint>,
+    count: usize,
+}
+
 pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(data_buffer);
 
@@ -58,6 +67,7 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<
         .route("/", get(index_handler))
         .route("/api/data", get(data_handler))
         .route("/api/data/recent", get(recent_data_handler))
+        .route("/api/top/recent", get(recent_top_handler))
         .route("/api/metadata", get(metadata_handler))
         .route("/static/chart.min.js", get(chartjs_handler))
         .with_state(app_state);
@@ -76,26 +86,27 @@ async fn index_handler() -> impl IntoResponse {
 }
 
 async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
-    let metadata = buffer.get_metadata().await;
-
+    let metadata = buffer.get_metadata();
     let response = MetadataResponse {
         system_info: SystemInfoResponse {
             total_memory_mb: metadata.system_info.total_memory_mb,
             total_swap_mb: metadata.system_info.total_swap_mb,
             cpu_cores: metadata.system_info.cpu_cores,
+            cpu_physical_cores: metadata.system_info.cpu_physical_cores,
+            cpu_model: metadata.system_info.cpu_model,
+            gpu_names: metadata.system_info.gpu_names,
             start_time: metadata.system_info.start_time,
             app_version: metadata.system_info.app_version,
         },
         column_headers: metadata.column_headers,
         max_buffer_size: metadata.max_buffer_size,
     };
-
     (StatusCode::OK, Json(response))
 }
 
 async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
-    let (first, last) = buffer.get_first_and_last().await;
-    let total_count = buffer.len().await;
+    let (first, last) = buffer.get_first_and_last();
+    let total_count = buffer.len();
     let max_size = buffer.get_max_size();
 
     let response = DataResponse {
@@ -110,15 +121,14 @@ async fn data_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRespons
             data: d.data,
         }),
     };
-
     (StatusCode::OK, Json(response))
 }
 
 async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let max_size = buffer.get_max_size();
-    let total_count = buffer.len().await;
+    let total_count = buffer.len();
     let limit = params.limit.unwrap_or(10000).min(max_size).min(total_count);
-    let data_points = buffer.get_last_n(limit).await;
+    let data_points = buffer.get_last_n(limit);
 
     let response = RecentDataResponse {
         data: data_points
@@ -131,7 +141,16 @@ async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): Sta
         count: limit,
         max_available: total_count,
     };
+    (StatusCode::OK, Json(response))
+}
 
+async fn recent_top_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
+    let max_size = buffer.get_max_size();
+    let limit = params.limit.unwrap_or(10000).min(max_size);
+    let data_points = buffer.get_last_n_top(limit);
+    let count = data_points.len();
+
+    let response = RecentTopResponse { data: data_points, count };
     (StatusCode::OK, Json(response))
 }
 

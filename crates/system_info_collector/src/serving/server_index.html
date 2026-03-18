@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Info Collector - Live Data</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #181a1b;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #23272a;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .container.full-width {
+            max-width: 95vw !important;
+            width: 95vw !important;
+            margin-left: auto;
+            margin-right: auto;
+            border-radius: 0;
+            box-shadow: none;
+        }
+        .container.full-width .chart-container,
+        .container.full-width .table-scroll {
+            max-width: 100% !important;
+            width: 100% !important;
+        }
+        h1 {
+            color: #fff;
+        }
+        .system-info {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #23272a;
+            border-radius: 8px;
+            border-left: 4px solid #1976d2;
+        }
+        .system-info h3 {
+            margin-top: 0;
+            color: #90caf9;
+        }
+        .system-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+        .stat-item {
+            padding: 10px;
+            background-color: #23272a;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            color: #b0b0b0;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #90caf9;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #23272a;
+            border-radius: 4px;
+            color: #e0e0e0;
+        }
+        .stats {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #23272a;
+            border-radius: 4px;
+            color: #e0e0e0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background-color: #23272a;
+            color: #e0e0e0;
+        }
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+            font-size: 0.9em;
+        }
+        th {
+            background-color: #1976d2;
+            color: #fff;
+            position: sticky;
+            top: 0;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover {
+            background-color: #1565c0;
+        }
+        th.sortable::after {
+            content: ' ⇅';
+            opacity: 0.5;
+        }
+        th.sorted-asc::after {
+            content: ' ▲';
+            opacity: 1;
+        }
+        th.sorted-desc::after {
+            content: ' ▼';
+            opacity: 1;
+        }
+        tr:hover {
+            background-color: #2c3136;
+        }
+        .timestamp {
+            color: #b0b0b0;
+            font-size: 0.85em;
+        }
+        .loading {
+            text-align: center;
+            color: #b0b0b0;
+            padding: 20px;
+        }
+        .error {
+            color: #ff8a80;
+            background-color: #2c1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        input, select, button {
+            margin: 5px;
+            padding: 8px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background-color: #181a1b;
+            color: #e0e0e0;
+        }
+        button {
+            background-color: #1976d2;
+            color: #fff;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1565c0;
+        }
+        .auto-refresh {
+            color: #90caf9;
+        }
+        .chart-container {
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto 30px auto;
+            background: #23272a;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            padding: 20px;
+        }
+        .table-scroll {
+            max-height: 600px;
+            overflow-y: auto;
+            margin-top: 20px;
+            border-radius: 8px;
+            background: #23272a;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+    </style>
+    <script src="/static/chart.min.js"></script>
+</head>
+<body>
+    <div class="container" id="mainContainer">
+        <div style="text-align:right; margin-bottom:10px;">
+            <button id="toggleWidthBtn" onclick="toggleFullWidth()">Full Width</button>
+        </div>
+        <h1>System Info Collector - Live Data</h1>
+
+        <div class="system-info" id="systemInfo">
+            <h3>System Information</h3>
+            <div class="system-stats">
+                <div class="stat-item">
+                    <div class="stat-label">CPU Model</div>
+                    <div class="stat-value" id="cpuModel">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">CPU Cores (physical / threads)</div>
+                    <div class="stat-value" id="cpuCores">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total Memory</div>
+                    <div class="stat-value" id="totalMemory">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total Swap</div>
+                    <div class="stat-value" id="totalSwap">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">GPU(s)</div>
+                    <div class="stat-value" id="gpuNames">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">App Version</div>
+                    <div class="stat-value" id="appVersion">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Started At</div>
+                    <div class="stat-value" id="startTime">Loading...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <label>
+                Number of results: 
+                <input type="number" id="limitInput" value="200" min="1" max="10000">
+                <span id="maxLimitInfo"></span>
+            </label>
+            <button onclick="loadData()">Refresh</button>
+            <label>
+                <input type="checkbox" id="autoRefresh" checked> Auto-refresh every
+                <input type="number" id="refreshInterval" value="5" min="1" max="60" style="width: 60px;">
+                seconds
+            </label>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="loading">Loading stats...</div>
+        </div>
+
+        <div class="chart-container" id="cpuChartContainer" style="display:none;">
+            <h3>CPU Usage [%]</h3>
+            <canvas id="cpuChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="ramChartContainer" style="display:none;">
+            <h3>RAM Usage [MB]</h3>
+            <canvas id="ramChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="gpuUtilChartContainer" style="display:none;">
+            <h3>GPU Utilization [%]</h3>
+            <canvas id="gpuUtilChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="gpuVramChartContainer" style="display:none;">
+            <h3>GPU VRAM [MB]</h3>
+            <canvas id="gpuVramChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="gpuTempChartContainer" style="display:none;">
+            <h3>GPU Temperature [°C]</h3>
+            <canvas id="gpuTempChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="topCpuChartContainer" style="display:none;">
+            <h3>Top Processes — CPU [%]</h3>
+            <canvas id="topCpuChart" height="150"></canvas>
+        </div>
+        <div class="chart-container" id="topRamChartContainer" style="display:none;">
+            <h3>Top Processes — RAM [MB]</h3>
+            <canvas id="topRamChart" height="150"></canvas>
+        </div>
+        <div class="chart-container" id="swapChartContainer" style="display:none;">
+            <h3>Swap Usage [MB]</h3>
+            <canvas id="swapChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="networkChartContainer" style="display:none;">
+            <h3>Network [MB/s]</h3>
+            <canvas id="networkChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="diskChartContainer" style="display:none;">
+            <h3>Disk Space [GB]</h3>
+            <canvas id="diskChart" height="120"></canvas>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="dataContainer">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+        let metadata = null;
+
+        async function loadMetadata() {
+            try {
+                const response = await fetch('/api/metadata');
+                metadata = await response.json();
+                
+                // Update system info display
+                document.getElementById('cpuModel').textContent = metadata.system_info.cpu_model || 'N/A';
+                document.getElementById('cpuCores').textContent =
+                    `${metadata.system_info.cpu_physical_cores} / ${metadata.system_info.cpu_cores}`;
+                document.getElementById('totalMemory').textContent = `${metadata.system_info.total_memory_mb.toFixed(0)} MB`;
+                document.getElementById('totalSwap').textContent = `${metadata.system_info.total_swap_mb.toFixed(0)} MB`;
+                const gpuNames = metadata.system_info.gpu_names;
+                document.getElementById('gpuNames').textContent =
+                    (gpuNames && gpuNames.length > 0) ? gpuNames.join(', ') : 'None detected';
+                document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
+                document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
+                
+                // Update max limit info
+                const maxLimitInfo = document.getElementById('maxLimitInfo');
+                maxLimitInfo.textContent = `(max: ${metadata.max_buffer_size})`;
+                
+                // Update limit input max value
+                const limitInput = document.getElementById('limitInput');
+                limitInput.max = metadata.max_buffer_size;
+                
+            } catch (error) {
+                console.error('Error loading metadata:', error);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                const statsDiv = document.getElementById('stats');
+                statsDiv.innerHTML = `
+                    <strong>Total data points:</strong> ${data.total_count} / ${data.max_buffer_size}<br>
+                    <strong>First record:</strong> ${data.first ? formatAbsoluteTimestamp(metadata?.system_info?.start_time + data.first.timestamp) : 'None'}<br>
+                    <strong>Last record:</strong> ${data.last ? formatAbsoluteTimestamp(metadata?.system_info?.start_time + data.last.timestamp) : 'None'}
+                `;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadData() {
+            const limitInput = document.getElementById('limitInput');
+            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
+            const errorDiv = document.getElementById('error');
+            const dataContainer = document.getElementById('dataContainer');
+            
+            try {
+                errorDiv.style.display = 'none';
+                
+                const response = await fetch(`/api/data/recent?limit=${limit}`);
+                const result = await response.json();
+                
+                if (result.data && result.data.length > 0) {
+                    displayTable(result.data);
+                } else {
+                    dataContainer.innerHTML = '<div class="loading">No data available</div>';
+                }
+                
+                await loadStats();
+                await loadTopData();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                errorDiv.textContent = 'Error loading data: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function displayTable(data) {
+            const container = document.getElementById('dataContainer');
+            if (data.length === 0) {
+                container.innerHTML = '<div class="loading">No data available</div>';
+                ['cpuChartContainer', 'ramChartContainer',
+                 'gpuUtilChartContainer', 'gpuVramChartContainer', 'gpuTempChartContainer',
+                 'swapChartContainer', 'networkChartContainer', 'diskChartContainer']
+                    .forEach(id => document.getElementById(id).style.display = 'none');
+                return;
+            }
+            // Use proper column headers from metadata or fallback to generic names
+            const headers = metadata?.column_headers || ['Timestamp'];
+            // Ensure we have headers for all data columns
+            const firstRow = data[0];
+            while (headers.length < firstRow.data.length) {
+                headers.push(`Data ${headers.length}`);
+            }
+
+            // Column classifier helpers
+            const isGpuCol = h => h.toUpperCase().startsWith('GPU_');
+            const isGpuUtil = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_UTILIZATION' || /^GPU_\d+_UTIL$/.test(h.toUpperCase()));
+            const isGpuVram = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_MEMORY_USED' || /^GPU_\d+_VRAM_MB$/.test(h.toUpperCase()));
+            const isGpuTemp = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_TEMPERATURE' || /^GPU_\d+_TEMP_C$/.test(h.toUpperCase()));
+            const isSwap = h => /^SWAP_(USED|FREE)$/.test(h.toUpperCase());
+            const isNet  = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
+            const isDisk = h => /^DISK_\d+_(USED|AVAIL)_GB$/.test(h.toUpperCase());
+
+            // Identify CPU and RAM columns (explicitly exclude GPU columns)
+            const cpuIndices = headers
+                .map((h, i) => ({ h, i }))
+                .filter(({ h }) => h.toLowerCase().includes('cpu') && !isGpuCol(h));
+            const ramIndices = headers
+                .map((h, i) => ({ h, i }))
+                .filter(({ h }) => (h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory')) && !isGpuCol(h));
+            // GPU sub-charts
+            const gpuUtilIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuUtil(h));
+            const gpuVramIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuVram(h));
+            const gpuTempIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuTemp(h));
+            const swapIndices    = headers.map((h, i) => ({ h, i })).filter(({ h }) => isSwap(h));
+            const netIndices     = headers.map((h, i) => ({ h, i })).filter(({ h }) => isNet(h));
+            const diskIndices    = headers.map((h, i) => ({ h, i })).filter(({ h }) => isDisk(h));
+            // Prepare timestamps
+            const timestamps = data.map(point => {
+                const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
+                return formatAbsoluteTimestamp(absoluteTime);
+            });
+            // CPU - split into multiple lines if needed.
+            // CPU_USAGE_PER_CORE holds semicolon-separated values (one per core)
+            // and is expanded into individual per-core datasets.
+            let cpuDatasets = [];
+            if (cpuIndices.length > 0) {
+                let dsIdx = 0;
+                for (const { h, i } of cpuIndices) {
+                    if (h.toUpperCase() === 'CPU_USAGE_PER_CORE') {
+                        // Detect core count from metadata, fall back to first non-null row.
+                        let coreCount = metadata?.system_info?.cpu_cores || 0;
+                        if (coreCount === 0) {
+                            for (const point of data) {
+                                const v = point.data[i];
+                                if (v && v !== '-1' && String(v).includes(';')) {
+                                    coreCount = v.split(';').length;
+                                    break;
+                                }
+                            }
+                        }
+                        for (let core = 0; core < coreCount; core++) {
+                            const hue = (core * 23) % 360;
+                            cpuDatasets.push({
+                                label: `Core ${core}`,
+                                data: data.map(point => {
+                                    const v = point.data[i];
+                                    if (!v || v === '-1') return null;
+                                    const val = parseFloat(String(v).split(';')[core]);
+                                    return isNaN(val) ? null : val;
+                                }),
+                                borderColor: `hsl(${hue}, 80%, 55%)`,
+                                backgroundColor: `hsla(${hue}, 80%, 55%, 0.05)`,
+                                spanGaps: true,
+                                tension: 0.1,
+                                borderWidth: 1,
+                                pointRadius: 0,
+                            });
+                            dsIdx++;
+                        }
+                    } else {
+                        cpuDatasets.push({
+                            label: h,
+                            data: data.map(point => {
+                                const v = point.data[i];
+                                return ([-1, "-1"].includes(v)) ? null : v;
+                            }),
+                            borderColor: dsIdx === 0 ? '#1976d2' : `hsl(${(dsIdx * 60) % 360}, 70%, 50%)`,
+                            backgroundColor: dsIdx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${(dsIdx * 60) % 360}, 70%, 50%, 0.1)`,
+                            spanGaps: true,
+                            tension: 0.1,
+                        });
+                        dsIdx++;
+                    }
+                }
+            }
+            // RAM - split into multiple lines if needed
+            let ramDatasets = [];
+            if (ramIndices.length > 0) {
+                ramDatasets = ramIndices.map(({ h, i }, idx) => ({
+                    label: h,
+                    data: data.map(point => {
+                        const v = point.data[i];
+                        return ([-1, "-1"].includes(v)) ? null : v;
+                    }),
+                    borderColor: idx === 0 ? '#43a047' : `hsl(${(idx * 60 + 180) % 360}, 70%, 50%)`,
+                    backgroundColor: idx === 0 ? 'rgba(67,160,71,0.1)' : `hsla(${(idx * 60 + 180) % 360}, 70%, 50%, 0.1)`,
+                    spanGaps: true,
+                    tension: 0.1,
+                }));
+            }
+            // GPU datasets helper
+            const makeGpuDatasets = (indices, hue) => indices.map(({ h, i }, idx) => {
+                const gpuNames = metadata?.system_info?.gpu_names || [];
+                // Try to extract GPU index from column name to get a real GPU name
+                const match = h.toUpperCase().match(/^GPU_(\d+)_/);
+                let label = h;
+                if (match) {
+                    const gIdx = parseInt(match[1], 10);
+                    label = gpuNames[gIdx] ? gpuNames[gIdx] : `GPU ${gIdx}`;
+                } else if (h.toUpperCase() === 'GPU_UTILIZATION' && gpuNames.length === 1) {
+                    label = gpuNames[0];
+                } else if (h.toUpperCase() === 'GPU_MEMORY_USED' && gpuNames.length === 1) {
+                    label = gpuNames[0];
+                } else if (h.toUpperCase() === 'GPU_TEMPERATURE' && gpuNames.length === 1) {
+                    label = gpuNames[0];
+                }
+                const color = `hsl(${(hue + idx * 35) % 360}, 85%, 60%)`;
+                return {
+                    label,
+                    data: data.map(point => {
+                        const v = point.data[i];
+                        return ([-1, "-1"].includes(v)) ? null : v;
+                    }),
+                    borderColor: color,
+                    backgroundColor: color.replace(')', ', 0.1)').replace('hsl', 'hsla'),
+                    spanGaps: true,
+                    tension: 0.1,
+                };
+            });
+            const gpuUtilDatasets = makeGpuDatasets(gpuUtilIndices, 30);   // amber
+            const gpuVramDatasets = makeGpuDatasets(gpuVramIndices, 270);  // purple
+            const gpuTempDatasets = makeGpuDatasets(gpuTempIndices, 0);    // red
+            // Swap / Network / Disk datasets
+            const makeBasicDatasets = (indices, startHue) => indices.map(({ h, i }, idx) => {
+                const color = `hsl(${(startHue + idx * 40) % 360}, 80%, 60%)`;
+                return {
+                    label: h,
+                    data: data.map(point => { const v = point.data[i]; return ([-1, "-1"].includes(v)) ? null : v; }),
+                    borderColor: color,
+                    backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'),
+                    spanGaps: true,
+                    tension: 0.1,
+                };
+            });
+            const swapDatasets = makeBasicDatasets(swapIndices, 45);   // yellow/orange
+            const netDatasets  = makeBasicDatasets(netIndices,  180);  // cyan/teal
+            const diskDatasets = makeBasicDatasets(diskIndices, 270);  // purple/violet
+            // Draw CPU chart
+            if (cpuDatasets.length && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('cpuChartContainer').style.display = '';
+                if (window.cpuChartObj) window.cpuChartObj.destroy();
+                window.cpuChartObj = new Chart(document.getElementById('cpuChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: cpuDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, max: 100, title: { display: true, text: 'CPU [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('cpuChartContainer').style.display = 'none';
+            }
+            // Draw RAM chart
+            if (ramDatasets.length && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('ramChartContainer').style.display = '';
+                if (window.ramChartObj) window.ramChartObj.destroy();
+                window.ramChartObj = new Chart(document.getElementById('ramChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: ramDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, max: metadata?.system_info?.total_memory_mb || undefined, title: { display: true, text: 'RAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('ramChartContainer').style.display = 'none';
+            }
+            // Draw GPU utilization chart
+            if (gpuUtilDatasets.length && gpuUtilDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('gpuUtilChartContainer').style.display = '';
+                if (window.gpuUtilChartObj) window.gpuUtilChartObj.destroy();
+                window.gpuUtilChartObj = new Chart(document.getElementById('gpuUtilChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: gpuUtilDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, max: 100, title: { display: true, text: 'Utilization [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('gpuUtilChartContainer').style.display = 'none';
+            }
+            // Draw GPU VRAM chart
+            if (gpuVramDatasets.length && gpuVramDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('gpuVramChartContainer').style.display = '';
+                if (window.gpuVramChartObj) window.gpuVramChartObj.destroy();
+                window.gpuVramChartObj = new Chart(document.getElementById('gpuVramChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: gpuVramDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, title: { display: true, text: 'VRAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('gpuVramChartContainer').style.display = 'none';
+            }
+            // Draw GPU temperature chart
+            if (gpuTempDatasets.length && gpuTempDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('gpuTempChartContainer').style.display = '';
+                if (window.gpuTempChartObj) window.gpuTempChartObj.destroy();
+                window.gpuTempChartObj = new Chart(document.getElementById('gpuTempChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: gpuTempDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, title: { display: true, text: 'Temperature [°C]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('gpuTempChartContainer').style.display = 'none';
+            }
+            // Draw Swap chart
+            if (swapDatasets.length && swapDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('swapChartContainer').style.display = '';
+                if (window.swapChartObj) window.swapChartObj.destroy();
+                window.swapChartObj = new Chart(document.getElementById('swapChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: swapDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, max: metadata?.system_info?.total_swap_mb || undefined, title: { display: true, text: 'Swap [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('swapChartContainer').style.display = 'none';
+            }
+            // Draw Network chart
+            if (netDatasets.length && netDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('networkChartContainer').style.display = '';
+                if (window.networkChartObj) window.networkChartObj.destroy();
+                window.networkChartObj = new Chart(document.getElementById('networkChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: netDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, title: { display: true, text: 'Network [MB/s]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('networkChartContainer').style.display = 'none';
+            }
+            // Draw Disk chart
+            if (diskDatasets.length && diskDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('diskChartContainer').style.display = '';
+                if (window.diskChartObj) window.diskChartObj.destroy();
+                window.diskChartObj = new Chart(document.getElementById('diskChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: diskDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, title: { display: true, text: 'Disk [GB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('diskChartContainer').style.display = 'none';
+            }
+            // --- Table with data ---
+            let tableHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            ${headers.map(h => `<th class="sortable">${h}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            data.forEach(point => {
+                tableHTML += '<tr>';
+                // Format timestamp properly
+                const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
+                tableHTML += `<td class="timestamp">${formatAbsoluteTimestamp(absoluteTime)}</td>`;
+                // Add all data columns except the first one (which is the relative timestamp)
+                point.data.slice(1).forEach(value => {
+                    tableHTML += `<td>${([-1, "-1"].includes(value)) ? '' : value}</td>`;
+                });
+                tableHTML += '</tr>';
+            });
+            tableHTML += '</tbody></table>';
+            container.innerHTML = `<div class="table-scroll">${tableHTML}</div>`;
+            setupTableSort();
+        }
+
+        function formatAbsoluteTimestamp(unixTimestamp) {
+            if (!unixTimestamp) return 'Unknown';
+            const date = new Date(unixTimestamp * 1000);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            const milliseconds = Math.floor(date.getMilliseconds() / 100); // 1 digit
+
+            return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}.${milliseconds}`;
+        }
+
+        function setupAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+            const refreshIntervalInput = document.getElementById('refreshInterval');
+
+            checkbox.addEventListener('change', function() {
+                if (this.checked) {
+                    const interval = Math.max(parseInt(refreshIntervalInput.value) || 5, 1) * 1000;
+                    autoRefreshInterval = setInterval(loadData, interval);
+                } else {
+                    clearInterval(autoRefreshInterval);
+                }
+            });
+
+            refreshIntervalInput.addEventListener('change', function() {
+                if (checkbox.checked) {
+                    const interval = Math.max(parseInt(this.value) || 5, 1) * 1000;
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = setInterval(loadData, interval);
+                }
+            });
+
+            // Start auto-refresh if checkbox is checked
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(loadData, 5000);
+            }
+        }
+
+        function toggleFullWidth() {
+            const container = document.getElementById('mainContainer');
+            const btn = document.getElementById('toggleWidthBtn');
+            const chartContainers = document.querySelectorAll('.chart-container');
+            const tableScrolls = document.querySelectorAll('.table-scroll');
+            if (!container.classList.contains('full-width')) {
+                container.classList.add('full-width');
+                btn.textContent = 'Normal Width';
+                chartContainers.forEach(el => {
+                    el.style.maxWidth = '100%';
+                });
+                tableScrolls.forEach(el => {
+                    el.style.maxWidth = '100%';
+                });
+            } else {
+                container.classList.remove('full-width');
+                btn.textContent = 'Full Width';
+                chartContainers.forEach(el => {
+                    el.style.maxWidth = '';
+                });
+                tableScrolls.forEach(el => {
+                    el.style.maxWidth = '';
+                });
+            }
+        }
+
+        function setupTableSort() {
+            const table = document.querySelector('table');
+            const headers = table.querySelectorAll('th.sortable');
+
+            let currentSort = {
+                column: null,
+                order: 'asc', // or 'desc'
+            };
+
+            headers.forEach((header, index) => {
+                header.addEventListener('click', () => {
+                    const newOrder = (currentSort.column === index && currentSort.order === 'asc') ? 'desc' : 'asc';
+                    sortTableByColumn(table, index, newOrder);
+                    currentSort.column = index;
+                    currentSort.order = newOrder;
+                    updateSortIndicators(headers, index, newOrder);
+                });
+            });
+        }
+
+        function sortTableByColumn(table, columnIndex, order) {
+            const dirModifier = (order === 'asc') ? 1 : -1;
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            // Sort rows
+            rows.sort((a, b) => {
+                const aText = a.children[columnIndex].textContent.trim();
+                const bText = b.children[columnIndex].textContent.trim();
+
+                // Handle numeric and date sorting
+                const aValue = isNaN(aText) ? aText : parseFloat(aText);
+                const bValue = isNaN(bText) ? bText : parseFloat(bText);
+
+                return (aValue > bValue ? 1 : -1) * dirModifier;
+            });
+
+            // Remove existing rows
+            while (tbody.firstChild) {
+                tbody.removeChild(tbody.firstChild);
+            }
+
+            // Re-add sorted rows
+            tbody.append(...rows);
+        }
+
+        function updateSortIndicators(headers, sortedColumnIndex, order) {
+            headers.forEach((header, index) => {
+                header.classList.remove('sorted-asc', 'sorted-desc');
+                if (index === sortedColumnIndex) {
+                    header.classList.add(order === 'asc' ? 'sorted-asc' : 'sorted-desc');
+                }
+            });
+        }
+
+        // ── Top-N process charts ──────────────────────────────────────────────
+
+        /// Build one Chart.js dataset per unique process name from an array of
+        /// top snapshots.  Each snapshot is {timestamp, entries: [{name,value}]}.
+        /// When a process is absent from a snapshot its value is null (gap in line).
+        function buildTopDatasets(snapshots, field) {
+            // Collect all unique names and the index of each snapshot for lookup.
+            const nameSet = new Set();
+            for (const snap of snapshots) {
+                for (const e of snap[field]) nameSet.add(e.name);
+            }
+            const names = [...nameSet];
+            const n = names.length;
+
+            return names.map((name, idx) => {
+                const hue = Math.round((idx * 360) / Math.max(n, 1));
+                const color = `hsl(${hue}, 75%, 60%)`;
+                return {
+                    label: name,
+                    data: snapshots.map(snap => {
+                        const entry = snap[field].find(e => e.name === name);
+                        return entry ? entry.value : null;
+                    }),
+                    borderColor: color,
+                    backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.05)'),
+                    spanGaps: false,
+                    tension: 0.1,
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                };
+            });
+        }
+
+        async function loadTopData() {
+            const limitInput = document.getElementById('limitInput');
+            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
+            try {
+                const response = await fetch(`/api/top/recent?limit=${limit}`);
+                const result = await response.json();
+                if (!result.data || result.data.length === 0) {
+                    ['topCpuChartContainer', 'topRamChartContainer'].forEach(id => {
+                        document.getElementById(id).style.display = 'none';
+                    });
+                    return;
+                }
+
+                const timestamps = result.data.map(snap => {
+                    const absoluteTime = metadata?.system_info?.start_time + snap.timestamp;
+                    return formatAbsoluteTimestamp(absoluteTime);
+                });
+
+                // CPU chart
+                const cpuDatasets = buildTopDatasets(result.data, 'cpu');
+                if (cpuDatasets.length > 0 && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
+                    document.getElementById('topCpuChartContainer').style.display = '';
+                    if (window.topCpuChartObj) window.topCpuChartObj.destroy();
+                    window.topCpuChartObj = new Chart(document.getElementById('topCpuChart').getContext('2d'), {
+                        type: 'line',
+                        data: { labels: timestamps, datasets: cpuDatasets },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
+                            animation: false,
+                            backgroundColor: '#23272a',
+                            color: '#e0e0e0',
+                            scales: {
+                                y: { min: 0, max: 100, title: { display: true, text: 'CPU [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                                x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                            }
+                        }
+                    });
+                } else {
+                    document.getElementById('topCpuChartContainer').style.display = 'none';
+                }
+
+                // RAM chart
+                const ramDatasets = buildTopDatasets(result.data, 'ram');
+                if (ramDatasets.length > 0 && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
+                    document.getElementById('topRamChartContainer').style.display = '';
+                    if (window.topRamChartObj) window.topRamChartObj.destroy();
+                    window.topRamChartObj = new Chart(document.getElementById('topRamChart').getContext('2d'), {
+                        type: 'line',
+                        data: { labels: timestamps, datasets: ramDatasets },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
+                            animation: false,
+                            backgroundColor: '#23272a',
+                            color: '#e0e0e0',
+                            scales: {
+                                y: { min: 0, title: { display: true, text: 'RAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                                x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                            }
+                        }
+                    });
+                } else {
+                    document.getElementById('topRamChartContainer').style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error loading top process data:', error);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async function() {
+            await loadMetadata();
+            await loadData();
+            await loadTopData();
+            setupAutoRefresh();
+        });
+    </script>
+</body>
+</html>
