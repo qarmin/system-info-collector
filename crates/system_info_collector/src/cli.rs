@@ -115,7 +115,7 @@ pub struct CollectArgs {
     #[arg(
         short = 'k',
         long,
-        default_value = "100.0",
+        default_value = "200.0",
         value_name = "MAXIMUM_FILE_SIZE_MB",
         help = "Maximum data-file size in MB before collection stops."
     )]

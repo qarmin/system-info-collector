@@ -4,10 +4,10 @@ This is simple app to collect data about system cpu, memory, swap, network, GPU 
 
 After collecting results into csv file, html file can be created with plot.
 
-![Screenshot](https://github.com/qarmin/czkawka/assets/41945903/58371709-996a-41cf-a352-d28addf24ad9)
 
-![Screenshot2](https://github.com/user-attachments/assets/63e6ead4-7053-43c6-af64-e06c45bba235)
+<img width="800" alt="Screenshot From 2026-03-18 07-31-03" src="https://github.com/user-attachments/assets/58edba97-fa62-4615-bb7d-f8e77aac3fc3" />
 
+<img width="800" alt="Screenshot From 2026-03-18 07-30-43" src="https://github.com/user-attachments/assets/2bce0c34-b82d-40ab-9fab-60697e0167c4" />
 
 ## Why?
 
@@ -18,6 +18,11 @@ I looked at a few applications like grafana, but they are too heavy or work in a
 which in this case I would prefer to avoid.
 
 ## How to use it?
+You need to install it via cargo or download precompiled binary from releases and then run it in terminal.
+```
+
+```
+
 
 This is console app, so that means that you need to use terminal to use it.
 

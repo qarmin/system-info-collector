@@ -1,3 +1,11 @@
+## Version 0.7.0 - 18.03.2026
+- Refactored code to use cargo workspace with two crates - `system_info_collector_core` and `system_info_collector`
+- Added support for collecting network info (bytes sent/received)
+- Added support for collecting GPU info (temperature, memory usage, gpu usage) - the 
+- Added support for collecting top X processes by cpu/ram usage
+- Added support for collecting disk space info
+- Added enabled by default, compact mode, to minimize generated csv file size(missing value means that previous value should be used)
+
 ## Version 0.6.0 - 05.10.2025
 - Increased minimum rust version to 1.85
 - Updated sys-info - now less info is collected, to minimize disk requests

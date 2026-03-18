@@ -263,6 +263,18 @@
             <h3>Top Processes — RAM [MB]</h3>
             <canvas id="topRamChart" height="150"></canvas>
         </div>
+        <div class="chart-container" id="swapChartContainer" style="display:none;">
+            <h3>Swap Usage [MB]</h3>
+            <canvas id="swapChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="networkChartContainer" style="display:none;">
+            <h3>Network [MB/s]</h3>
+            <canvas id="networkChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="diskChartContainer" style="display:none;">
+            <h3>Disk Space [GB]</h3>
+            <canvas id="diskChart" height="120"></canvas>
+        </div>
 
         <div id="error" class="error" style="display: none;"></div>
 
@@ -353,7 +365,8 @@
             if (data.length === 0) {
                 container.innerHTML = '<div class="loading">No data available</div>';
                 ['cpuChartContainer', 'ramChartContainer',
-                 'gpuUtilChartContainer', 'gpuVramChartContainer', 'gpuTempChartContainer']
+                 'gpuUtilChartContainer', 'gpuVramChartContainer', 'gpuTempChartContainer',
+                 'swapChartContainer', 'networkChartContainer', 'diskChartContainer']
                     .forEach(id => document.getElementById(id).style.display = 'none');
                 return;
             }
@@ -370,6 +383,9 @@
             const isGpuUtil = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_UTILIZATION' || /^GPU_\d+_UTIL$/.test(h.toUpperCase()));
             const isGpuVram = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_MEMORY_USED' || /^GPU_\d+_VRAM_MB$/.test(h.toUpperCase()));
             const isGpuTemp = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_TEMPERATURE' || /^GPU_\d+_TEMP_C$/.test(h.toUpperCase()));
+            const isSwap = h => /^SWAP_(USED|FREE)$/.test(h.toUpperCase());
+            const isNet  = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
+            const isDisk = h => /^DISK_\d+_(USED|AVAIL)_GB$/.test(h.toUpperCase());
 
             // Identify CPU and RAM columns (explicitly exclude GPU columns)
             const cpuIndices = headers
@@ -382,6 +398,9 @@
             const gpuUtilIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuUtil(h));
             const gpuVramIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuVram(h));
             const gpuTempIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuTemp(h));
+            const swapIndices    = headers.map((h, i) => ({ h, i })).filter(({ h }) => isSwap(h));
+            const netIndices     = headers.map((h, i) => ({ h, i })).filter(({ h }) => isNet(h));
+            const diskIndices    = headers.map((h, i) => ({ h, i })).filter(({ h }) => isDisk(h));
             // Prepare timestamps
             const timestamps = data.map(point => {
                 const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
@@ -488,6 +507,21 @@
             const gpuUtilDatasets = makeGpuDatasets(gpuUtilIndices, 30);   // amber
             const gpuVramDatasets = makeGpuDatasets(gpuVramIndices, 270);  // purple
             const gpuTempDatasets = makeGpuDatasets(gpuTempIndices, 0);    // red
+            // Swap / Network / Disk datasets
+            const makeBasicDatasets = (indices, startHue) => indices.map(({ h, i }, idx) => {
+                const color = `hsl(${(startHue + idx * 40) % 360}, 80%, 60%)`;
+                return {
+                    label: h,
+                    data: data.map(point => { const v = point.data[i]; return ([-1, "-1"].includes(v)) ? null : v; }),
+                    borderColor: color,
+                    backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'),
+                    spanGaps: true,
+                    tension: 0.1,
+                };
+            });
+            const swapDatasets = makeBasicDatasets(swapIndices, 45);   // yellow/orange
+            const netDatasets  = makeBasicDatasets(netIndices,  180);  // cyan/teal
+            const diskDatasets = makeBasicDatasets(diskIndices, 270);  // purple/violet
             // Draw CPU chart
             if (cpuDatasets.length && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
                 document.getElementById('cpuChartContainer').style.display = '';
@@ -597,6 +631,72 @@
                 });
             } else {
                 document.getElementById('gpuTempChartContainer').style.display = 'none';
+            }
+            // Draw Swap chart
+            if (swapDatasets.length && swapDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('swapChartContainer').style.display = '';
+                if (window.swapChartObj) window.swapChartObj.destroy();
+                window.swapChartObj = new Chart(document.getElementById('swapChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: swapDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, max: metadata?.system_info?.total_swap_mb || undefined, title: { display: true, text: 'Swap [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('swapChartContainer').style.display = 'none';
+            }
+            // Draw Network chart
+            if (netDatasets.length && netDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('networkChartContainer').style.display = '';
+                if (window.networkChartObj) window.networkChartObj.destroy();
+                window.networkChartObj = new Chart(document.getElementById('networkChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: netDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, title: { display: true, text: 'Network [MB/s]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('networkChartContainer').style.display = 'none';
+            }
+            // Draw Disk chart
+            if (diskDatasets.length && diskDatasets.some(ds => ds.data.some(v => v !== null))) {
+                document.getElementById('diskChartContainer').style.display = '';
+                if (window.diskChartObj) window.diskChartObj.destroy();
+                window.diskChartObj = new Chart(document.getElementById('diskChart').getContext('2d'), {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: diskDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: true, position: 'top' } },
+                        animation: false,
+                        backgroundColor: '#23272a',
+                        color: '#e0e0e0',
+                        scales: {
+                            y: { min: 0, title: { display: true, text: 'Disk [GB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('diskChartContainer').style.display = 'none';
             }
             // --- Table with data ---
             let tableHTML = `

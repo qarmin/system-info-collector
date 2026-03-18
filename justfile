@@ -102,3 +102,9 @@ samplyrd:
         
 cleancsv:
     rm *.csv
+
+publish:
+    cd crates/system_info_collector_core && cargo publish --dry-run
+    cd crates/system_info_collector_core && cargo publish
+    cd crates/system_info_collector && cargo publish --dry-run
+    cd crates/system_info_collector && cargo publish
