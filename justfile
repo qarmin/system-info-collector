@@ -46,15 +46,17 @@ show_data ip_address:
     cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o
 
 show:
+    rm *.html || true
     # If all data files are present, show them together, otherwise show only the main one
     if [ -f system_data_top_cpu.csv ] && [ -f system_data_top_ram.csv ]; then \
-    cargo run --release -p system_info_collector -- convert -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv -p plot.html -o; firefox plot.html \
+    cargo run --release -p system_info_collector -- convert -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv -p plot.html -o; firefox plot.html; firefox plot_top_cpu.html; firefox plot_top_ram.html \
     ; else \
     cargo run --release -p system_info_collector -- convert -d system_data.csv -p plot.html -o; firefox plot.html \
     ; fi
 
 
 all:
+    rm *.csv || true
     # Run with all collection modes enabled + HTTP live data server + top-N processes
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
@@ -69,6 +71,7 @@ all:
     just show
 
 normal:
+    rm *.csv || true
     # All without top-N processes and cpu-usage-per-core and swap, because it is not needed for normal usage and takes more resources to collect and plot
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
@@ -80,10 +83,12 @@ normal:
         -c 0.5 -s -l 10000
 
 heavy:
+    rm *.csv || true
     cargo run --release -p system_info_collector -- collect \
-        -m cpu-usage-total cpu-usage-per-core --top-n-processes 10 -c 0.5 -s -l 10000
+        -m cpu-usage-total cpu-usage-per-core --top-n-processes 10 -c 2.0 -s -l 10000
         
 samplyrd:
+    rm *.csv || true
     cargo build --profile rdebug
     samply record target/rdebug/system_info_collector collect \
         -m cpu-usage-total  \

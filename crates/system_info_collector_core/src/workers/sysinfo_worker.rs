@@ -35,13 +35,15 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
         sys.refresh_cpu_usage();
         sys.refresh_memory();
 
-        // If top-N tracking is enabled, refresh all processes with only cpu+memory —
-        // disk_usage, exe, tasks are not needed for top-N grouping by name.
+        // If top-N tracking is enabled, refresh all processes.
+        // exe is read once (OnlyIfNotSet) and cached; subsequent refreshes are cheap.
+        // We need exe so we can group processes by their real binary path instead of
+        // the process name, which applications (e.g. Firefox) often change at runtime.
         if settings.top_n_processes > 0 {
             sys.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 true,
-                ProcessRefreshKind::nothing().with_cpu().with_memory(),
+                ProcessRefreshKind::nothing().with_cpu().with_memory().with_exe(UpdateKind::OnlyIfNotSet),
             );
         } else if settings.need_to_refresh_processes {
             if let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings) {
@@ -90,20 +92,54 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
             let n = settings.top_n_processes;
             let cpu_divisor = cpu_count as f32;
 
-            // Sum CPU% and RAM across all processes sharing the same executable name.
-            let mut cpu_by_name: HashMap<String, f32> = HashMap::new();
-            let mut ram_by_name: HashMap<String, u64> = HashMap::new();
+            // Sum CPU% and RAM, grouped by the exe path of each process.
+            // Threads are skipped: on Linux they appear as separate entries but carry the
+            // parent's RSS, which would massively inflate the RAM totals if summed.
+            // We use the full exe path as the grouping key (not proc.name()) because many
+            // applications — notably Firefox — rename their processes at runtime via
+            // prctl(PR_SET_NAME) to e.g. "Isolated Web Co", while all instances still
+            // share the same exe path.  The display name is the basename of that path.
+            //
+            // key   = full exe path (different installations of the same binary stay separate)
+            // value = (display_basename, total_cpu, total_ram)
+            let mut by_exe: HashMap<String, (String, f32, u64)> = HashMap::new();
             for proc in sys.processes().values() {
-                let name = proc.name().to_string_lossy().to_string();
-                *cpu_by_name.entry(name.clone()).or_insert(0.0) += proc.cpu_usage();
-                *ram_by_name.entry(name).or_insert(0) += proc.memory();
+                // Skip kernel and userland threads (e.g. "DefaultDispatch", "DOM Worker").
+                if proc.thread_kind().is_some() {
+                    continue;
+                }
+                let (key, display) = match proc.exe() {
+                    Some(path) => {
+                        let key = path.to_string_lossy().into_owned();
+                        let display = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| key.clone());
+                        (key, display)
+                    }
+                    None => {
+                        let n = proc.name().to_string_lossy().into_owned();
+                        (n.clone(), n)
+                    }
+                };
+                let entry = by_exe.entry(key).or_insert((display, 0.0, 0));
+                entry.1 += proc.cpu_usage();
+                entry.2 += proc.memory();
             }
 
-            let mut cpu_vec: Vec<(String, f32)> = cpu_by_name.into_iter().collect();
+            let mut cpu_vec: Vec<(String, f32)> =
+                by_exe.values().map(|(name, cpu, _)| (name.clone(), *cpu)).collect();
             cpu_vec.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            top_cpu_snap = cpu_vec.into_iter().take(n).map(|(name, cpu)| (name, cpu / cpu_divisor)).collect();
+            // Only keep processes using more than 1% of total CPU to avoid noise.
+            top_cpu_snap = cpu_vec
+                .into_iter()
+                .map(|(name, cpu)| (name, cpu / cpu_divisor))
+                .filter(|(_, cpu_pct)| *cpu_pct > 1.0)
+                .take(n)
+                .collect();
 
-            let mut ram_vec: Vec<(String, u64)> = ram_by_name.into_iter().collect();
+            let mut ram_vec: Vec<(String, u64)> =
+                by_exe.into_values().map(|(name, _, ram)| (name, ram)).collect();
             ram_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
             top_ram_snap = ram_vec.into_iter().take(n).map(|(name, mem)| (name, bytes_to_mb(mem))).collect();
         }

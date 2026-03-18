@@ -378,20 +378,59 @@
                 const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
                 return formatAbsoluteTimestamp(absoluteTime);
             });
-            // CPU - split into multiple lines if needed
+            // CPU - split into multiple lines if needed.
+            // CPU_USAGE_PER_CORE holds semicolon-separated values (one per core)
+            // and is expanded into individual per-core datasets.
             let cpuDatasets = [];
             if (cpuIndices.length > 0) {
-                cpuDatasets = cpuIndices.map(({ h, i }, idx) => ({
-                    label: h,
-                    data: data.map(point => {
-                        const v = point.data[i];
-                        return ([-1, "-1"].includes(v)) ? null : v;
-                    }),
-                    borderColor: idx === 0 ? '#1976d2' : `hsl(${(idx * 60) % 360}, 70%, 50%)`,
-                    backgroundColor: idx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${(idx * 60) % 360}, 70%, 50%, 0.1)`,
-                    spanGaps: true,
-                    tension: 0.1,
-                }));
+                let dsIdx = 0;
+                for (const { h, i } of cpuIndices) {
+                    if (h.toUpperCase() === 'CPU_USAGE_PER_CORE') {
+                        // Detect core count from metadata, fall back to first non-null row.
+                        let coreCount = metadata?.system_info?.cpu_cores || 0;
+                        if (coreCount === 0) {
+                            for (const point of data) {
+                                const v = point.data[i];
+                                if (v && v !== '-1' && String(v).includes(';')) {
+                                    coreCount = v.split(';').length;
+                                    break;
+                                }
+                            }
+                        }
+                        for (let core = 0; core < coreCount; core++) {
+                            const hue = (core * 23) % 360;
+                            cpuDatasets.push({
+                                label: `Core ${core}`,
+                                data: data.map(point => {
+                                    const v = point.data[i];
+                                    if (!v || v === '-1') return null;
+                                    const val = parseFloat(String(v).split(';')[core]);
+                                    return isNaN(val) ? null : val;
+                                }),
+                                borderColor: `hsl(${hue}, 80%, 55%)`,
+                                backgroundColor: `hsla(${hue}, 80%, 55%, 0.05)`,
+                                spanGaps: true,
+                                tension: 0.1,
+                                borderWidth: 1,
+                                pointRadius: 0,
+                            });
+                            dsIdx++;
+                        }
+                    } else {
+                        cpuDatasets.push({
+                            label: h,
+                            data: data.map(point => {
+                                const v = point.data[i];
+                                return ([-1, "-1"].includes(v)) ? null : v;
+                            }),
+                            borderColor: dsIdx === 0 ? '#1976d2' : `hsl(${(dsIdx * 60) % 360}, 70%, 50%)`,
+                            backgroundColor: dsIdx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${(dsIdx * 60) % 360}, 70%, 50%, 0.1)`,
+                            spanGaps: true,
+                            tension: 0.1,
+                        });
+                        dsIdx++;
+                    }
+                }
             }
             // RAM - split into multiple lines if needed
             let ramDatasets = [];
