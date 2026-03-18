@@ -63,9 +63,9 @@ all:
            network-rx network-tx \
            gpu-utilization gpu-memory-used gpu-temperature \
            disk-used disk-available \
+           cpu-usage-per-core \
         --all-networks --all-disks \
         -c 0.5 -s -l 10000 --top-n-processes 5
-    # Without cpu-usage-per-core, because it is too much data for
     just show
 
 normal:
@@ -79,6 +79,10 @@ normal:
         --all-networks --all-disks \
         -c 0.5 -s -l 10000
 
+heavy:
+    cargo run --release -p system_info_collector -- collect \
+        -m cpu-usage-total cpu-usage-per-core --top-n-processes 10 -c 0.5 -s -l 10000
+        
 samplyrd:
     cargo build --profile rdebug
     samply record target/rdebug/system_info_collector collect \
@@ -90,3 +94,6 @@ samplyrd:
              disk-used disk-available \
         --all-networks --all-disk \
         -c 0.5 -s -l 10000 --top-n-processes 5
+        
+cleancsv:
+    rm *.csv
