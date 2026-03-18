@@ -111,10 +111,7 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                 let (key, display) = match proc.exe() {
                     Some(path) => {
                         let key = path.to_string_lossy().into_owned();
-                        let display = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| key.clone());
+                        let display = path.file_name().map_or_else(|| key.clone(), |n| n.to_string_lossy().into_owned());
                         (key, display)
                     }
                     None => {
@@ -127,8 +124,7 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                 entry.2 += proc.memory();
             }
 
-            let mut cpu_vec: Vec<(String, f32)> =
-                by_exe.values().map(|(name, cpu, _)| (name.clone(), *cpu)).collect();
+            let mut cpu_vec: Vec<(String, f32)> = by_exe.values().map(|(name, cpu, _)| (name.clone(), *cpu)).collect();
             cpu_vec.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             // Only keep processes using more than 1% of total CPU to avoid noise.
             top_cpu_snap = cpu_vec
@@ -138,8 +134,7 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                 .take(n)
                 .collect();
 
-            let mut ram_vec: Vec<(String, u64)> =
-                by_exe.into_values().map(|(name, _, ram)| (name, ram)).collect();
+            let mut ram_vec: Vec<(String, u64)> = by_exe.into_values().map(|(name, _, ram)| (name, ram)).collect();
             ram_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
             top_ram_snap = ram_vec.into_iter().take(n).map(|(name, mem)| (name, bytes_to_mb(mem))).collect();
         }

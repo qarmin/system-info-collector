@@ -66,7 +66,7 @@ all:
            gpu-utilization gpu-memory-used gpu-temperature \
            disk-used disk-available \
            cpu-usage-per-core \
-        --all-networks --all-disks \
+        --all-networks --all-disks -e "NEMO|nemo" \
         -c 0.5 -s -l 10000 --top-n-processes 5
     just show
 
@@ -79,7 +79,7 @@ normal:
            network-rx network-tx \
            gpu-utilization gpu-memory-used gpu-temperature \
            disk-used disk-available \
-        --all-networks --all-disks \
+        --all-networks --all-disks -e "GNOME SHELL|gnome-shell" \
         -c 0.5 -s -l 10000
 
 heavy:

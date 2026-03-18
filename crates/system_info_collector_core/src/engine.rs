@@ -79,6 +79,7 @@ impl CollectorEngine {
     ///
     /// `on_top_row`, when provided, is called each tick when `--top-n-processes`
     /// is active: `(seconds_since_start, top_cpu_vec, top_ram_vec)`.
+    #[expect(clippy::type_complexity)]
     pub async fn run<F>(
         self,
         app_version: &str,

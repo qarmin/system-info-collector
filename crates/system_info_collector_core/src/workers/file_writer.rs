@@ -38,6 +38,7 @@ use crate::workers::sysinfo_worker::bytes_to_mb;
 /// When `--top-n-processes` is active, `on_top_row` (if supplied) is also
 /// called each tick with `(seconds_since_start, top_cpu, top_ram)` so the
 /// HTTP server can maintain a live top-process history.
+#[expect(clippy::type_complexity)]
 pub async fn run<F>(
     settings: Arc<CollectSettings>,
     state: Arc<RwLock<SharedState>>,
