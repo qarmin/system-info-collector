@@ -39,11 +39,7 @@ https://github.com/qarmin/system-info-collector/assets/41945903/7ac510b5-babf-4d
 
 ## Performance and memory usage
 
-During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lower than 0.1%.
-
-Sys-info library which I use have quite big overhead(usually few ms) when finding cpu/ram usage for processes due
-opening unnecessary files, so I plan to do some computations manually. So if you want to use as little resources as
-possible, you should use only collect basic os info without any processes(this is default mode).
+During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lower than 0.1% - but it may increase when using more resource intensive options like tracking top N processes.
 
 In collect mode, app only needs to read cpu/ram usage and then save it to file, so that is why it uses so little
 resources.
