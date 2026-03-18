@@ -1,6 +1,6 @@
 # System info collector
 
-This is simple app to collect data about system cpu and memory usage over time.
+This is simple app to collect data about system cpu, memory, swap, network, GPU and disk usage over time.
 
 After collecting results into csv file, html file can be created with plot.
 
@@ -45,27 +45,17 @@ resources.
 
 Converting csv file to html file is more resource intensive, so should be done on more powerful computer.
 
-Results from testing on i7-4770 250000 samples for memory, cpu total and per core usage - with 1s interval, collecting
-such number of samples should take ~3 days(I used smaller interval to mimic real usage):
-
-Example of first lines of csv file:
+Example of first lines of csv file (by default compact mode is used: repeated values written as empty, filled back in on read):
 
 ```
-INTERVAL_SECONDS=1,CPU_CORE_COUNT=8,MEMORY_TOTAL=23943.89,SWAP_TOTAL=2048.00,UNIX_TIMESTAMP_START_TIME=1690142980.2999594,APP_VERSION=0.4.0,CUSTOM_0=FIREFOX
-SECONDS_SINCE_START,MEMORY_USED,SWAP_USED,CPU_USAGE_TOTAL,CUSTOM_0_CPU,CUSTOM_0_MEMORY
-0.24,11031.20,0.00,49.66,0.00,1111.25
-1.24,11037.60,0.00,16.75,2.11,1111.25
-2.24,11039.49,0.00,19.14,3.55,1110.93
-3.24,11040.23,0.00,13.27,2.17,1110.93
-4.24,11047.52,0.00,16.32,4.65,1111.61
+INTERVAL_SECONDS=1,CPU_CORE_COUNT=8,MEMORY_TOTAL=23943.89,SWAP_TOTAL=2048.00,UNIX_TIMESTAMP_START_TIME=1690142980.2999594,APP_VERSION=0.7.0,CUSTOM_0=FIREFOX,NET_0=enp8s0,GPU_0=NVIDIA GeForce RTX 3080
+SECONDS_SINCE_START,MEMORY_USED,CPU_USAGE_TOTAL,CPU_USAGE_PER_CORE,CUSTOM_0_CPU,CUSTOM_0_MEMORY,NET_0_RX_BPS,NET_0_TX_BPS,GPU_0_UTIL,GPU_0_VRAM_MB,GPU_0_TEMP_C
+0.24,11031.2,49.7,55.1;62.3;44.2;38.7;51.0;48.9;60.1;42.5,0,1111.3,0,0,23,4012,61
+1.24,11037.6,,16.8;12.1;18.3;14.5;20.1;17.8;22.3;15.9,2.1,1111.3,0.5,0.1,,4015,
 ```
-
-- CSV file size: 19.55 MiB
-- Loading and parsing csv file: 407 ms
-- HTML file size: 129 MiB (new versions use simple regex minimizer, so size should be ~30% smaller)
-- Creating html file: 1.68 s
 
 ## Example commands
+You can look at justfile, for more examples of usage.
 
 Collect used memory and CPU usage in interval of 1 second and save it to system_data.csv file
 
@@ -99,6 +89,68 @@ info about the first will be collected
 
 ```
 ./system_info_collector collect -e "FIREFOX|firefox" -e "Event Handler|/usr/bin/event_handler --timeout"
+```
+
+Track the top 10 most CPU-hungry and RAM-hungry processes (grouped by executable path, only those using >1% CPU are logged).
+This writes two extra files: `system_data_top_cpu.csv` and `system_data_top_ram.csv`.
+Note: this option is very resource-intensive as it refreshes all processes on every tick.
+
+```
+./system_info_collector collect --top-n-processes 10
+```
+
+Convert main data file together with top-N process files into a single HTML plot
+
+```
+./system_info_collector convert -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv -o
+```
+
+Collect network RX/TX for a specific interface
+
+```
+./system_info_collector collect -m network-rx -m network-tx --network enp8s0
+```
+
+Collect network stats for all non-virtual interfaces
+
+```
+./system_info_collector collect -m network-rx -m network-tx --all-networks
+```
+
+List all available network interfaces and exit
+
+```
+./system_info_collector collect --list-networks
+```
+
+Collect disk used/available space for specific mount points
+
+```
+./system_info_collector collect -m disk-used -m disk-available --disk / --disk /home
+```
+
+Collect disk stats for all non-virtual disks
+
+```
+./system_info_collector collect -m disk-used --all-disks
+```
+
+List all available disks and exit
+
+```
+./system_info_collector collect --list-disks
+```
+
+Collect GPU utilization, VRAM usage and temperature (NVIDIA via NVML, AMD/Intel via sysfs)
+
+```
+./system_info_collector collect -m gpu-utilization -m gpu-memory-used -m gpu-temperature
+```
+
+Start live HTTP server on port 5998 (open `http://localhost:5998/` in browser)
+
+```
+./system_info_collector collect --serve --port 5998 --max-results 1000
 ```
 
 Shows help about available arguments
@@ -158,9 +210,41 @@ system_info_collector convert -d /opt/system_info_collector/data.csv -p /tmp/plo
 Cpu usage is shown in range between 0 and 100%, if computer has more than 1 core, cpu usage is divided by number of
 cores, to get value in proper range.
 
+`cpu-usage-per-core` stores all core values semicolon-separated in a single CSV column. The HTML plot and the live
+web interface both expand it into one line per core automatically.
+
 Memory and swap usage are shown in MiB, with range from 0 to total memory/swap size.
 
 When checking for processes -1 is visible both in cpu/memory plot if searched process is not found.
+
+## Top-N processes
+
+When `--top-n-processes N` is used, two extra CSV files are written alongside the main data file:
+
+- `system_data_top_cpu.csv` — top N processes by CPU%, sorted descending
+- `system_data_top_ram.csv` — top N processes by RAM usage, sorted descending
+
+Processes are grouped by their executable path (not the OS process name), so multiple instances of the same binary
+(e.g. Firefox content processes) are aggregated into a single entry. Only processes using more than 1% of total CPU
+are included in the CPU ranking. Kernel and userland threads are excluded.
+
+Pass both extra files to `convert` with `-d` to include them as additional charts in the HTML plot.
+
+## Network monitoring
+
+Network RX/TX rates are collected in MB/s. Use `--network <iface>` to track specific interfaces or `--all-networks`
+to track all non-virtual ones. Run with `--list-networks` to see available interfaces.
+
+## Disk monitoring
+
+Disk used/available space is collected in GB. Use `--disk <mount>` to track specific mount points (e.g. `/`, `/home`)
+or `--all-disks` to track all non-virtual disks. Run with `--list-disks` to see available disks.
+
+## GPU monitoring
+
+GPU utilization (%), VRAM usage (MB) and temperature (°C) are collected automatically when any of the GPU modes are
+selected. NVIDIA GPUs are accessed via NVML; AMD and Intel GPUs are accessed via sysfs. Multiple GPUs are supported,
+each appearing as a separate column.
 
 ## Data file compatibility
 
@@ -191,8 +275,10 @@ Run with the `--serve` option (optionally with `--port` and `--max-results`):
 After starting, open your browser and go to `http://localhost:5998/`.
 
 ### Web interface features
-- **CPU and RAM charts**
-- **Data table** – with text information about current CPU and RAM usage.
+- **CPU chart** – total CPU usage and/or per-core breakdown (one line per core)
+- **RAM chart**
+- **GPU charts** – utilization, VRAM and temperature (one chart each, one line per GPU)
+- **Data table** – with text information about current metrics
 - **Auto-refresh** – ability to set the refresh interval or leave it to manual refresh
 - **Dark mode**
 - **No external dependencies** – static files (e.g. Chart.js) are embedded in the binary and served by the backend
@@ -201,4 +287,4 @@ After starting, open your browser and go to `http://localhost:5998/`.
 
 MIT License
 
-Copyright (c) 2023-2025 Rafał Mikrut and contributors
+Copyright (c) 2023-2026 Rafał Mikrut and contributors

@@ -168,6 +168,17 @@ async fn main() {
             } else {
                 None
             };
+            // Build top-N live callback (only when serve is enabled).
+            let on_top_row: Option<std::sync::Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>> =
+                if let Some(ref buf) = data_buffer {
+                    let top_buf = buf.clone();
+                    Some(std::sync::Arc::new(move |ts, cpu, ram| {
+                        top_buf.add_top_point(ts, cpu, ram);
+                    }))
+                } else {
+                    None
+                };
+
             let _ = (cpu_model, gpu_names); // suppress unused warnings when !serve
 
             // Register Ctrl-C handler: first press → graceful stop, second → immediate exit.
@@ -186,11 +197,15 @@ async fn main() {
             .expect("Error setting Ctrl-C handler");
 
             if let Err(e) = engine
-                .run(env!("CARGO_PKG_VERSION"), move |row| {
-                    if let Some(ref buf) = data_buffer {
-                        buf.add_data_point(DataPoint::from_row(&row));
-                    }
-                })
+                .run(
+                    env!("CARGO_PKG_VERSION"),
+                    move |row| {
+                        if let Some(ref buf) = data_buffer {
+                            buf.add_data_point(DataPoint::from_row(&row));
+                        }
+                    },
+                    on_top_row,
+                )
                 .await
             {
                 error!("{e}");

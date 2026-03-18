@@ -255,6 +255,14 @@
             <h3>GPU Temperature [°C]</h3>
             <canvas id="gpuTempChart" height="120"></canvas>
         </div>
+        <div class="chart-container" id="topCpuChartContainer" style="display:none;">
+            <h3>Top Processes — CPU [%]</h3>
+            <canvas id="topCpuChart" height="150"></canvas>
+        </div>
+        <div class="chart-container" id="topRamChartContainer" style="display:none;">
+            <h3>Top Processes — RAM [MB]</h3>
+            <canvas id="topRamChart" height="150"></canvas>
+        </div>
 
         <div id="error" class="error" style="display: none;"></div>
 
@@ -332,6 +340,7 @@
                 }
                 
                 await loadStats();
+                await loadTopData();
             } catch (error) {
                 console.error('Error loading data:', error);
                 errorDiv.textContent = 'Error loading data: ' + error.message;
@@ -737,10 +746,114 @@
             });
         }
 
+        // ── Top-N process charts ──────────────────────────────────────────────
+
+        /// Build one Chart.js dataset per unique process name from an array of
+        /// top snapshots.  Each snapshot is {timestamp, entries: [{name,value}]}.
+        /// When a process is absent from a snapshot its value is null (gap in line).
+        function buildTopDatasets(snapshots, field) {
+            // Collect all unique names and the index of each snapshot for lookup.
+            const nameSet = new Set();
+            for (const snap of snapshots) {
+                for (const e of snap[field]) nameSet.add(e.name);
+            }
+            const names = [...nameSet];
+            const n = names.length;
+
+            return names.map((name, idx) => {
+                const hue = Math.round((idx * 360) / Math.max(n, 1));
+                const color = `hsl(${hue}, 75%, 60%)`;
+                return {
+                    label: name,
+                    data: snapshots.map(snap => {
+                        const entry = snap[field].find(e => e.name === name);
+                        return entry ? entry.value : null;
+                    }),
+                    borderColor: color,
+                    backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.05)'),
+                    spanGaps: false,
+                    tension: 0.1,
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                };
+            });
+        }
+
+        async function loadTopData() {
+            const limitInput = document.getElementById('limitInput');
+            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
+            try {
+                const response = await fetch(`/api/top/recent?limit=${limit}`);
+                const result = await response.json();
+                if (!result.data || result.data.length === 0) {
+                    ['topCpuChartContainer', 'topRamChartContainer'].forEach(id => {
+                        document.getElementById(id).style.display = 'none';
+                    });
+                    return;
+                }
+
+                const timestamps = result.data.map(snap => {
+                    const absoluteTime = metadata?.system_info?.start_time + snap.timestamp;
+                    return formatAbsoluteTimestamp(absoluteTime);
+                });
+
+                // CPU chart
+                const cpuDatasets = buildTopDatasets(result.data, 'cpu');
+                if (cpuDatasets.length > 0 && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
+                    document.getElementById('topCpuChartContainer').style.display = '';
+                    if (window.topCpuChartObj) window.topCpuChartObj.destroy();
+                    window.topCpuChartObj = new Chart(document.getElementById('topCpuChart').getContext('2d'), {
+                        type: 'line',
+                        data: { labels: timestamps, datasets: cpuDatasets },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
+                            animation: false,
+                            backgroundColor: '#23272a',
+                            color: '#e0e0e0',
+                            scales: {
+                                y: { min: 0, max: 100, title: { display: true, text: 'CPU [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                                x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                            }
+                        }
+                    });
+                } else {
+                    document.getElementById('topCpuChartContainer').style.display = 'none';
+                }
+
+                // RAM chart
+                const ramDatasets = buildTopDatasets(result.data, 'ram');
+                if (ramDatasets.length > 0 && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
+                    document.getElementById('topRamChartContainer').style.display = '';
+                    if (window.topRamChartObj) window.topRamChartObj.destroy();
+                    window.topRamChartObj = new Chart(document.getElementById('topRamChart').getContext('2d'), {
+                        type: 'line',
+                        data: { labels: timestamps, datasets: ramDatasets },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
+                            animation: false,
+                            backgroundColor: '#23272a',
+                            color: '#e0e0e0',
+                            scales: {
+                                y: { min: 0, title: { display: true, text: 'RAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                                x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                            }
+                        }
+                    });
+                } else {
+                    document.getElementById('topRamChartContainer').style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error loading top process data:', error);
+            }
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', async function() {
             await loadMetadata();
             await loadData();
+            await loadTopData();
             setupAutoRefresh();
         });
     </script>

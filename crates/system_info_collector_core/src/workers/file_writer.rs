@@ -34,6 +34,10 @@ use crate::workers::sysinfo_worker::bytes_to_mb;
 /// latest snapshots out of `SharedState` (brief read-lock), formats a CSV row,
 /// writes it to disk and calls `on_row` so the HTTP server can update its
 /// in-memory buffer.
+///
+/// When `--top-n-processes` is active, `on_top_row` (if supplied) is also
+/// called each tick with `(seconds_since_start, top_cpu, top_ram)` so the
+/// HTTP server can maintain a live top-process history.
 pub async fn run<F>(
     settings: Arc<CollectSettings>,
     state: Arc<RwLock<SharedState>>,
@@ -42,6 +46,7 @@ pub async fn run<F>(
     on_row: Arc<F>,
     discovery: Arc<RuntimeDiscovery>,
     csv_header: String,
+    on_top_row: Option<Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>>,
 ) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
@@ -282,6 +287,9 @@ pub async fn run<F>(
             if let Some(ref mut f) = top_ram_file {
                 let ram_as_f32: Vec<(String, f32)> = top_ram_snap.iter().map(|(name, v)| (name.clone(), *v as f32)).collect();
                 write_top_n_row(f, seconds_since_start, &ram_as_f32, n, !settings.disable_instant_flushing);
+            }
+            if let Some(ref cb) = on_top_row {
+                cb(seconds_since_start, top_cpu_snap.clone(), top_ram_snap.clone());
             }
         }
 

@@ -7,7 +7,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::data_buffer::DataBuffer;
+use super::data_buffer::{DataBuffer, TopDataPoint};
 
 #[derive(Deserialize)]
 struct DataQuery {
@@ -54,6 +54,12 @@ struct RecentDataResponse {
     max_available: usize,
 }
 
+#[derive(Serialize)]
+struct RecentTopResponse {
+    data: Vec<TopDataPoint>,
+    count: usize,
+}
+
 pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(data_buffer);
 
@@ -61,6 +67,7 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer) -> Result<(), Box<
         .route("/", get(index_handler))
         .route("/api/data", get(data_handler))
         .route("/api/data/recent", get(recent_data_handler))
+        .route("/api/top/recent", get(recent_top_handler))
         .route("/api/metadata", get(metadata_handler))
         .route("/static/chart.min.js", get(chartjs_handler))
         .with_state(app_state);
@@ -134,6 +141,16 @@ async fn recent_data_handler(Query(params): Query<DataQuery>, State(buffer): Sta
         count: limit,
         max_available: total_count,
     };
+    (StatusCode::OK, Json(response))
+}
+
+async fn recent_top_handler(Query(params): Query<DataQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
+    let max_size = buffer.get_max_size();
+    let limit = params.limit.unwrap_or(10000).min(max_size);
+    let data_points = buffer.get_last_n_top(limit);
+    let count = data_points.len();
+
+    let response = RecentTopResponse { data: data_points, count };
     (StatusCode::OK, Json(response))
 }
 
