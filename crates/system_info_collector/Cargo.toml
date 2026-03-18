@@ -13,7 +13,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-system_info_collector_core = { path = "../system_info_collector_core", features = ["clap"] }
+system_info_collector_core = { path = "../system_info_collector_core", version = "0.7.0", features = ["clap"] }
 
 time = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
