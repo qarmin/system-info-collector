@@ -1549,6 +1549,7 @@ dependencies = [
  "plotly",
  "regex",
  "serde",
+ "serde_json",
  "sysinfo",
  "system_info_collector_core",
  "time",

@@ -45,18 +45,19 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                 true,
                 ProcessRefreshKind::nothing().with_cpu().with_memory().with_exe(UpdateKind::OnlyIfNotSet),
             );
-        } else if settings.need_to_refresh_processes {
-            if let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings) {
-                log::warn!("Process tracking error: {e}");
-            }
+        } else if settings.need_to_refresh_processes
+            && let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings)
+        {
+            log::warn!("Process tracking error: {e}");
         }
 
         // When top_n AND tracked processes are both active, update tracked processes
         // using data that's already been refreshed by the full process refresh above.
-        if settings.top_n_processes > 0 && settings.need_to_refresh_processes {
-            if let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings) {
-                log::warn!("Process tracking error: {e}");
-            }
+        if settings.top_n_processes > 0
+            && settings.need_to_refresh_processes
+            && let Err(e) = check_for_new_and_old_process_data(&mut sys, &mut process_cache, &settings)
+        {
+            log::warn!("Process tracking error: {e}");
         }
 
         debug!("sysinfo_worker refreshed in {:?}", start.elapsed());
@@ -167,10 +168,10 @@ fn get_system_pids(_sys: &mut System) -> Result<HashSet<usize>, Error> {
             if !file_type.is_dir() {
                 continue;
             }
-            if let Some(name) = entry.file_name().to_str() {
-                if let Ok(pid) = name.parse::<usize>() {
-                    pids.insert(pid);
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && let Ok(pid) = name.parse::<usize>()
+            {
+                pids.insert(pid);
             }
         }
     }

@@ -265,10 +265,10 @@ fn lookup_pci_name(device_path: &std::path::Path) -> Option<String> {
         .unwrap_or_default();
 
     for pci_ids_path in &["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"] {
-        if let Ok(content) = std::fs::read_to_string(pci_ids_path) {
-            if let Some(name) = search_pci_ids(&content, &vendor_id, &device_id, &sub_vendor, &sub_device) {
-                return Some(name);
-            }
+        if let Ok(content) = std::fs::read_to_string(pci_ids_path)
+            && let Some(name) = search_pci_ids(&content, &vendor_id, &device_id, &sub_vendor, &sub_device)
+        {
+            return Some(name);
         }
     }
     None

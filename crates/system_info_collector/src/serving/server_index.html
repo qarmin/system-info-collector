@@ -180,6 +180,31 @@
     <div class="container" id="mainContainer">
         <div style="text-align:right; margin-bottom:10px;">
             <button id="toggleWidthBtn" onclick="toggleFullWidth()">Full Width</button>
+            <button id="exportBtn" onclick="showExportPanel()" style="margin-left:8px;">Export HTML</button>
+        </div>
+
+        <!-- Export modal -->
+        <div id="exportOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:999;" onclick="closeExportPanel()"></div>
+        <div id="exportPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3136; padding:24px; border-radius:10px; z-index:1000; box-shadow:0 6px 24px rgba(0,0,0,0.8); min-width:300px;">
+            <h3 style="margin-top:0; color:#90caf9;">Export as HTML</h3>
+            <label style="display:block; margin-bottom:12px;">
+                Mode:
+                <select id="exportMode" onchange="updateExportPanel()" style="margin-left:8px;">
+                    <option value="full">Full (all buffered data)</option>
+                    <option value="day">Per Day</option>
+                    <option value="week">Per Week</option>
+                </select>
+            </label>
+            <div id="exportPeriodRow" style="display:none; margin-bottom:12px;">
+                <label>
+                    Period:
+                    <select id="exportPeriod" style="margin-left:8px; min-width:140px;"></select>
+                </label>
+            </div>
+            <div style="margin-top:16px; display:flex; gap:8px;">
+                <button onclick="doExport()">Export &amp; Open</button>
+                <button onclick="closeExportPanel()" style="background:#444; color:#e0e0e0;">Cancel</button>
+            </div>
         </div>
         <h1>System Info Collector - Live Data</h1>
 
@@ -288,32 +313,35 @@
         let metadata = null;
 
         async function loadMetadata() {
-            try {
-                const response = await fetch('/api/metadata');
-                metadata = await response.json();
-                
-                // Update system info display
-                document.getElementById('cpuModel').textContent = metadata.system_info.cpu_model || 'N/A';
-                document.getElementById('cpuCores').textContent =
-                    `${metadata.system_info.cpu_physical_cores} / ${metadata.system_info.cpu_cores}`;
-                document.getElementById('totalMemory').textContent = `${metadata.system_info.total_memory_mb.toFixed(0)} MB`;
-                document.getElementById('totalSwap').textContent = `${metadata.system_info.total_swap_mb.toFixed(0)} MB`;
-                const gpuNames = metadata.system_info.gpu_names;
-                document.getElementById('gpuNames').textContent =
-                    (gpuNames && gpuNames.length > 0) ? gpuNames.join(', ') : 'None detected';
-                document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
-                document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
-                
-                // Update max limit info
+            if (window.STATIC_DATA) {
+                metadata = window.STATIC_DATA.metadata;
+            } else {
+                try {
+                    const response = await fetch('/api/metadata');
+                    metadata = await response.json();
+                } catch (error) {
+                    console.error('Error loading metadata:', error);
+                    return;
+                }
+            }
+
+            // Update system info display
+            document.getElementById('cpuModel').textContent = metadata.system_info.cpu_model || 'N/A';
+            document.getElementById('cpuCores').textContent =
+                `${metadata.system_info.cpu_physical_cores} / ${metadata.system_info.cpu_cores}`;
+            document.getElementById('totalMemory').textContent = `${metadata.system_info.total_memory_mb.toFixed(0)} MB`;
+            document.getElementById('totalSwap').textContent = `${metadata.system_info.total_swap_mb.toFixed(0)} MB`;
+            const gpuNames = metadata.system_info.gpu_names;
+            document.getElementById('gpuNames').textContent =
+                (gpuNames && gpuNames.length > 0) ? gpuNames.join(', ') : 'None detected';
+            document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
+            document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
+
+            if (!window.STATIC_DATA) {
                 const maxLimitInfo = document.getElementById('maxLimitInfo');
                 maxLimitInfo.textContent = `(max: ${metadata.max_buffer_size})`;
-                
-                // Update limit input max value
                 const limitInput = document.getElementById('limitInput');
                 limitInput.max = metadata.max_buffer_size;
-                
-            } catch (error) {
-                console.error('Error loading metadata:', error);
             }
         }
 
@@ -334,23 +362,36 @@
         }
 
         async function loadData() {
-            const limitInput = document.getElementById('limitInput');
-            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
             const errorDiv = document.getElementById('error');
             const dataContainer = document.getElementById('dataContainer');
-            
+
+            if (window.STATIC_DATA) {
+                errorDiv.style.display = 'none';
+                const pts = window.STATIC_DATA.data || [];
+                if (pts.length > 0) {
+                    displayTable(pts);
+                } else {
+                    dataContainer.innerHTML = '<div class="loading">No data available</div>';
+                }
+                document.getElementById('stats').innerHTML =
+                    `<strong>Data points:</strong> ${pts.length}`;
+                return;
+            }
+
+            const limitInput = document.getElementById('limitInput');
+            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
+
             try {
                 errorDiv.style.display = 'none';
-                
                 const response = await fetch(`/api/data/recent?limit=${limit}`);
                 const result = await response.json();
-                
+
                 if (result.data && result.data.length > 0) {
                     displayTable(result.data);
                 } else {
                     dataContainer.innerHTML = '<div class="loading">No data available</div>';
                 }
-                
+
                 await loadStats();
                 await loadTopData();
             } catch (error) {
@@ -880,11 +921,21 @@
         }
 
         async function loadTopData() {
-            const limitInput = document.getElementById('limitInput');
-            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
-            try {
-                const response = await fetch(`/api/top/recent?limit=${limit}`);
-                const result = await response.json();
+            let result;
+            if (window.STATIC_DATA) {
+                result = { data: window.STATIC_DATA.top_data || [] };
+            } else {
+                const limitInput = document.getElementById('limitInput');
+                const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
+                try {
+                    const response = await fetch(`/api/top/recent?limit=${limit}`);
+                    result = await response.json();
+                } catch (error) {
+                    console.error('Error loading top process data:', error);
+                    return;
+                }
+            }
+            {
                 if (!result.data || result.data.length === 0) {
                     ['topCpuChartContainer', 'topRamChartContainer'].forEach(id => {
                         document.getElementById(id).style.display = 'none';
@@ -944,17 +995,75 @@
                 } else {
                     document.getElementById('topRamChartContainer').style.display = 'none';
                 }
-            } catch (error) {
-                console.error('Error loading top process data:', error);
             }
+        }
+
+        // ── Export panel ──────────────────────────────────────────────────────
+
+        function closeExportPanel() {
+            document.getElementById('exportPanel').style.display = 'none';
+            document.getElementById('exportOverlay').style.display = 'none';
+        }
+
+        async function showExportPanel() {
+            try {
+                const resp = await fetch('/api/export/dates');
+                window._exportDates = await resp.json();
+            } catch(e) {
+                window._exportDates = { days: [], weeks: [] };
+            }
+            document.getElementById('exportMode').value = 'full';
+            updateExportPanel();
+            document.getElementById('exportOverlay').style.display = '';
+            document.getElementById('exportPanel').style.display = '';
+        }
+
+        function updateExportPanel() {
+            const mode = document.getElementById('exportMode').value;
+            const periodRow = document.getElementById('exportPeriodRow');
+            const periodSelect = document.getElementById('exportPeriod');
+
+            if (mode === 'day' || mode === 'week') {
+                const periods = mode === 'day'
+                    ? (window._exportDates?.days || [])
+                    : (window._exportDates?.weeks || []);
+                periodSelect.innerHTML = periods.map(p => `<option value="${p}">${p}</option>`).join('');
+                periodRow.style.display = '';
+            } else {
+                periodRow.style.display = 'none';
+            }
+        }
+
+        function doExport() {
+            const mode = document.getElementById('exportMode').value;
+            const limitEl = document.getElementById('limitInput');
+            const limit = limitEl ? (parseInt(limitEl.value) || 10000) : 10000;
+            let url = `/api/export/html?mode=${mode}&limit=${limit}`;
+
+            if (mode === 'day') {
+                const period = document.getElementById('exportPeriod').value;
+                if (period) url += `&date=${encodeURIComponent(period)}`;
+            } else if (mode === 'week') {
+                const period = document.getElementById('exportPeriod').value;
+                if (period) url += `&week=${encodeURIComponent(period)}`;
+            }
+
+            window.open(url, '_blank');
+            closeExportPanel();
         }
 
         // Initialize
         document.addEventListener('DOMContentLoaded', async function() {
+            if (window.STATIC_DATA) {
+                document.querySelector('.controls').style.display = 'none';
+                document.getElementById('exportBtn').style.display = 'none';
+            }
             await loadMetadata();
             await loadData();
             await loadTopData();
-            setupAutoRefresh();
+            if (!window.STATIC_DATA) {
+                setupAutoRefresh();
+            }
         });
     </script>
 </body>

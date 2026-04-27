@@ -242,10 +242,10 @@ fn parse_header(
             if let Ok(idx) = rest.parse::<usize>() {
                 custom_names.insert(idx, val.clone());
             }
-        } else if let Some(rest) = key.strip_prefix("DISK_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                disk_names.insert(idx, val.clone());
-            }
+        } else if let Some(rest) = key.strip_prefix("DISK_")
+            && let Ok(idx) = rest.parse::<usize>()
+        {
+            disk_names.insert(idx, val.clone());
         }
     }
 

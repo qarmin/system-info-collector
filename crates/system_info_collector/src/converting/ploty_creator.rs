@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::time::Instant;
 
 use anyhow::{Context, Error};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use log::info;
 use plotly::common::Title;
 use plotly::layout::themes::PLOTLY_DARK;
@@ -12,7 +12,7 @@ use plotly::{Plot, Scatter};
 use regex::Regex;
 use system_info_collector_core::enums::{DataType, GeneralInfoGroup};
 use system_info_collector_core::model::{CollectedItemModels, TopProcessData};
-use system_info_collector_core::settings::ConvertSettings;
+use system_info_collector_core::settings::{ConvertSettings, SplitMode};
 use time::UtcOffset;
 
 use crate::converting::csv_file_loader::load_csv_results;
@@ -25,24 +25,124 @@ pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Erro
     let timezone_ms = local_timezone_ms();
 
     let time_start = Instant::now();
-    save_plot_into_file(&loaded_results, settings, timezone_ms)?;
-    info!("Creating plot took {:?}", time_start.elapsed());
 
-    // Generate a separate HTML for each top-N process dataset.
-    if let Some(top) = &loaded_results.top_cpu_processes {
-        let path = top_process_plot_path(&settings.plot_path, "cpu");
-        info!("Creating top-CPU process plot: {path}");
-        save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "CPU", &path, settings)?;
-    }
-    if let Some(top) = &loaded_results.top_ram_processes {
-        let path = top_process_plot_path(&settings.plot_path, "ram");
-        info!("Creating top-RAM process plot: {path}");
-        save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "RAM", &path, settings)?;
+    if settings.split_mode == SplitMode::Full {
+        save_plot_into_file(&loaded_results, settings, timezone_ms)?;
+        info!("Creating plot took {:?}", time_start.elapsed());
+
+        // Generate a separate HTML for each top-N process dataset.
+        if let Some(top) = &loaded_results.top_cpu_processes {
+            let path = top_process_plot_path(&settings.plot_path, "cpu");
+            info!("Creating top-CPU process plot: {path}");
+            save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "CPU", &path, settings)?;
+        }
+        if let Some(top) = &loaded_results.top_ram_processes {
+            let path = top_process_plot_path(&settings.plot_path, "ram");
+            info!("Creating top-RAM process plot: {path}");
+            save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "RAM", &path, settings)?;
+        }
+
+        if settings.open_plot_file {
+            info!("Opening file {}", settings.plot_path);
+            open::that(&settings.plot_path).context(format!("Failed to open {}", settings.plot_path))?;
+        }
+    } else {
+        split_and_save_plots(&loaded_results, settings, timezone_ms)?;
+        info!("Creating split plots took {:?}", time_start.elapsed());
     }
 
-    if settings.open_plot_file {
-        info!("Opening file {}", settings.plot_path);
-        open::that(&settings.plot_path).context(format!("Failed to open {}", settings.plot_path))?;
+    Ok(())
+}
+
+// ── split-mode helpers ────────────────────────────────────────────────────────
+
+fn abs_ts_to_naive_date(abs_ts: f64) -> Option<NaiveDate> {
+    DateTime::from_timestamp(abs_ts as i64, 0).map(|dt: DateTime<Utc>| dt.date_naive())
+}
+
+fn period_plot_path(base_path: &str, period: &str) -> String {
+    if let Some(stem) = base_path.strip_suffix(".html") {
+        format!("{stem}_{period}.html")
+    } else {
+        format!("{base_path}_{period}.html")
+    }
+}
+
+/// Return a new `CollectedItemModels` containing only the rows at `indices`.
+///
+/// `CPU_USAGE_PER_CORE` is stored transposed (one entry per core, semicolon-joined
+/// timestamps), so it is handled separately.
+fn slice_model_by_indices(model: &CollectedItemModels, indices: &[usize]) -> CollectedItemModels {
+    let mut new_data: HashMap<DataType, Vec<String>> = HashMap::default();
+
+    for (dt, values) in &model.collected_data {
+        if *dt == DataType::CPU_USAGE_PER_CORE {
+            // Each element is "v_ts0;v_ts1;..." for one core — slice the time axis.
+            let sliced: Vec<String> = values
+                .iter()
+                .map(|core_str| {
+                    let parts: Vec<&str> = core_str.split(';').collect();
+                    indices.iter().filter_map(|&i| parts.get(i).copied()).collect::<Vec<_>>().join(";")
+                })
+                .collect();
+            new_data.insert(dt.clone(), sliced);
+        } else {
+            let sliced: Vec<String> = indices.iter().filter_map(|&i| values.get(i).cloned()).collect();
+            new_data.insert(dt.clone(), sliced);
+        }
+    }
+
+    CollectedItemModels {
+        collected_data: new_data,
+        collected_groups: model.collected_groups.clone(),
+        memory_total: model.memory_total,
+        swap_total: model.swap_total,
+        cpu_core_count: model.cpu_core_count,
+        check_interval: model.check_interval,
+        start_time: model.start_time,
+        cpu_model: model.cpu_model.clone(),
+        gpu_names: model.gpu_names.clone(),
+        gpu_vram_mb: model.gpu_vram_mb.clone(),
+        disk_names: model.disk_names.clone(),
+        top_cpu_processes: None,
+        top_ram_processes: None,
+    }
+}
+
+fn split_and_save_plots(model: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
+    let timestamps = model
+        .collected_data
+        .get(&DataType::SECONDS_SINCE_START)
+        .context("Missing SECONDS_SINCE_START column")?;
+
+    // Group row indices by the period key (day or week).
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, ts_str) in timestamps.iter().enumerate() {
+        if let Ok(ts) = ts_str.parse::<f64>()
+            && let Some(date) = abs_ts_to_naive_date(ts + model.start_time)
+        {
+            let key = match settings.split_mode {
+                SplitMode::PerDay => date.format("%Y-%m-%d").to_string(),
+                SplitMode::PerWeek => format!("{:04}-W{:02}", date.iso_week().year(), date.iso_week().week()),
+                SplitMode::Full => unreachable!(),
+            };
+            groups.entry(key).or_default().push(i);
+        }
+    }
+
+    info!("Split mode: generating {} file(s)", groups.len());
+
+    for (period_key, indices) in &groups {
+        let subset = slice_model_by_indices(model, indices);
+        let period_path = period_plot_path(&settings.plot_path, period_key);
+        let period_settings = ConvertSettings {
+            plot_path: period_path.clone(),
+            split_mode: SplitMode::Full,
+            open_plot_file: false,
+            ..settings.clone()
+        };
+        info!("  {period_path} ({} points)", indices.len());
+        save_plot_into_file(&subset, &period_settings, timezone_ms)?;
     }
 
     Ok(())
@@ -381,19 +481,19 @@ fn build_sentinel_trace(values: &[Option<f64>], dates: &[Option<DateTime<Utc>>])
         let block_end = i - 1; // inclusive
 
         // Gap separator between consecutive blocks so plotly doesn't draw a line.
-        if !xs.is_empty() {
-            if let Some(Some(dt)) = dates.get(block_start) {
-                xs.push(*dt);
-                ys.push(None);
-            }
+        if !xs.is_empty()
+            && let Some(Some(dt)) = dates.get(block_start)
+        {
+            xs.push(*dt);
+            ys.push(None);
         }
 
         // -1 sentinel one tick before the block.
-        if block_start > 0 {
-            if let Some(Some(dt)) = dates.get(block_start - 1) {
-                xs.push(*dt);
-                ys.push(Some(-1.0));
-            }
+        if block_start > 0
+            && let Some(Some(dt)) = dates.get(block_start - 1)
+        {
+            xs.push(*dt);
+            ys.push(Some(-1.0));
         }
 
         // Actual block values.
@@ -405,11 +505,11 @@ fn build_sentinel_trace(values: &[Option<f64>], dates: &[Option<DateTime<Utc>>])
         }
 
         // -1 sentinel one tick after the block.
-        if block_end + 1 < n {
-            if let Some(Some(dt)) = dates.get(block_end + 1) {
-                xs.push(*dt);
-                ys.push(Some(-1.0));
-            }
+        if block_end + 1 < n
+            && let Some(Some(dt)) = dates.get(block_end + 1)
+        {
+            xs.push(*dt);
+            ys.push(Some(-1.0));
         }
     }
 

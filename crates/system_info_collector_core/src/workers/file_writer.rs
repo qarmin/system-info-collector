@@ -271,12 +271,12 @@ pub async fn run<F>(
             break;
         }
 
-        if !settings.disable_instant_flushing {
-            if let Err(e) = data_file.flush().context(format!("Failed to flush {}", settings.convert.data_path)) {
-                error!("{e}");
-                shutdown.store(true, Ordering::Relaxed);
-                break;
-            }
+        if !settings.disable_instant_flushing
+            && let Err(e) = data_file.flush().context(format!("Failed to flush {}", settings.convert.data_path))
+        {
+            error!("{e}");
+            shutdown.store(true, Ordering::Relaxed);
+            break;
         }
 
         // Write top-N rows (best-effort: errors are logged but don't stop collection).
@@ -607,9 +607,7 @@ fn write_top_n_row(file: &mut BufWriter<File>, timestamp: f64, entries: &[(Strin
         error!("Failed to write top-N row: {e}");
         return;
     }
-    if flush {
-        if let Err(e) = file.flush() {
-            error!("Failed to flush top-N file: {e}");
-        }
+    if flush && let Err(e) = file.flush() {
+        error!("Failed to flush top-N file: {e}");
     }
 }

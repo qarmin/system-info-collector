@@ -1,7 +1,7 @@
 use std::process;
 use std::time::SystemTime;
 
-use system_info_collector_core::settings::{CollectSettings, ConvertSettings, FindingStruct};
+use system_info_collector_core::settings::{CollectSettings, ConvertSettings, FindingStruct, SplitMode};
 
 use crate::cli::{CollectArgs, ConvertArgs};
 
@@ -16,6 +16,11 @@ pub fn build_convert_settings(args: ConvertArgs) -> ConvertSettings {
         plot_height: args.plot.plot_height,
         white_plot_mode: args.plot.white_plot_mode,
         open_plot_file: args.plot.open_plot_file,
+        split_mode: match args.split_mode.as_str() {
+            "per-day" => SplitMode::PerDay,
+            "per-week" => SplitMode::PerWeek,
+            _ => SplitMode::Full,
+        },
     }
 }
 
@@ -48,6 +53,7 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         plot_height: args.plot.plot_height,
         white_plot_mode: args.plot.white_plot_mode,
         open_plot_file: args.plot.open_plot_file,
+        split_mode: SplitMode::Full,
     };
 
     if args.plot.open_plot_file && !args.convert_after {

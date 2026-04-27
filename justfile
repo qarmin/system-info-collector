@@ -45,6 +45,10 @@ show_data ip_address:
     scp -O root@{{ ip_address }}:/home/root/data_collector/data.csv .
     cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o
 
+show_data_custom ip_address path:
+    #scp -O {{ ip_address }}:{{ path }} .
+    cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o --split-mode per-day
+
 show:
     rm *.html || true
     # If all data files are present, show them together, otherwise show only the main one
@@ -108,3 +112,6 @@ publish:
     cd crates/system_info_collector_core && cargo publish
     cd crates/system_info_collector && cargo publish --dry-run
     cd crates/system_info_collector && cargo publish
+
+install:
+    cargo install --path crates/system_info_collector

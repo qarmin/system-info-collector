@@ -236,6 +236,14 @@ pub struct ConvertArgs {
 
     #[command(flatten)]
     pub plot: PlotArgs,
+
+    #[arg(
+        long,
+        default_value = "full",
+        value_name = "SPLIT_MODE",
+        help = "How to split the output: 'full' (single file), 'per-day' (one file per calendar day), 'per-week' (one file per ISO week)."
+    )]
+    pub split_mode: String,
 }
 
 pub(crate) fn parse_cli() -> Args {

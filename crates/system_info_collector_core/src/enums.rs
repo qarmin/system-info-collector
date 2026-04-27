@@ -149,57 +149,57 @@ impl DataType {
             _ => {
                 if let Some(rest) = s.strip_prefix("GPU_") {
                     let parts: Vec<&str> = rest.splitn(2, '_').collect();
-                    if parts.len() == 2 {
-                        if let Ok(idx) = parts[0].parse::<usize>() {
-                            let name = gpu_names.get(&idx).cloned().unwrap_or_else(|| format!("GPU {idx}"));
-                            return match parts[1] {
-                                "UTIL" => Some(Self::GPU_N_UTIL((idx, name))),
-                                "VRAM_MB" => Some(Self::GPU_N_VRAM_MB((idx, name))),
-                                "TEMP_C" => Some(Self::GPU_N_TEMP_C((idx, name))),
-                                _ => None,
-                            };
-                        }
+                    if parts.len() == 2
+                        && let Ok(idx) = parts[0].parse::<usize>()
+                    {
+                        let name = gpu_names.get(&idx).cloned().unwrap_or_else(|| format!("GPU {idx}"));
+                        return match parts[1] {
+                            "UTIL" => Some(Self::GPU_N_UTIL((idx, name))),
+                            "VRAM_MB" => Some(Self::GPU_N_VRAM_MB((idx, name))),
+                            "TEMP_C" => Some(Self::GPU_N_TEMP_C((idx, name))),
+                            _ => None,
+                        };
                     }
                 }
                 if let Some(rest) = s.strip_prefix("NET_") {
                     let parts: Vec<&str> = rest.splitn(2, '_').collect();
-                    if parts.len() == 2 {
-                        if let Ok(idx) = parts[0].parse::<usize>() {
-                            let name = iface_names.get(&idx).cloned().unwrap_or_else(|| format!("iface{idx}"));
-                            return match parts[1] {
-                                "RX_BPS" => Some(Self::NET_N_RX_BPS((idx, name))),
-                                "TX_BPS" => Some(Self::NET_N_TX_BPS((idx, name))),
-                                _ => None,
-                            };
-                        }
+                    if parts.len() == 2
+                        && let Ok(idx) = parts[0].parse::<usize>()
+                    {
+                        let name = iface_names.get(&idx).cloned().unwrap_or_else(|| format!("iface{idx}"));
+                        return match parts[1] {
+                            "RX_BPS" => Some(Self::NET_N_RX_BPS((idx, name))),
+                            "TX_BPS" => Some(Self::NET_N_TX_BPS((idx, name))),
+                            _ => None,
+                        };
                     }
                 }
                 if let Some(rest) = s.strip_prefix("CUSTOM_") {
                     let parts: Vec<&str> = rest.splitn(2, '_').collect();
-                    if parts.len() == 2 {
-                        if let Ok(idx) = parts[0].parse::<usize>() {
-                            let name = custom_names.get(&idx).cloned().unwrap_or_else(|| format!("custom{idx}"));
-                            return match parts[1] {
-                                "CPU" => Some(Self::CUSTOM_CPU((idx, name))),
-                                "MEMORY" => Some(Self::CUSTOM_MEMORY((idx, name))),
-                                _ => None,
-                            };
-                        }
+                    if parts.len() == 2
+                        && let Ok(idx) = parts[0].parse::<usize>()
+                    {
+                        let name = custom_names.get(&idx).cloned().unwrap_or_else(|| format!("custom{idx}"));
+                        return match parts[1] {
+                            "CPU" => Some(Self::CUSTOM_CPU((idx, name))),
+                            "MEMORY" => Some(Self::CUSTOM_MEMORY((idx, name))),
+                            _ => None,
+                        };
                     }
                 }
                 if let Some(rest) = s.strip_prefix("DISK_") {
                     // "DISK_0_USED_MB" → strip "DISK_" → "0_USED_MB"
                     // splitn(2, '_') → ["0", "USED_MB"]
                     let parts: Vec<&str> = rest.splitn(2, '_').collect();
-                    if parts.len() == 2 {
-                        if let Ok(idx) = parts[0].parse::<usize>() {
-                            let name = disk_names.get(&idx).cloned().unwrap_or_else(|| format!("disk{idx}"));
-                            return match parts[1] {
-                                "USED_GB" => Some(Self::DISK_N_USED_GB((idx, name))),
-                                "AVAIL_GB" => Some(Self::DISK_N_AVAIL_GB((idx, name))),
-                                _ => None,
-                            };
-                        }
+                    if parts.len() == 2
+                        && let Ok(idx) = parts[0].parse::<usize>()
+                    {
+                        let name = disk_names.get(&idx).cloned().unwrap_or_else(|| format!("disk{idx}"));
+                        return match parts[1] {
+                            "USED_GB" => Some(Self::DISK_N_USED_GB((idx, name))),
+                            "AVAIL_GB" => Some(Self::DISK_N_AVAIL_GB((idx, name))),
+                            _ => None,
+                        };
                     }
                 }
                 None

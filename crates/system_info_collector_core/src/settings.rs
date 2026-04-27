@@ -6,6 +6,18 @@ pub struct FindingStruct {
     pub search_text: String,
 }
 
+/// How to split the output when converting a CSV to HTML.
+#[derive(Default, Clone, Debug, PartialEq)]
+pub enum SplitMode {
+    /// Single output file containing all data.
+    #[default]
+    Full,
+    /// One output file per calendar day (local time).
+    PerDay,
+    /// One output file per ISO week (local time).
+    PerWeek,
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct ConvertSettings {
     /// Main data CSV (first -d argument).
@@ -17,6 +29,8 @@ pub struct ConvertSettings {
     pub plot_height: u32,
     pub white_plot_mode: bool,
     pub open_plot_file: bool,
+    /// How to split the output into multiple HTML files.
+    pub split_mode: SplitMode,
 }
 
 #[derive(Default, Clone, Debug)]

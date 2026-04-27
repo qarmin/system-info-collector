@@ -212,11 +212,9 @@ async fn main() {
                 process::exit(1);
             }
 
-            if convert_after {
-                if let Err(e) = load_results_and_save_plot(&convert_settings) {
-                    error!("{e}");
-                    process::exit(1);
-                }
+            if convert_after && let Err(e) = load_results_and_save_plot(&convert_settings) {
+                error!("{e}");
+                process::exit(1);
             }
         }
 
