@@ -183,11 +183,11 @@ pub struct CollectArgs {
     #[arg(
         short = 'l',
         long,
-        default_value = "10000",
-        value_name = "MAX_RESULTS",
-        help = "Maximum data points held in the server buffer."
+        default_value = "86400",
+        value_name = "SECONDS",
+        help = "How much history the live web view keeps in memory, in seconds (default 86400 = 24 h). The sample count is derived from --check-interval. Exports are unaffected - they always read the whole CSV file."
     )]
-    pub max_results: usize,
+    pub buffer_seconds: f32,
 
     #[arg(short = 'C', long, help = "Convert to HTML plot after collection finishes.")]
     pub convert_after: bool,

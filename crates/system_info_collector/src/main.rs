@@ -18,11 +18,14 @@ use sysinfo::System;
 use system_info_collector_core::discovery::{list_real_disks, list_real_interfaces};
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode};
+use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
+use system_info_collector_core::workers::file_writer::top_n_path;
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
 use crate::cli::{Commands, parse_cli};
 use crate::converting::ploty_creator::load_results_and_save_plot;
 use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemInfo, SystemMetadata};
+use crate::serving::server::ExportPaths;
 use crate::settings::{build_collect_settings, build_convert_settings};
 
 mod cli;
@@ -81,58 +84,85 @@ async fn main() {
             // Build the HTTP data buffer before starting the engine so we can
             // pass a clone to the on_row callback.
             let data_buffer: Option<DataBuffer> = if settings.serve {
-                let buffer = DataBuffer::new(settings.max_results);
+                let buffer_capacity = settings.buffer_capacity();
+                let covered_hours = buffer_capacity as f32 * settings.check_interval / 3600.0;
+                info!(
+                    "Live view buffer: {buffer_capacity} samples (~{covered_hours:.1} h at {}s interval)",
+                    settings.check_interval
+                );
+                if (buffer_capacity as f32 * settings.check_interval) < settings.buffer_seconds - 1.0 {
+                    warn!(
+                        "Requested {}s of live history needs more than {MAX_BUFFER_SAMPLES} samples - capped to ~{covered_hours:.1} h",
+                        settings.buffer_seconds
+                    );
+                }
+                let buffer = DataBuffer::new(buffer_capacity);
 
                 let interfaces = engine.discovery().interfaces.clone();
                 let disks = engine.discovery().disks.clone();
 
-                // Build column headers that match the expanded per-GPU / per-interface
-                // format produced by file_writer, so the JS chart detector can find them.
-                let mut column_headers = vec!["Timestamp".to_string()];
+                // Mirror the expanded per-GPU / per-interface column layout produced by
+                // file_writer, so the chart detector in the web UI finds the columns.
+                let mut data_types = vec![DataType::SECONDS_SINCE_START];
                 for mode in &settings.collection_mode {
                     match mode {
                         SimpleDataCollectionMode::GPU_UTILIZATION => {
                             for (idx, name) in gpu_names.iter().enumerate() {
-                                column_headers.push(DataType::GPU_N_UTIL((idx, name.clone())).column_name());
+                                data_types.push(DataType::GPU_N_UTIL((idx, name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::GPU_MEMORY_USED => {
                             for (idx, name) in gpu_names.iter().enumerate() {
-                                column_headers.push(DataType::GPU_N_VRAM_MB((idx, name.clone())).column_name());
+                                data_types.push(DataType::GPU_N_VRAM_MB((idx, name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::GPU_TEMPERATURE => {
                             for (idx, name) in gpu_names.iter().enumerate() {
-                                column_headers.push(DataType::GPU_N_TEMP_C((idx, name.clone())).column_name());
+                                data_types.push(DataType::GPU_N_TEMP_C((idx, name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
                             for iface in &interfaces {
-                                column_headers.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                                data_types.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
                             for iface in &interfaces {
-                                column_headers.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                                data_types.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_USED => {
                             for disk in &disks {
-                                column_headers.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                                data_types.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_AVAILABLE => {
                             for disk in &disks {
-                                column_headers.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                                data_types.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())));
                             }
                         }
-                        other => column_headers.push(other.to_string()),
+                        SimpleDataCollectionMode::CPU_USAGE_TOTAL => data_types.push(DataType::CPU_USAGE_TOTAL),
+                        SimpleDataCollectionMode::CPU_USAGE_PER_CORE => data_types.push(DataType::CPU_USAGE_PER_CORE),
+                        SimpleDataCollectionMode::SWAP_FREE => data_types.push(DataType::SWAP_FREE),
+                        SimpleDataCollectionMode::SWAP_USED => data_types.push(DataType::SWAP_USED),
+                        SimpleDataCollectionMode::MEMORY_USED => data_types.push(DataType::MEMORY_USED),
+                        SimpleDataCollectionMode::MEMORY_FREE => data_types.push(DataType::MEMORY_FREE),
+                        SimpleDataCollectionMode::MEMORY_AVAILABLE => data_types.push(DataType::MEMORY_AVAILABLE),
                     }
                 }
-                for p in &settings.process_cmd_to_search {
-                    column_headers.push(format!("{} CPU", p.graph_name));
-                    column_headers.push(format!("{} Memory", p.graph_name));
+                for (idx, p) in settings.process_cmd_to_search.iter().enumerate() {
+                    data_types.push(DataType::CUSTOM_CPU((idx, p.graph_name.clone())));
+                    data_types.push(DataType::CUSTOM_MEMORY((idx, p.graph_name.clone())));
                 }
+
+                // Display names for the web UI - identical to the CSV column names except
+                // for tracked processes, which get their user-supplied label.
+                let mut column_headers = vec!["Timestamp".to_string()];
+                column_headers.extend(data_types.iter().skip(1).map(|dt| match dt {
+                    DataType::CUSTOM_CPU((_, name)) => format!("{name} CPU"),
+                    DataType::CUSTOM_MEMORY((_, name)) => format!("{name} Memory"),
+                    other => other.column_name(),
+                }));
 
                 let metadata = SystemMetadata {
                     system_info: SystemInfo {
@@ -146,9 +176,24 @@ async fn main() {
                         app_version: env!("CARGO_PKG_VERSION").to_string(),
                     },
                     column_headers,
-                    max_buffer_size: settings.max_results,
+                    max_buffer_size: buffer_capacity,
+                    check_interval: settings.check_interval,
                 };
                 buffer.set_metadata(metadata);
+
+                // Reports are rendered from the CSV on disk, so the server needs to know
+                // where this run writes it.
+                let export_paths = ExportPaths {
+                    data_path: settings.convert.data_path.clone(),
+                    extra_data_paths: if settings.top_n_processes > 0 {
+                        vec![
+                            top_n_path(&settings.convert.data_path, "cpu"),
+                            top_n_path(&settings.convert.data_path, "ram"),
+                        ]
+                    } else {
+                        vec![]
+                    },
+                };
 
                 // Start the HTTP server in its own OS thread with an independent
                 // Tokio runtime so it never blocks data collection.
@@ -158,7 +203,7 @@ async fn main() {
                     info!("Starting HTTP server thread on port {port}");
                     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime for server");
                     runtime.block_on(async move {
-                        if let Err(e) = crate::serving::server::start_server(port, server_buffer).await {
+                        if let Err(e) = crate::serving::server::start_server(port, server_buffer, export_paths).await {
                             error!("Server error: {e}");
                         }
                     });
@@ -201,7 +246,7 @@ async fn main() {
                     env!("CARGO_PKG_VERSION"),
                     move |row| {
                         if let Some(ref buf) = data_buffer {
-                            buf.add_data_point(DataPoint::from_row(&row));
+                            buf.add_data_point(DataPoint::from_row(row));
                         }
                     },
                     on_top_row,

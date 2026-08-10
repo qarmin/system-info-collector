@@ -95,6 +95,28 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
     })
 }
 
+/// Read only the timestamp column of a data file, returning `(start_time, relative timestamps)`.
+///
+/// Used to list which days and weeks are available for export without paying
+/// for a full parse of every column.
+pub fn scan_timestamps(path: &str) -> Result<(f64, Vec<f64>), Error> {
+    let file = File::open(path).context(format!("Failed to open data file {path}"))?;
+    let mut lines_iter = BufReader::new(file).lines();
+
+    let (_, _, _, _, _, start_time) = parse_file_values_data(&mut lines_iter)?;
+    lines_iter
+        .next()
+        .context("Missing column header line")?
+        .context("Failed to read column header line")?;
+
+    let timestamps = lines_iter
+        .map_while(Result::ok)
+        .filter_map(|line| line.split(',').next().and_then(|s| s.parse::<f64>().ok()))
+        .collect();
+
+    Ok((start_time, timestamps))
+}
+
 /// Load a top-N process file.  Returns `(type_tag, data)` where type_tag is "CPU" or "RAM".
 pub fn load_top_process_file(path: &str) -> Result<(String, TopProcessData), Error> {
     let file = File::open(path).context(format!("Failed to open top-N file {path}"))?;

@@ -84,7 +84,7 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         convert_after: args.convert_after,
         serve: args.serve,
         port: args.port,
-        max_results: args.max_results.clamp(1, 100_000),
+        buffer_seconds: args.buffer_seconds.max(1.0),
         top_n_processes: args.top_n_processes,
         disk_mount_points: args.disk,
         all_disks: args.all_disks,

@@ -19,7 +19,15 @@ run:
 
 runs:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
-    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s -l 10000 --all-networks; firefox system_data_plot.html
+    cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s --all-networks; firefox system_data_plot.html
+
+runr:
+    # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
+    cargo run --release -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o --all-networks; firefox system_data_plot.html
+
+runrs:
+    # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
+    cargo run --release -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s --all-networks; firefox system_data_plot.html
 
 cross_arm_32:
     cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
@@ -71,7 +79,7 @@ all:
            disk-used disk-available \
            cpu-usage-per-core \
         --all-networks --all-disks -e "NEMO|nemo" \
-        -c 0.5 -s -l 10000 --top-n-processes 5
+        -c 0.5 -s --top-n-processes 5
     just show
 
 normal:
@@ -84,12 +92,12 @@ normal:
            gpu-utilization gpu-memory-used gpu-temperature \
            disk-used disk-available \
         --all-networks --all-disks -e "GNOME SHELL|gnome-shell" \
-        -c 0.5 -s -l 10000
+        -c 0.5 -s
 
 heavy:
     rm *.csv || true
     cargo run --release -p system_info_collector -- collect \
-        -m cpu-usage-total cpu-usage-per-core --top-n-processes 10 -c 2.0 -s -l 10000
+        -m cpu-usage-total cpu-usage-per-core --top-n-processes 10 -c 2.0 -s
         
 samplyrd:
     rm *.csv || true
@@ -102,7 +110,7 @@ samplyrd:
              gpu-utilization gpu-memory-used gpu-temperature \
              disk-used disk-available \
         --all-networks --all-disk \
-        -c 0.5 -s -l 10000 --top-n-processes 5
+        -c 0.5 -s --top-n-processes 5
         
 cleancsv:
     rm *.csv

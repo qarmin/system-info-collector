@@ -17,7 +17,7 @@ system_info_collector_core = { path = "../system_info_collector_core", version =
 
 time = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
-sysinfo = { version ="0.38", default-features = false, features = ["component", "network", "system"] }
+sysinfo = { version ="0.39", default-features = false, features = ["component", "network", "system"] }
 tokio = { version = "1.30", features = ["full"] }
 handsome_logger = "0.9"
 log = "0.4"
@@ -30,5 +30,6 @@ humansize = "2.1.3"
 clap = { version = "4.3", features = ["derive"] }
 regex = "1.9.3"
 os_info = "3.12.0"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 serde_json = "1.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

@@ -41,6 +41,8 @@ https://github.com/qarmin/system-info-collector/assets/41945903/7ac510b5-babf-4d
 
 During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lower than 0.1% - but it may increase when using more resource intensive options like tracking top N processes.
 
+Running with `--serve` adds the live buffer on top of that; see [The live buffer](#the-live-buffer).
+
 In collect mode, app only needs to read cpu/ram usage and then save it to file, so that is why it uses so little
 resources.
 
@@ -151,7 +153,7 @@ Collect GPU utilization, VRAM usage and temperature (NVIDIA via NVML, AMD/Intel 
 Start live HTTP server on port 5998 (open `http://localhost:5998/` in browser)
 
 ```
-./system_info_collector collect --serve --port 5998 --max-results 1000
+./system_info_collector collect --serve --port 5998 --buffer-seconds 86400
 ```
 
 Shows help about available arguments
@@ -267,10 +269,10 @@ The application has a built-in HTTP server that allows you to view live data in 
 
 ### How to start the server?
 
-Run with the `--serve` option (optionally with `--port` and `--max-results`):
+Run with the `--serve` option (optionally with `--port` and `--buffer-seconds`):
 
 ```
-./system_info_collector collect --serve --port 5998 --max-results 1000
+./system_info_collector collect --serve --port 5998 --buffer-seconds 86400
 ```
 
 After starting, open your browser and go to `http://localhost:5998/`.
@@ -279,10 +281,85 @@ After starting, open your browser and go to `http://localhost:5998/`.
 - **CPU chart** – total CPU usage and/or per-core breakdown (one line per core)
 - **RAM chart**
 - **GPU charts** – utilization, VRAM and temperature (one chart each, one line per GPU)
-- **Data table** – with text information about current metrics
-- **Auto-refresh** – ability to set the refresh interval or leave it to manual refresh
+- **Swap, network and disk charts**
+- **Top-N process charts** – when `--top-n-processes` is used
+- **Time range** – pick how much history to show, from 5 minutes up to 1 day
+- **Live updates over a websocket** – the full history is downloaded once on page load, after that the server
+  pushes each new tick over a connection that stays open; the browser appends it to the existing charts, so
+  nothing is polled, re-fetched or re-rendered from scratch
+- **Redraw interval** – data keeps arriving at the collection rate, but the charts are only repainted every
+  N seconds (1 / 2 / 5 / 10 / 30 / 60, default 5) because repainting is where the browser CPU goes
+- **Data table** – hidden behind a checkbox, because rendering thousands of rows is what makes the page
+  feel slow; when enabled only the newest 1000 rows are rendered
+- **Export** – server-side generated report downloaded as a file (see below)
 - **Dark mode**
 - **No external dependencies** – static files (e.g. Chart.js) are embedded in the binary and served by the backend
+
+### The live buffer
+
+The web view keeps recent samples in memory. Its size is set as a **duration**, not a sample count:
+
+```
+./system_info_collector collect --serve --buffer-seconds 86400   # 24 h, the default
+```
+
+The number of samples is derived from `--check-interval`, so changing the sampling rate does not require
+touching the buffer setting (24 h is 86400 samples at 1 s, 43200 at 2 s). It is capped at 1 000 000 samples;
+if the requested duration needs more, a warning at startup says how much is actually kept.
+
+Memory scales with the buffer: roughly 0.6-0.8 kB per sample depending on how many metrics are collected,
+so a full 24 h buffer at 1 s is in the 30-70 MB range. Shorten `--buffer-seconds` if that matters.
+
+**This limit only applies to the live view.** Exports read the CSV file, so they are never truncated by it.
+
+### Exporting from the web interface
+
+The **Export** button generates the file on the server and downloads it. Two formats are available:
+
+- **Plotly report** – the same HTML plot the `convert` command produces (including the top-N process charts,
+  embedded in the same document). Built from the **CSV file on disk**, so it covers the whole recorded
+  history regardless of `--buffer-seconds`
+- **Dashboard snapshot** – a self-contained copy of the live page with the data baked in and Chart.js
+  inlined. This one is a copy of what the page shows, so it *is* limited to the live buffer
+
+The period can be everything recorded, a relative window (15 minutes … 7 days) or one specific day / ISO week.
+
+A plotly report can additionally be split into **one file per day or per ISO week** (the same grouping as
+`convert --split-mode`), delivered as a single `.zip`.
+
+Exports over very long periods are thinned to at most 100 000 points, spread evenly so the report still
+covers the whole period instead of just its tail. The reduction is logged.
+
+### HTTP API
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/metadata` | hardware info, column headers, buffer size, check interval |
+| `GET /api/snapshot?seconds=<n>&limit=<n>` | history for the requested window plus buffer counters |
+| `GET /api/ws` | websocket upgrade - see below |
+| `GET /api/export/report?mode=full\|last\|day\|week&seconds=&date=&week=&split=day\|week` | plotly report download, `split` returns a zip of per-period files |
+| `GET /api/export/html?mode=…` | dashboard snapshot download |
+| `GET /api/export/dates` | days and ISO weeks present in the buffer |
+
+### Live update protocol
+
+`/api/ws` is requested **once** to upgrade the connection; from then on the connection stays open and the
+server pushes on its own — the client never asks for anything again. One frame is sent per collection tick,
+containing everything gathered in that tick:
+
+```json
+{"timestamp":4.1,"data":["4.1","100","15027.1"],"top":{"cpu":[{"name":"firefox","value":31.2}],"ram":[…]}}
+```
+
+`top` is omitted when `--top-n-processes` is not used.
+
+The frame is built and serialized **once per tick**, not once per client: all connected browsers share the
+same buffer and sending to each is only a socket write. When no browser is connected nothing is serialized
+at all. Measured on a 12-thread machine with `-c 0.1` and per-core CPU tracking: 0.24% CPU with nobody
+watching, 0.40% with one browser, 1.36% with sixteen.
+
+A client that cannot keep up is allowed to fall 64 frames behind, after which it skips to the newest data
+instead of replaying a backlog.
 
 ## License
 

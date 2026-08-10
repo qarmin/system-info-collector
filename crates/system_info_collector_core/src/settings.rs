@@ -33,6 +33,10 @@ pub struct ConvertSettings {
     pub split_mode: SplitMode,
 }
 
+/// Upper bound on live-buffer samples, so a short interval combined with a long
+/// buffer duration cannot exhaust memory.
+pub const MAX_BUFFER_SAMPLES: usize = 1_000_000;
+
 #[derive(Default, Clone, Debug)]
 pub struct CollectSettings {
     /// Main check interval (seconds) — how often file_writer writes a CSV row.
@@ -58,7 +62,9 @@ pub struct CollectSettings {
     // Server options
     pub serve: bool,
     pub port: u16,
-    pub max_results: usize,
+    /// How much history the live web-view buffer should hold, in seconds.
+    /// The number of samples is derived from this and `check_interval`.
+    pub buffer_seconds: f32,
     /// Number of top processes to track by CPU% and RAM (0 = disabled).
     pub top_n_processes: usize,
     /// Disk mount points or device names to track (empty + !all_disks = no disk monitoring).
@@ -73,4 +79,13 @@ pub struct CollectSettings {
     /// The reader fills them back in from the previous row.  Reduces file size significantly
     /// for slow-changing metrics.  Disable with --no-compact.
     pub compact_csv: bool,
+}
+
+impl CollectSettings {
+    /// Number of samples the live buffer needs to cover `buffer_seconds` at the
+    /// configured collection interval, capped at [`MAX_BUFFER_SAMPLES`].
+    pub fn buffer_capacity(&self) -> usize {
+        let interval = self.check_interval.max(0.1);
+        ((self.buffer_seconds / interval).ceil() as usize).clamp(1, MAX_BUFFER_SAMPLES)
+    }
 }

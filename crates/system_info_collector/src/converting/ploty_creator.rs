@@ -31,15 +31,19 @@ pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Erro
         info!("Creating plot took {:?}", time_start.elapsed());
 
         // Generate a separate HTML for each top-N process dataset.
-        if let Some(top) = &loaded_results.top_cpu_processes {
-            let path = top_process_plot_path(&settings.plot_path, "cpu");
-            info!("Creating top-CPU process plot: {path}");
-            save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "CPU", &path, settings)?;
-        }
-        if let Some(top) = &loaded_results.top_ram_processes {
-            let path = top_process_plot_path(&settings.plot_path, "ram");
-            info!("Creating top-RAM process plot: {path}");
-            save_top_process_plot_file(top, loaded_results.start_time, timezone_ms, "RAM", &path, settings)?;
+        for (top, kind, file_suffix) in [
+            (&loaded_results.top_cpu_processes, "CPU", "cpu"),
+            (&loaded_results.top_ram_processes, "RAM", "ram"),
+        ] {
+            let Some(top) = top else { continue };
+            let path = top_process_plot_path(&settings.plot_path, file_suffix);
+            let Some(plot) = build_top_process_plot(top, loaded_results.start_time, timezone_ms, kind, settings) else {
+                info!("No process data — skipping {path}");
+                continue;
+            };
+            info!("Creating top-{kind} process plot: {path}");
+            let html = minify_html(&apply_style(plot.to_html(), settings));
+            fs::write(&path, html.as_bytes()).context(format!("Failed to write top-process plot: {path}"))?;
         }
 
         if settings.open_plot_file {
@@ -109,6 +113,61 @@ fn slice_model_by_indices(model: &CollectedItemModels, indices: &[usize]) -> Col
     }
 }
 
+/// Build a model holding only the rows whose absolute timestamp is accepted by
+/// `keep`.
+///
+/// When more than `max_points` rows survive they are thinned to evenly spaced
+/// samples, so a long export still spans its whole period instead of covering
+/// only the tail of it.
+pub fn subset_by_time(model: &CollectedItemModels, keep: &dyn Fn(f64) -> bool, max_points: usize) -> CollectedItemModels {
+    let Some(timestamps) = model.collected_data.get(&DataType::SECONDS_SINCE_START) else {
+        return model.clone();
+    };
+
+    let mut indices: Vec<usize> = timestamps
+        .iter()
+        .enumerate()
+        .filter(|(_, ts)| ts.parse::<f64>().is_ok_and(|t| keep(t + model.start_time)))
+        .map(|(i, _)| i)
+        .collect();
+
+    let stride = indices.len().div_ceil(max_points.max(1)).max(1);
+    if stride > 1 {
+        info!(
+            "Export covers {} points, keeping every {stride} to stay under {max_points}",
+            indices.len()
+        );
+        indices = indices.into_iter().step_by(stride).collect();
+    }
+
+    let mut subset = slice_model_by_indices(model, &indices);
+    subset.top_cpu_processes = model.top_cpu_processes.as_ref().map(|t| subset_top(t, keep, model.start_time, stride));
+    subset.top_ram_processes = model.top_ram_processes.as_ref().map(|t| subset_top(t, keep, model.start_time, stride));
+    subset
+}
+
+fn subset_top(top: &TopProcessData, keep: &dyn Fn(f64) -> bool, start_time: f64, stride: usize) -> TopProcessData {
+    let indices: Vec<usize> = top
+        .timestamps
+        .iter()
+        .enumerate()
+        .filter(|(_, ts)| keep(**ts + start_time))
+        .map(|(i, _)| i)
+        .step_by(stride)
+        .collect();
+
+    TopProcessData {
+        n: top.n,
+        start_time: top.start_time,
+        timestamps: indices.iter().filter_map(|&i| top.timestamps.get(i).copied()).collect(),
+        ranks: top
+            .ranks
+            .iter()
+            .map(|rank| indices.iter().map(|&i| rank.get(i).cloned().flatten()).collect())
+            .collect(),
+    }
+}
+
 fn split_and_save_plots(model: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
     let timestamps = model
         .collected_data
@@ -172,9 +231,12 @@ fn minify_html(html: &str) -> String {
     regex.replace_all(html, "").into_owned()
 }
 
-fn apply_dark_style(mut html: String) -> String {
-    html = html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>");
-    html
+fn apply_style(html: String, settings: &ConvertSettings) -> String {
+    if settings.white_plot_mode {
+        html
+    } else {
+        html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>")
+    }
 }
 
 // ── per-chart legend injection ────────────────────────────────────────────────
@@ -236,7 +298,58 @@ enum ChartGroup {
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
     info!("Trying to create html file...");
 
-    let dates = loaded_results.collected_data[&DataType::SECONDS_SINCE_START]
+    let html = build_main_document(loaded_results, settings, timezone_ms, "")?;
+    fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
+
+    Ok(())
+}
+
+/// Build a single self-contained report: the main multi-chart plot plus, when
+/// present, the top-N process charts embedded in the same document.
+pub fn build_report_html(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<String, Error> {
+    let mut extra_body = String::new();
+
+    for (top, kind, div_id) in [
+        (&loaded_results.top_cpu_processes, "CPU", "top-cpu-plot"),
+        (&loaded_results.top_ram_processes, "RAM", "top-ram-plot"),
+    ] {
+        let Some(top) = top else { continue };
+        let Some(plot) = build_top_process_plot(top, loaded_results.start_time, timezone_ms, kind, settings) else {
+            continue;
+        };
+        extra_body.push_str(&format!(
+            "<h2 style=\"text-align: center;\">Top Processes - {kind}</h2>{}",
+            plot.to_inline_html(Some(div_id))
+        ));
+    }
+
+    build_main_document(loaded_results, settings, timezone_ms, &extra_body)
+}
+
+fn build_main_document(
+    loaded_results: &CollectedItemModels,
+    settings: &ConvertSettings,
+    timezone_ms: i64,
+    extra_body: &str,
+) -> Result<String, Error> {
+    let plot = build_main_plot(loaded_results, settings, timezone_ms)?;
+
+    let html = apply_style(plot.to_html(), settings);
+    let body_suffix = [notes_html(loaded_results), extra_body.to_string(), per_chart_legends_script().to_string()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let html = html.replace("</body>", &format!("{body_suffix}\n</body>"));
+
+    Ok(minify_html(&html))
+}
+
+fn build_main_plot(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<Plot, Error> {
+    let dates = loaded_results
+        .collected_data
+        .get(&DataType::SECONDS_SINCE_START)
+        .context("Missing SECONDS_SINCE_START column")?
         .iter()
         .map(|s| {
             if let Ok(t) = s.parse::<f64>() {
@@ -277,11 +390,10 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         create_disk_plot(&mut plot, &dates, loaded_results, i);
     }
 
-    let mut html = plot.to_html();
-    if !settings.white_plot_mode {
-        html = apply_dark_style(html);
-    }
+    Ok(plot)
+}
 
+fn notes_html(loaded_results: &CollectedItemModels) -> String {
     let cpu_label = if loaded_results.cpu_model.is_empty() {
         format!("CPU: {} cores", loaded_results.cpu_core_count)
     } else {
@@ -314,12 +426,7 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
         .iter()
         .map(|e| format!("<div style=\"text-align: center;\">{e}</div>"))
         .collect::<String>();
-    html = html.replace("</body>", &format!("{}\n{}\n</body>", &notes, per_chart_legends_script()));
-
-    let html = minify_html(&html);
-    fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
-
-    Ok(())
+    notes
 }
 
 fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSettings) -> (Layout, HashMap<ChartGroup, u32>) {
@@ -516,20 +623,12 @@ fn build_sentinel_trace(values: &[Option<f64>], dates: &[Option<DateTime<Utc>>])
     (xs, ys)
 }
 
-/// Render and write a standalone process plot to `path`.
-/// `kind` is "CPU" or "RAM" and drives the Y-axis label.
-fn save_top_process_plot_file(
-    top: &TopProcessData,
-    start_time: f64,
-    timezone_ms: i64,
-    kind: &str,
-    path: &str,
-    settings: &ConvertSettings,
-) -> Result<(), Error> {
+/// Build a standalone process plot.  `kind` is "CPU" or "RAM" and drives the
+/// Y-axis label.  Returns `None` when there is no process data to render.
+fn build_top_process_plot(top: &TopProcessData, start_time: f64, timezone_ms: i64, kind: &str, settings: &ConvertSettings) -> Option<Plot> {
     let traces = build_process_traces(top);
     if traces.is_empty() {
-        info!("No process data — skipping {path}");
-        return Ok(());
+        return None;
     }
 
     let y_title = if kind == "CPU" { "CPU Usage [%]" } else { "RAM [MB]" };
@@ -581,14 +680,7 @@ fn save_top_process_plot_file(
         plot.add_trace(trace);
     }
 
-    let mut html = plot.to_html();
-    if !settings.white_plot_mode {
-        html = apply_dark_style(html);
-    }
-    let html = minify_html(&html);
-    fs::write(path, html.as_bytes()).context(format!("Failed to write top-process plot: {path}"))?;
-
-    Ok(())
+    Some(plot)
 }
 
 // ── per-metric trace builders ─────────────────────────────────────────────────

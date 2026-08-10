@@ -74,6 +74,10 @@
             background-color: #23272a;
             border-radius: 4px;
             color: #e0e0e0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
         }
         .stats {
             margin: 20px 0;
@@ -137,8 +141,13 @@
             border-radius: 4px;
             margin: 10px 0;
         }
+        .hint {
+            color: #b0b0b0;
+            font-size: 0.85em;
+            margin-top: 8px;
+        }
         input, select, button {
-            margin: 5px;
+            margin: 0;
             padding: 8px;
             border: 1px solid #333;
             border-radius: 4px;
@@ -153,8 +162,24 @@
         button:hover {
             background-color: #1565c0;
         }
-        .auto-refresh {
-            color: #90caf9;
+        .conn-status {
+            font-size: 0.9em;
+            color: #b0b0b0;
+        }
+        .conn-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #757575;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .conn-dot.live {
+            background: #43a047;
+        }
+        .conn-dot.down {
+            background: #e53935;
         }
         .chart-container {
             width: 100%;
@@ -180,29 +205,53 @@
     <div class="container" id="mainContainer">
         <div style="text-align:right; margin-bottom:10px;">
             <button id="toggleWidthBtn" onclick="toggleFullWidth()">Full Width</button>
-            <button id="exportBtn" onclick="showExportPanel()" style="margin-left:8px;">Export HTML</button>
+            <button id="exportBtn" onclick="showExportPanel()" style="margin-left:8px;">Export</button>
         </div>
 
         <!-- Export modal -->
         <div id="exportOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:999;" onclick="closeExportPanel()"></div>
-        <div id="exportPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3136; padding:24px; border-radius:10px; z-index:1000; box-shadow:0 6px 24px rgba(0,0,0,0.8); min-width:300px;">
-            <h3 style="margin-top:0; color:#90caf9;">Export as HTML</h3>
+        <div id="exportPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3136; padding:24px; border-radius:10px; z-index:1000; box-shadow:0 6px 24px rgba(0,0,0,0.8); min-width:340px;">
+            <h3 style="margin-top:0; color:#90caf9;">Export report</h3>
             <label style="display:block; margin-bottom:12px;">
-                Mode:
-                <select id="exportMode" onchange="updateExportPanel()" style="margin-left:8px;">
-                    <option value="full">Full (all buffered data)</option>
-                    <option value="day">Per Day</option>
-                    <option value="week">Per Week</option>
+                Format:
+                <select id="exportFormat" onchange="updateExportPanel()" style="margin-left:8px; min-width:230px;">
+                    <option value="report">Plotly report (whole CSV file)</option>
+                    <option value="html">Dashboard snapshot (live buffer only)</option>
+                </select>
+            </label>
+            <label style="display:block; margin-bottom:12px;">
+                Period:
+                <select id="exportRange" onchange="updateExportPanel()" style="margin-left:8px; min-width:200px;">
+                    <option value="full">Everything recorded</option>
+                    <option value="last:900">Last 15 minutes</option>
+                    <option value="last:3600">Last 1 hour</option>
+                    <option value="last:7200">Last 2 hours</option>
+                    <option value="last:21600">Last 6 hours</option>
+                    <option value="last:43200">Last 12 hours</option>
+                    <option value="last:86400">Last 1 day</option>
+                    <option value="last:172800">Last 2 days</option>
+                    <option value="last:604800">Last 7 days</option>
+                    <option value="day">Specific day</option>
+                    <option value="week">Specific week</option>
+                </select>
+            </label>
+            <label style="display:block; margin-bottom:12px;">
+                Output:
+                <select id="exportSplit" style="margin-left:8px; min-width:200px;">
+                    <option value="">Single file</option>
+                    <option value="day">One file per day (zip)</option>
+                    <option value="week">One file per week (zip)</option>
                 </select>
             </label>
             <div id="exportPeriodRow" style="display:none; margin-bottom:12px;">
                 <label>
-                    Period:
-                    <select id="exportPeriod" style="margin-left:8px; min-width:140px;"></select>
+                    Choose:
+                    <select id="exportPeriod" style="margin-left:8px; min-width:160px;"></select>
                 </label>
             </div>
+            <div class="hint" id="exportSourceHint"></div>
             <div style="margin-top:16px; display:flex; gap:8px;">
-                <button onclick="doExport()">Export &amp; Open</button>
+                <button onclick="doExport()">Download</button>
                 <button onclick="closeExportPanel()" style="background:#444; color:#e0e0e0;">Cancel</button>
             </div>
         </div>
@@ -241,19 +290,22 @@
                 </div>
             </div>
         </div>
-        
-        <div class="controls">
+
+        <div class="controls" id="liveControls">
             <label>
-                Number of results: 
-                <input type="number" id="limitInput" value="200" min="1" max="10000">
-                <span id="maxLimitInfo"></span>
+                Time range:
+                <select id="rangeSelect"></select>
             </label>
-            <button onclick="loadData()">Refresh</button>
+            <span class="hint" id="bufferHint"></span>
             <label>
-                <input type="checkbox" id="autoRefresh" checked> Auto-refresh every
-                <input type="number" id="refreshInterval" value="5" min="1" max="60" style="width: 60px;">
-                seconds
+                <input type="checkbox" id="liveUpdates" checked> Live updates
             </label>
+            <label>
+                Redraw every:
+                <select id="redrawInterval"></select>
+            </label>
+            <span class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">connecting…</span></span>
+            <button onclick="reloadSnapshot()">Reload</button>
         </div>
 
         <div class="stats" id="stats">
@@ -303,29 +355,61 @@
 
         <div id="error" class="error" style="display: none;"></div>
 
-        <div id="dataContainer">
-            <div class="loading">Loading data...</div>
+        <div class="controls">
+            <label>
+                <input type="checkbox" id="showTable" onchange="toggleTable()"> Show raw data table
+            </label>
+            <span class="hint" id="tableHint">Hidden by default - rendering thousands of rows is slow.</span>
         </div>
+
+        <div id="dataContainer"></div>
     </div>
 
     <script>
-        let autoRefreshInterval;
+        const RANGES = [
+            ['Last 5 minutes', 300],
+            ['Last 15 minutes', 900],
+            ['Last 30 minutes', 1800],
+            ['Last 1 hour', 3600],
+            ['Last 2 hours', 7200],
+            ['Last 6 hours', 21600],
+            ['Last 12 hours', 43200],
+            ['Last 1 day', 86400],
+        ];
+        const DEFAULT_RANGE_SECONDS = 3600;
+        const REDRAW_INTERVALS = [1, 2, 5, 10, 30, 60];
+        const DEFAULT_REDRAW_SECONDS = 5;
+        const TABLE_MAX_ROWS = 1000;
+
         let metadata = null;
+        let socket = null;
+        let reconnectTimer = null;
+        let pendingUpdate = null;
+
+        const state = {
+            data: [],
+            top: [],
+            rangeSeconds: DEFAULT_RANGE_SECONDS,
+            redrawSeconds: DEFAULT_REDRAW_SECONDS,
+            totalCount: 0,
+            maxBufferSize: 0,
+            showTable: false,
+        };
+        const charts = {};
+        let chartSpecs = [];
+
+        const isStatic = () => !!window.STATIC_DATA;
+
+        // ── Data loading ──────────────────────────────────────────────────────
 
         async function loadMetadata() {
-            if (window.STATIC_DATA) {
+            if (isStatic()) {
                 metadata = window.STATIC_DATA.metadata;
             } else {
-                try {
-                    const response = await fetch('/api/metadata');
-                    metadata = await response.json();
-                } catch (error) {
-                    console.error('Error loading metadata:', error);
-                    return;
-                }
+                const response = await fetch('/api/metadata');
+                metadata = await response.json();
             }
 
-            // Update system info display
             document.getElementById('cpuModel').textContent = metadata.system_info.cpu_model || 'N/A';
             document.getElementById('cpuCores').textContent =
                 `${metadata.system_info.cpu_physical_cores} / ${metadata.system_info.cpu_cores}`;
@@ -336,64 +420,23 @@
                 (gpuNames && gpuNames.length > 0) ? gpuNames.join(', ') : 'None detected';
             document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
             document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
-
-            if (!window.STATIC_DATA) {
-                const maxLimitInfo = document.getElementById('maxLimitInfo');
-                maxLimitInfo.textContent = `(max: ${metadata.max_buffer_size})`;
-                const limitInput = document.getElementById('limitInput');
-                limitInput.max = metadata.max_buffer_size;
-            }
         }
 
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/data');
-                const data = await response.json();
-                
-                const statsDiv = document.getElementById('stats');
-                statsDiv.innerHTML = `
-                    <strong>Total data points:</strong> ${data.total_count} / ${data.max_buffer_size}<br>
-                    <strong>First record:</strong> ${data.first ? formatAbsoluteTimestamp(metadata?.system_info?.start_time + data.first.timestamp) : 'None'}<br>
-                    <strong>Last record:</strong> ${data.last ? formatAbsoluteTimestamp(metadata?.system_info?.start_time + data.last.timestamp) : 'None'}
-                `;
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
-        }
-
-        async function loadData() {
+        /// Full refresh of the displayed window.  Only called on page load, when the
+        /// time range changes and on manual reload - live data arrives via websocket.
+        async function reloadSnapshot() {
             const errorDiv = document.getElementById('error');
-            const dataContainer = document.getElementById('dataContainer');
-
-            if (window.STATIC_DATA) {
-                errorDiv.style.display = 'none';
-                const pts = window.STATIC_DATA.data || [];
-                if (pts.length > 0) {
-                    displayTable(pts);
-                } else {
-                    dataContainer.innerHTML = '<div class="loading">No data available</div>';
-                }
-                document.getElementById('stats').innerHTML =
-                    `<strong>Data points:</strong> ${pts.length}`;
-                return;
-            }
-
-            const limitInput = document.getElementById('limitInput');
-            const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
-
             try {
+                const query = state.rangeSeconds ? `?seconds=${state.rangeSeconds}` : '';
+                const response = await fetch(`/api/snapshot${query}`);
+                const snapshot = await response.json();
                 errorDiv.style.display = 'none';
-                const response = await fetch(`/api/data/recent?limit=${limit}`);
-                const result = await response.json();
 
-                if (result.data && result.data.length > 0) {
-                    displayTable(result.data);
-                } else {
-                    dataContainer.innerHTML = '<div class="loading">No data available</div>';
-                }
-
-                await loadStats();
-                await loadTopData();
+                state.data = snapshot.data || [];
+                state.top = snapshot.top_data || [];
+                state.totalCount = snapshot.total_count;
+                state.maxBufferSize = snapshot.max_buffer_size;
+                rebuildAll();
             } catch (error) {
                 console.error('Error loading data:', error);
                 errorDiv.textContent = 'Error loading data: ' + error.message;
@@ -401,368 +444,452 @@
             }
         }
 
-        function displayTable(data) {
-            const container = document.getElementById('dataContainer');
-            if (data.length === 0) {
-                container.innerHTML = '<div class="loading">No data available</div>';
-                ['cpuChartContainer', 'ramChartContainer',
-                 'gpuUtilChartContainer', 'gpuVramChartContainer', 'gpuTempChartContainer',
-                 'swapChartContainer', 'networkChartContainer', 'diskChartContainer']
-                    .forEach(id => document.getElementById(id).style.display = 'none');
+        function loadStaticSnapshot() {
+            state.data = window.STATIC_DATA.data || [];
+            state.top = window.STATIC_DATA.top_data || [];
+            state.totalCount = state.data.length;
+            state.maxBufferSize = state.data.length;
+            rebuildAll();
+        }
+
+        // ── Websocket live updates ────────────────────────────────────────────
+
+        function setConnectionStatus(cssClass, text) {
+            document.getElementById('connDot').className = `conn-dot ${cssClass}`;
+            document.getElementById('connText').textContent = text;
+        }
+
+        function connectWebsocket() {
+            clearTimeout(reconnectTimer);
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(`${protocol}//${location.host}/api/ws`);
+
+            socket.onopen = () => setConnectionStatus('live', 'live');
+            socket.onmessage = (event) => {
+                const tick = JSON.parse(event.data);
+                if (tick.top) {
+                    onNewTopPoint({ timestamp: tick.timestamp, cpu: tick.top.cpu, ram: tick.top.ram });
+                }
+                onNewDataPoint({ timestamp: tick.timestamp, data: tick.data });
+            };
+            socket.onclose = () => {
+                socket = null;
+                if (document.getElementById('liveUpdates').checked) {
+                    setConnectionStatus('down', 'reconnecting…');
+                    reconnectTimer = setTimeout(connectWebsocket, 2000);
+                } else {
+                    setConnectionStatus('', 'paused');
+                }
+            };
+            socket.onerror = () => socket && socket.close();
+        }
+
+        function disconnectWebsocket() {
+            clearTimeout(reconnectTimer);
+            if (socket) {
+                const old = socket;
+                socket = null;
+                old.onclose = null;
+                old.close();
+            }
+            setConnectionStatus('', 'paused');
+        }
+
+        function onNewDataPoint(point) {
+            state.data.push(point);
+            state.totalCount = Math.min(state.totalCount + 1, state.maxBufferSize || Infinity);
+            const dropped = trimSeries(state.data);
+
+            if (specsNeedRebuild(point)) {
+                rebuildAll();
                 return;
             }
-            // Use proper column headers from metadata or fallback to generic names
-            const headers = metadata?.column_headers || ['Timestamp'];
-            // Ensure we have headers for all data columns
-            const firstRow = data[0];
-            while (headers.length < firstRow.data.length) {
-                headers.push(`Data ${headers.length}`);
+
+            const label = pointLabel(point.timestamp);
+            for (const spec of chartSpecs) {
+                const chart = charts[spec.key];
+                if (!chart) continue;
+                chart.data.labels.push(label);
+                for (const dataset of chart.data.datasets) {
+                    dataset.data.push(dataset._extract(point));
+                }
+                dropFront(chart, dropped);
             }
 
-            // Column classifier helpers
+            appendTableRow(point);
+            scheduleRender();
+        }
+
+        function onNewTopPoint(point) {
+            state.top.push(point);
+            const dropped = trimSeries(state.top);
+
+            if (topChartsNeedRebuild(point)) {
+                renderTopCharts();
+                return;
+            }
+
+            const label = pointLabel(point.timestamp);
+            for (const [key, field] of [['topCpu', 'cpu'], ['topRam', 'ram']]) {
+                const chart = charts[key];
+                if (!chart) continue;
+                chart.data.labels.push(label);
+                for (const dataset of chart.data.datasets) {
+                    const entry = point[field].find(e => e.name === dataset.label);
+                    dataset.data.push(entry ? entry.value : null);
+                }
+                dropFront(chart, dropped);
+            }
+            scheduleRender();
+        }
+
+        /// Drop points that fell out of the selected window (or out of the server
+        /// buffer) and return how many were removed from the front.
+        function trimSeries(series) {
+            let dropped = 0;
+            if (state.rangeSeconds && series.length > 0) {
+                const cutoff = series[series.length - 1].timestamp - state.rangeSeconds;
+                while (dropped < series.length && series[dropped].timestamp < cutoff) dropped++;
+            }
+            if (state.maxBufferSize && series.length - dropped > state.maxBufferSize) {
+                dropped = series.length - state.maxBufferSize;
+            }
+            if (dropped > 0) series.splice(0, dropped);
+            return dropped;
+        }
+
+        function dropFront(chart, count) {
+            if (count <= 0) return;
+            chart.data.labels.splice(0, count);
+            for (const dataset of chart.data.datasets) dataset.data.splice(0, count);
+        }
+
+        /// Incoming points are always stored, but redrawing is coalesced to the
+        /// interval chosen by the user - that is where the CPU actually goes.
+        function scheduleRender() {
+            if (pendingUpdate) return;
+            pendingUpdate = setTimeout(() => {
+                pendingUpdate = null;
+                for (const chart of Object.values(charts)) chart.update('none');
+                updateStats();
+            }, state.redrawSeconds * 1000);
+        }
+
+        // ── Chart definitions ─────────────────────────────────────────────────
+
+        function getHeaders() {
+            const headers = (metadata?.column_headers || ['Timestamp']).slice();
+            const columnCount = state.data[0]?.data?.length || headers.length;
+            while (headers.length < columnCount) headers.push(`Data ${headers.length}`);
+            return headers;
+        }
+
+        const numericValue = index => point => {
+            const raw = point.data[index];
+            if (raw === undefined || raw === null || raw === '' || raw === '-1' || raw === -1) return null;
+            const value = parseFloat(raw);
+            return isNaN(value) ? null : value;
+        };
+
+        const coreValue = (index, core) => point => {
+            const raw = point.data[index];
+            if (!raw || raw === '-1') return null;
+            const value = parseFloat(String(raw).split(';')[core]);
+            return isNaN(value) ? null : value;
+        };
+
+        function buildChartSpecs() {
+            const headers = getHeaders();
+            const indexed = headers.map((h, i) => ({ h, i }));
+
             const isGpuCol = h => h.toUpperCase().startsWith('GPU_');
             const isGpuUtil = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_UTILIZATION' || /^GPU_\d+_UTIL$/.test(h.toUpperCase()));
             const isGpuVram = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_MEMORY_USED' || /^GPU_\d+_VRAM_MB$/.test(h.toUpperCase()));
             const isGpuTemp = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_TEMPERATURE' || /^GPU_\d+_TEMP_C$/.test(h.toUpperCase()));
             const isSwap = h => /^SWAP_(USED|FREE)$/.test(h.toUpperCase());
-            const isNet  = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
+            const isNet = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
             const isDisk = h => /^DISK_\d+_(USED|AVAIL)_GB$/.test(h.toUpperCase());
 
-            // Identify CPU and RAM columns (explicitly exclude GPU columns)
-            const cpuIndices = headers
-                .map((h, i) => ({ h, i }))
-                .filter(({ h }) => h.toLowerCase().includes('cpu') && !isGpuCol(h));
-            const ramIndices = headers
-                .map((h, i) => ({ h, i }))
-                .filter(({ h }) => (h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory')) && !isGpuCol(h));
-            // GPU sub-charts
-            const gpuUtilIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuUtil(h));
-            const gpuVramIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuVram(h));
-            const gpuTempIndices = headers.map((h, i) => ({ h, i })).filter(({ h }) => isGpuTemp(h));
-            const swapIndices    = headers.map((h, i) => ({ h, i })).filter(({ h }) => isSwap(h));
-            const netIndices     = headers.map((h, i) => ({ h, i })).filter(({ h }) => isNet(h));
-            const diskIndices    = headers.map((h, i) => ({ h, i })).filter(({ h }) => isDisk(h));
-            // Prepare timestamps
-            const timestamps = data.map(point => {
-                const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
-                return formatAbsoluteTimestamp(absoluteTime);
-            });
-            // CPU - split into multiple lines if needed.
+            const cpuColumns = indexed.filter(({ h }) => h.toLowerCase().includes('cpu') && !isGpuCol(h));
+            const ramColumns = indexed.filter(({ h }) => (h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory')) && !isGpuCol(h));
+
             // CPU_USAGE_PER_CORE holds semicolon-separated values (one per core)
             // and is expanded into individual per-core datasets.
-            let cpuDatasets = [];
-            if (cpuIndices.length > 0) {
-                let dsIdx = 0;
-                for (const { h, i } of cpuIndices) {
-                    if (h.toUpperCase() === 'CPU_USAGE_PER_CORE') {
-                        // Detect core count from metadata, fall back to first non-null row.
-                        let coreCount = metadata?.system_info?.cpu_cores || 0;
-                        if (coreCount === 0) {
-                            for (const point of data) {
-                                const v = point.data[i];
-                                if (v && v !== '-1' && String(v).includes(';')) {
-                                    coreCount = v.split(';').length;
-                                    break;
-                                }
+            const cpuDatasets = [];
+            let cpuIdx = 0;
+            for (const { h, i } of cpuColumns) {
+                if (h.toUpperCase() === 'CPU_USAGE_PER_CORE') {
+                    let coreCount = metadata?.system_info?.cpu_cores || 0;
+                    if (coreCount === 0) {
+                        for (const point of state.data) {
+                            const raw = point.data[i];
+                            if (raw && raw !== '-1' && String(raw).includes(';')) {
+                                coreCount = String(raw).split(';').length;
+                                break;
                             }
                         }
-                        for (let core = 0; core < coreCount; core++) {
-                            const hue = (core * 23) % 360;
-                            cpuDatasets.push({
-                                label: `Core ${core}`,
-                                data: data.map(point => {
-                                    const v = point.data[i];
-                                    if (!v || v === '-1') return null;
-                                    const val = parseFloat(String(v).split(';')[core]);
-                                    return isNaN(val) ? null : val;
-                                }),
-                                borderColor: `hsl(${hue}, 80%, 55%)`,
-                                backgroundColor: `hsla(${hue}, 80%, 55%, 0.05)`,
-                                spanGaps: true,
-                                tension: 0.1,
-                                borderWidth: 1,
-                                pointRadius: 0,
-                            });
-                            dsIdx++;
-                        }
-                    } else {
-                        cpuDatasets.push({
-                            label: h,
-                            data: data.map(point => {
-                                const v = point.data[i];
-                                return ([-1, "-1"].includes(v)) ? null : v;
-                            }),
-                            borderColor: dsIdx === 0 ? '#1976d2' : `hsl(${(dsIdx * 60) % 360}, 70%, 50%)`,
-                            backgroundColor: dsIdx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${(dsIdx * 60) % 360}, 70%, 50%, 0.1)`,
-                            spanGaps: true,
-                            tension: 0.1,
-                        });
-                        dsIdx++;
                     }
+                    for (let core = 0; core < coreCount; core++) {
+                        const hue = (core * 23) % 360;
+                        cpuDatasets.push({
+                            label: `Core ${core}`,
+                            borderColor: `hsl(${hue}, 80%, 55%)`,
+                            backgroundColor: `hsla(${hue}, 80%, 55%, 0.05)`,
+                            borderWidth: 1,
+                            extract: coreValue(i, core),
+                        });
+                    }
+                } else {
+                    const hue = (cpuIdx * 60) % 360;
+                    cpuDatasets.push({
+                        label: h,
+                        borderColor: cpuIdx === 0 ? '#1976d2' : `hsl(${hue}, 70%, 50%)`,
+                        backgroundColor: cpuIdx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${hue}, 70%, 50%, 0.1)`,
+                        extract: numericValue(i),
+                    });
+                    cpuIdx++;
                 }
             }
-            // RAM - split into multiple lines if needed
-            let ramDatasets = [];
-            if (ramIndices.length > 0) {
-                ramDatasets = ramIndices.map(({ h, i }, idx) => ({
+
+            const ramDatasets = ramColumns.map(({ h, i }, idx) => {
+                const hue = (idx * 60 + 180) % 360;
+                return {
                     label: h,
-                    data: data.map(point => {
-                        const v = point.data[i];
-                        return ([-1, "-1"].includes(v)) ? null : v;
-                    }),
-                    borderColor: idx === 0 ? '#43a047' : `hsl(${(idx * 60 + 180) % 360}, 70%, 50%)`,
-                    backgroundColor: idx === 0 ? 'rgba(67,160,71,0.1)' : `hsla(${(idx * 60 + 180) % 360}, 70%, 50%, 0.1)`,
-                    spanGaps: true,
-                    tension: 0.1,
-                }));
-            }
-            // GPU datasets helper
-            const makeGpuDatasets = (indices, hue) => indices.map(({ h, i }, idx) => {
+                    borderColor: idx === 0 ? '#43a047' : `hsl(${hue}, 70%, 50%)`,
+                    backgroundColor: idx === 0 ? 'rgba(67,160,71,0.1)' : `hsla(${hue}, 70%, 50%, 0.1)`,
+                    extract: numericValue(i),
+                };
+            });
+
+            const gpuDatasets = (predicate, hue) => indexed.filter(({ h }) => predicate(h)).map(({ h, i }, idx) => {
                 const gpuNames = metadata?.system_info?.gpu_names || [];
-                // Try to extract GPU index from column name to get a real GPU name
                 const match = h.toUpperCase().match(/^GPU_(\d+)_/);
                 let label = h;
                 if (match) {
-                    const gIdx = parseInt(match[1], 10);
-                    label = gpuNames[gIdx] ? gpuNames[gIdx] : `GPU ${gIdx}`;
-                } else if (h.toUpperCase() === 'GPU_UTILIZATION' && gpuNames.length === 1) {
-                    label = gpuNames[0];
-                } else if (h.toUpperCase() === 'GPU_MEMORY_USED' && gpuNames.length === 1) {
-                    label = gpuNames[0];
-                } else if (h.toUpperCase() === 'GPU_TEMPERATURE' && gpuNames.length === 1) {
+                    const gpuIndex = parseInt(match[1], 10);
+                    label = gpuNames[gpuIndex] || `GPU ${gpuIndex}`;
+                } else if (gpuNames.length === 1) {
                     label = gpuNames[0];
                 }
                 const color = `hsl(${(hue + idx * 35) % 360}, 85%, 60%)`;
-                return {
-                    label,
-                    data: data.map(point => {
-                        const v = point.data[i];
-                        return ([-1, "-1"].includes(v)) ? null : v;
-                    }),
-                    borderColor: color,
-                    backgroundColor: color.replace(')', ', 0.1)').replace('hsl', 'hsla'),
-                    spanGaps: true,
-                    tension: 0.1,
-                };
+                return { label, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
-            const gpuUtilDatasets = makeGpuDatasets(gpuUtilIndices, 30);   // amber
-            const gpuVramDatasets = makeGpuDatasets(gpuVramIndices, 270);  // purple
-            const gpuTempDatasets = makeGpuDatasets(gpuTempIndices, 0);    // red
-            // Swap / Network / Disk datasets
-            const makeBasicDatasets = (indices, startHue) => indices.map(({ h, i }, idx) => {
+
+            const basicDatasets = (predicate, startHue) => indexed.filter(({ h }) => predicate(h)).map(({ h, i }, idx) => {
                 const color = `hsl(${(startHue + idx * 40) % 360}, 80%, 60%)`;
-                return {
-                    label: h,
-                    data: data.map(point => { const v = point.data[i]; return ([-1, "-1"].includes(v)) ? null : v; }),
-                    borderColor: color,
-                    backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'),
-                    spanGaps: true,
-                    tension: 0.1,
-                };
+                return { label: h, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
-            const swapDatasets = makeBasicDatasets(swapIndices, 45);   // yellow/orange
-            const netDatasets  = makeBasicDatasets(netIndices,  180);  // cyan/teal
-            const diskDatasets = makeBasicDatasets(diskIndices, 270);  // purple/violet
-            // Draw CPU chart
-            if (cpuDatasets.length && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('cpuChartContainer').style.display = '';
-                if (window.cpuChartObj) window.cpuChartObj.destroy();
-                window.cpuChartObj = new Chart(document.getElementById('cpuChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: cpuDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, max: 100, title: { display: true, text: 'CPU [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('cpuChartContainer').style.display = 'none';
+
+            return [
+                { key: 'cpu', container: 'cpuChartContainer', canvas: 'cpuChart', yTitle: 'CPU [%]', yMin: 0, yMax: 100, datasets: cpuDatasets },
+                { key: 'ram', container: 'ramChartContainer', canvas: 'ramChart', yTitle: 'RAM [MB]', yMin: 0, yMax: metadata?.system_info?.total_memory_mb || undefined, datasets: ramDatasets },
+                { key: 'gpuUtil', container: 'gpuUtilChartContainer', canvas: 'gpuUtilChart', yTitle: 'Utilization [%]', yMin: 0, yMax: 100, datasets: gpuDatasets(isGpuUtil, 30) },
+                { key: 'gpuVram', container: 'gpuVramChartContainer', canvas: 'gpuVramChart', yTitle: 'VRAM [MB]', yMin: 0, datasets: gpuDatasets(isGpuVram, 270) },
+                { key: 'gpuTemp', container: 'gpuTempChartContainer', canvas: 'gpuTempChart', yTitle: 'Temperature [°C]', yMin: 0, datasets: gpuDatasets(isGpuTemp, 0) },
+                { key: 'swap', container: 'swapChartContainer', canvas: 'swapChart', yTitle: 'Swap [MB]', yMin: 0, yMax: metadata?.system_info?.total_swap_mb || undefined, datasets: basicDatasets(isSwap, 45) },
+                { key: 'network', container: 'networkChartContainer', canvas: 'networkChart', yTitle: 'Network [MB/s]', yMin: 0, datasets: basicDatasets(isNet, 180) },
+                { key: 'disk', container: 'diskChartContainer', canvas: 'diskChart', yTitle: 'Disk [GB]', yMin: 0, datasets: basicDatasets(isDisk, 270) },
+            ];
+        }
+
+        function chartOptions(spec) {
+            const legendLabels = spec.legendPosition === 'right' ? { boxWidth: 12, font: { size: 11 } } : {};
+            return {
+                responsive: true,
+                plugins: { legend: { display: true, position: spec.legendPosition || 'top', labels: legendLabels } },
+                animation: false,
+                backgroundColor: '#23272a',
+                color: '#e0e0e0',
+                scales: {
+                    y: { min: spec.yMin, max: spec.yMax, title: { display: true, text: spec.yTitle, color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
+                    x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
+                }
+            };
+        }
+
+        function destroyChart(key) {
+            if (charts[key]) {
+                charts[key].destroy();
+                delete charts[key];
             }
-            // Draw RAM chart
-            if (ramDatasets.length && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('ramChartContainer').style.display = '';
-                if (window.ramChartObj) window.ramChartObj.destroy();
-                window.ramChartObj = new Chart(document.getElementById('ramChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: ramDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, max: metadata?.system_info?.total_memory_mb || undefined, title: { display: true, text: 'RAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('ramChartContainer').style.display = 'none';
+        }
+
+        function renderChart(spec, points, datasetsOverride) {
+            const datasets = datasetsOverride || spec.datasets;
+            const container = document.getElementById(spec.container);
+            const hasValues = datasets.length > 0 && points.some(p => datasets.some(d => d.extract(p) !== null));
+
+            destroyChart(spec.key);
+            if (!hasValues) {
+                container.style.display = 'none';
+                return;
             }
-            // Draw GPU utilization chart
-            if (gpuUtilDatasets.length && gpuUtilDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('gpuUtilChartContainer').style.display = '';
-                if (window.gpuUtilChartObj) window.gpuUtilChartObj.destroy();
-                window.gpuUtilChartObj = new Chart(document.getElementById('gpuUtilChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: gpuUtilDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, max: 100, title: { display: true, text: 'Utilization [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('gpuUtilChartContainer').style.display = 'none';
+            container.style.display = '';
+
+            const labels = points.map(p => pointLabel(p.timestamp));
+            const chartDatasets = datasets.map(d => ({
+                label: d.label,
+                data: points.map(d.extract),
+                borderColor: d.borderColor,
+                backgroundColor: d.backgroundColor,
+                spanGaps: d.spanGaps !== false,
+                tension: 0.1,
+                borderWidth: d.borderWidth ?? 2,
+                pointRadius: 0,
+                _extract: d.extract,
+            }));
+
+            charts[spec.key] = new Chart(document.getElementById(spec.canvas).getContext('2d'), {
+                type: 'line',
+                data: { labels, datasets: chartDatasets },
+                options: chartOptions(spec),
+            });
+        }
+
+        /// A chart is only created when it has data, so a metric that starts
+        /// reporting mid-session needs a full rebuild to appear.
+        function specsNeedRebuild(point) {
+            return chartSpecs.some(spec => !charts[spec.key] && spec.datasets.some(d => d.extract(point) !== null));
+        }
+
+        // ── Top-N process charts ──────────────────────────────────────────────
+
+        function topProcessNames(snapshots, field) {
+            const names = new Set();
+            for (const snapshot of snapshots) {
+                for (const entry of snapshot[field]) names.add(entry.name);
             }
-            // Draw GPU VRAM chart
-            if (gpuVramDatasets.length && gpuVramDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('gpuVramChartContainer').style.display = '';
-                if (window.gpuVramChartObj) window.gpuVramChartObj.destroy();
-                window.gpuVramChartObj = new Chart(document.getElementById('gpuVramChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: gpuVramDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, title: { display: true, text: 'VRAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
+            return [...names];
+        }
+
+        function renderTopCharts() {
+            for (const [key, field, container, canvas, yTitle, yMax] of [
+                ['topCpu', 'cpu', 'topCpuChartContainer', 'topCpuChart', 'CPU [%]', 100],
+                ['topRam', 'ram', 'topRamChartContainer', 'topRamChart', 'RAM [MB]', undefined],
+            ]) {
+                const names = topProcessNames(state.top, field);
+                const datasets = names.map((name, idx) => {
+                    const hue = Math.round((idx * 360) / Math.max(names.length, 1));
+                    const color = `hsl(${hue}, 75%, 60%)`;
+                    return {
+                        label: name,
+                        borderColor: color,
+                        backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.05)'),
+                        borderWidth: 1.5,
+                        spanGaps: false,
+                        extract: snapshot => {
+                            const entry = snapshot[field].find(e => e.name === name);
+                            return entry ? entry.value : null;
+                        },
+                    };
                 });
-            } else {
-                document.getElementById('gpuVramChartContainer').style.display = 'none';
+                const spec = { key, container, canvas, yTitle, yMin: 0, yMax, legendPosition: 'right' };
+                renderChart(spec, state.top, datasets);
             }
-            // Draw GPU temperature chart
-            if (gpuTempDatasets.length && gpuTempDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('gpuTempChartContainer').style.display = '';
-                if (window.gpuTempChartObj) window.gpuTempChartObj.destroy();
-                window.gpuTempChartObj = new Chart(document.getElementById('gpuTempChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: gpuTempDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, title: { display: true, text: 'Temperature [°C]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('gpuTempChartContainer').style.display = 'none';
+        }
+
+        function topChartsNeedRebuild(point) {
+            for (const [key, field] of [['topCpu', 'cpu'], ['topRam', 'ram']]) {
+                const chart = charts[key];
+                if (!chart) {
+                    if (point[field].length > 0) return true;
+                    continue;
+                }
+                const known = new Set(chart.data.datasets.map(d => d.label));
+                if (point[field].some(e => !known.has(e.name))) return true;
             }
-            // Draw Swap chart
-            if (swapDatasets.length && swapDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('swapChartContainer').style.display = '';
-                if (window.swapChartObj) window.swapChartObj.destroy();
-                window.swapChartObj = new Chart(document.getElementById('swapChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: swapDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, max: metadata?.system_info?.total_swap_mb || undefined, title: { display: true, text: 'Swap [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('swapChartContainer').style.display = 'none';
+            return false;
+        }
+
+        // ── Rendering ─────────────────────────────────────────────────────────
+
+        function rebuildAll() {
+            chartSpecs = buildChartSpecs();
+            for (const spec of chartSpecs) renderChart(spec, state.data);
+            renderTopCharts();
+            renderTable();
+            updateStats();
+        }
+
+        function updateStats() {
+            const statsDiv = document.getElementById('stats');
+            if (isStatic()) {
+                statsDiv.innerHTML = `<strong>Data points in report:</strong> ${state.data.length}`;
+                return;
             }
-            // Draw Network chart
-            if (netDatasets.length && netDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('networkChartContainer').style.display = '';
-                if (window.networkChartObj) window.networkChartObj.destroy();
-                window.networkChartObj = new Chart(document.getElementById('networkChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: netDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, title: { display: true, text: 'Network [MB/s]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('networkChartContainer').style.display = 'none';
-            }
-            // Draw Disk chart
-            if (diskDatasets.length && diskDatasets.some(ds => ds.data.some(v => v !== null))) {
-                document.getElementById('diskChartContainer').style.display = '';
-                if (window.diskChartObj) window.diskChartObj.destroy();
-                window.diskChartObj = new Chart(document.getElementById('diskChart').getContext('2d'), {
-                    type: 'line',
-                    data: { labels: timestamps, datasets: diskDatasets },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: true, position: 'top' } },
-                        animation: false,
-                        backgroundColor: '#23272a',
-                        color: '#e0e0e0',
-                        scales: {
-                            y: { min: 0, title: { display: true, text: 'Disk [GB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                            x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                        }
-                    }
-                });
-            } else {
-                document.getElementById('diskChartContainer').style.display = 'none';
-            }
-            // --- Table with data ---
-            let tableHTML = `
-                <table>
-                    <thead>
-                        <tr>
-                            ${headers.map(h => `<th class="sortable">${h}</th>`).join('')}
-                        </tr>
-                    </thead>
-                    <tbody>
+            const startTime = metadata?.system_info?.start_time;
+            const first = state.data[0];
+            const last = state.data[state.data.length - 1];
+            statsDiv.innerHTML = `
+                <strong>Shown:</strong> ${state.data.length} points (buffer: ${state.totalCount} / ${state.maxBufferSize})<br>
+                <strong>From:</strong> ${first ? formatAbsoluteTimestamp(startTime + first.timestamp) : 'None'}<br>
+                <strong>To:</strong> ${last ? formatAbsoluteTimestamp(startTime + last.timestamp) : 'None'}
             `;
-            data.forEach(point => {
-                tableHTML += '<tr>';
-                // Format timestamp properly
-                const absoluteTime = metadata?.system_info?.start_time + point.timestamp;
-                tableHTML += `<td class="timestamp">${formatAbsoluteTimestamp(absoluteTime)}</td>`;
-                // Add all data columns except the first one (which is the relative timestamp)
-                point.data.slice(1).forEach(value => {
-                    tableHTML += `<td>${([-1, "-1"].includes(value)) ? '' : value}</td>`;
-                });
-                tableHTML += '</tr>';
-            });
-            tableHTML += '</tbody></table>';
-            container.innerHTML = `<div class="table-scroll">${tableHTML}</div>`;
+        }
+
+        function pointLabel(timestamp) {
+            return formatAbsoluteTimestamp((metadata?.system_info?.start_time || 0) + timestamp);
+        }
+
+        // ── Raw data table (opt-in, it is the slowest part of the page) ────────
+
+        function toggleTable() {
+            state.showTable = document.getElementById('showTable').checked;
+            renderTable();
+        }
+
+        function tableRowHtml(point) {
+            const cells = point.data.slice(1)
+                .map(value => `<td>${([-1, "-1"].includes(value)) ? '' : value}</td>`)
+                .join('');
+            return `<tr><td class="timestamp">${pointLabel(point.timestamp)}</td>${cells}</tr>`;
+        }
+
+        function updateTableHint(shownRows) {
+            const hint = document.getElementById('tableHint');
+            if (!state.showTable) {
+                hint.textContent = 'Hidden by default - rendering thousands of rows is slow.';
+            } else if (shownRows < state.data.length) {
+                hint.textContent = `Showing the newest ${shownRows} of ${state.data.length} points.`;
+            } else {
+                hint.textContent = `Showing all ${shownRows} points.`;
+            }
+        }
+
+        function renderTable() {
+            const container = document.getElementById('dataContainer');
+            if (!state.showTable) {
+                container.innerHTML = '';
+                updateTableHint(0);
+                return;
+            }
+            if (state.data.length === 0) {
+                container.innerHTML = '<div class="loading">No data available</div>';
+                updateTableHint(0);
+                return;
+            }
+
+            const rows = state.data.slice(-TABLE_MAX_ROWS);
+            const headers = getHeaders();
+            container.innerHTML = `<div class="table-scroll"><table>
+                <thead><tr>${headers.map(h => `<th class="sortable">${h}</th>`).join('')}</tr></thead>
+                <tbody>${rows.map(tableRowHtml).join('')}</tbody>
+            </table></div>`;
+            updateTableHint(rows.length);
             setupTableSort();
+        }
+
+        function appendTableRow(point) {
+            if (!state.showTable) return;
+            const tbody = document.querySelector('#dataContainer tbody');
+            if (!tbody) {
+                renderTable();
+                return;
+            }
+            tbody.insertAdjacentHTML('beforeend', tableRowHtml(point));
+            const maxRows = Math.min(TABLE_MAX_ROWS, state.data.length);
+            while (tbody.children.length > maxRows) tbody.removeChild(tbody.firstChild);
+            updateTableHint(tbody.children.length);
         }
 
         function formatAbsoluteTimestamp(unixTimestamp) {
@@ -779,74 +906,27 @@
             return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}.${milliseconds}`;
         }
 
-        function setupAutoRefresh() {
-            const checkbox = document.getElementById('autoRefresh');
-            const refreshIntervalInput = document.getElementById('refreshInterval');
-
-            checkbox.addEventListener('change', function() {
-                if (this.checked) {
-                    const interval = Math.max(parseInt(refreshIntervalInput.value) || 5, 1) * 1000;
-                    autoRefreshInterval = setInterval(loadData, interval);
-                } else {
-                    clearInterval(autoRefreshInterval);
-                }
-            });
-
-            refreshIntervalInput.addEventListener('change', function() {
-                if (checkbox.checked) {
-                    const interval = Math.max(parseInt(this.value) || 5, 1) * 1000;
-                    clearInterval(autoRefreshInterval);
-                    autoRefreshInterval = setInterval(loadData, interval);
-                }
-            });
-
-            // Start auto-refresh if checkbox is checked
-            if (checkbox.checked) {
-                autoRefreshInterval = setInterval(loadData, 5000);
-            }
-        }
-
         function toggleFullWidth() {
             const container = document.getElementById('mainContainer');
             const btn = document.getElementById('toggleWidthBtn');
-            const chartContainers = document.querySelectorAll('.chart-container');
-            const tableScrolls = document.querySelectorAll('.table-scroll');
-            if (!container.classList.contains('full-width')) {
-                container.classList.add('full-width');
-                btn.textContent = 'Normal Width';
-                chartContainers.forEach(el => {
-                    el.style.maxWidth = '100%';
-                });
-                tableScrolls.forEach(el => {
-                    el.style.maxWidth = '100%';
-                });
-            } else {
-                container.classList.remove('full-width');
-                btn.textContent = 'Full Width';
-                chartContainers.forEach(el => {
-                    el.style.maxWidth = '';
-                });
-                tableScrolls.forEach(el => {
-                    el.style.maxWidth = '';
-                });
-            }
+            const fullWidth = !container.classList.contains('full-width');
+            container.classList.toggle('full-width', fullWidth);
+            btn.textContent = fullWidth ? 'Normal Width' : 'Full Width';
+            document.querySelectorAll('.chart-container, .table-scroll')
+                .forEach(el => el.style.maxWidth = fullWidth ? '100%' : '');
         }
 
         function setupTableSort() {
-            const table = document.querySelector('table');
+            const table = document.querySelector('#dataContainer table');
+            if (!table) return;
             const headers = table.querySelectorAll('th.sortable');
-
-            let currentSort = {
-                column: null,
-                order: 'asc', // or 'desc'
-            };
+            let currentSort = { column: null, order: 'asc' };
 
             headers.forEach((header, index) => {
                 header.addEventListener('click', () => {
                     const newOrder = (currentSort.column === index && currentSort.order === 'asc') ? 'desc' : 'asc';
                     sortTableByColumn(table, index, newOrder);
-                    currentSort.column = index;
-                    currentSort.order = newOrder;
+                    currentSort = { column: index, order: newOrder };
                     updateSortIndicators(headers, index, newOrder);
                 });
             });
@@ -857,25 +937,15 @@
             const tbody = table.querySelector('tbody');
             const rows = Array.from(tbody.querySelectorAll('tr'));
 
-            // Sort rows
             rows.sort((a, b) => {
                 const aText = a.children[columnIndex].textContent.trim();
                 const bText = b.children[columnIndex].textContent.trim();
-
-                // Handle numeric and date sorting
                 const aValue = isNaN(aText) ? aText : parseFloat(aText);
                 const bValue = isNaN(bText) ? bText : parseFloat(bText);
-
                 return (aValue > bValue ? 1 : -1) * dirModifier;
             });
 
-            // Remove existing rows
-            while (tbody.firstChild) {
-                tbody.removeChild(tbody.firstChild);
-            }
-
-            // Re-add sorted rows
-            tbody.append(...rows);
+            tbody.replaceChildren(...rows);
         }
 
         function updateSortIndicators(headers, sortedColumnIndex, order) {
@@ -887,117 +957,6 @@
             });
         }
 
-        // ── Top-N process charts ──────────────────────────────────────────────
-
-        /// Build one Chart.js dataset per unique process name from an array of
-        /// top snapshots.  Each snapshot is {timestamp, entries: [{name,value}]}.
-        /// When a process is absent from a snapshot its value is null (gap in line).
-        function buildTopDatasets(snapshots, field) {
-            // Collect all unique names and the index of each snapshot for lookup.
-            const nameSet = new Set();
-            for (const snap of snapshots) {
-                for (const e of snap[field]) nameSet.add(e.name);
-            }
-            const names = [...nameSet];
-            const n = names.length;
-
-            return names.map((name, idx) => {
-                const hue = Math.round((idx * 360) / Math.max(n, 1));
-                const color = `hsl(${hue}, 75%, 60%)`;
-                return {
-                    label: name,
-                    data: snapshots.map(snap => {
-                        const entry = snap[field].find(e => e.name === name);
-                        return entry ? entry.value : null;
-                    }),
-                    borderColor: color,
-                    backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.05)'),
-                    spanGaps: false,
-                    tension: 0.1,
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                };
-            });
-        }
-
-        async function loadTopData() {
-            let result;
-            if (window.STATIC_DATA) {
-                result = { data: window.STATIC_DATA.top_data || [] };
-            } else {
-                const limitInput = document.getElementById('limitInput');
-                const limit = Math.min(parseInt(limitInput.value) || 10, metadata?.max_buffer_size || 100);
-                try {
-                    const response = await fetch(`/api/top/recent?limit=${limit}`);
-                    result = await response.json();
-                } catch (error) {
-                    console.error('Error loading top process data:', error);
-                    return;
-                }
-            }
-            {
-                if (!result.data || result.data.length === 0) {
-                    ['topCpuChartContainer', 'topRamChartContainer'].forEach(id => {
-                        document.getElementById(id).style.display = 'none';
-                    });
-                    return;
-                }
-
-                const timestamps = result.data.map(snap => {
-                    const absoluteTime = metadata?.system_info?.start_time + snap.timestamp;
-                    return formatAbsoluteTimestamp(absoluteTime);
-                });
-
-                // CPU chart
-                const cpuDatasets = buildTopDatasets(result.data, 'cpu');
-                if (cpuDatasets.length > 0 && cpuDatasets.some(ds => ds.data.some(v => v !== null))) {
-                    document.getElementById('topCpuChartContainer').style.display = '';
-                    if (window.topCpuChartObj) window.topCpuChartObj.destroy();
-                    window.topCpuChartObj = new Chart(document.getElementById('topCpuChart').getContext('2d'), {
-                        type: 'line',
-                        data: { labels: timestamps, datasets: cpuDatasets },
-                        options: {
-                            responsive: true,
-                            plugins: { legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
-                            animation: false,
-                            backgroundColor: '#23272a',
-                            color: '#e0e0e0',
-                            scales: {
-                                y: { min: 0, max: 100, title: { display: true, text: 'CPU [%]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                                x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                            }
-                        }
-                    });
-                } else {
-                    document.getElementById('topCpuChartContainer').style.display = 'none';
-                }
-
-                // RAM chart
-                const ramDatasets = buildTopDatasets(result.data, 'ram');
-                if (ramDatasets.length > 0 && ramDatasets.some(ds => ds.data.some(v => v !== null))) {
-                    document.getElementById('topRamChartContainer').style.display = '';
-                    if (window.topRamChartObj) window.topRamChartObj.destroy();
-                    window.topRamChartObj = new Chart(document.getElementById('topRamChart').getContext('2d'), {
-                        type: 'line',
-                        data: { labels: timestamps, datasets: ramDatasets },
-                        options: {
-                            responsive: true,
-                            plugins: { legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
-                            animation: false,
-                            backgroundColor: '#23272a',
-                            color: '#e0e0e0',
-                            scales: {
-                                y: { min: 0, title: { display: true, text: 'RAM [MB]', color: '#e0e0e0' }, grid: { color: '#333' }, ticks: { color: '#e0e0e0' } },
-                                x: { ticks: { maxTicksLimit: 10, color: '#e0e0e0' }, grid: { color: '#333' } }
-                            }
-                        }
-                    });
-                } else {
-                    document.getElementById('topRamChartContainer').style.display = 'none';
-                }
-            }
-        }
-
         // ── Export panel ──────────────────────────────────────────────────────
 
         function closeExportPanel() {
@@ -1007,21 +966,29 @@
 
         async function showExportPanel() {
             try {
-                const resp = await fetch('/api/export/dates');
-                window._exportDates = await resp.json();
-            } catch(e) {
+                const response = await fetch('/api/export/dates');
+                window._exportDates = await response.json();
+            } catch (e) {
                 window._exportDates = { days: [], weeks: [] };
             }
-            document.getElementById('exportMode').value = 'full';
             updateExportPanel();
             document.getElementById('exportOverlay').style.display = '';
             document.getElementById('exportPanel').style.display = '';
         }
 
         function updateExportPanel() {
-            const mode = document.getElementById('exportMode').value;
+            const mode = document.getElementById('exportRange').value;
             const periodRow = document.getElementById('exportPeriodRow');
             const periodSelect = document.getElementById('exportPeriod');
+
+            const splitRow = document.getElementById('exportSplit');
+            splitRow.disabled = document.getElementById('exportFormat').value !== 'report';
+            if (splitRow.disabled) splitRow.value = '';
+
+            document.getElementById('exportSourceHint').textContent =
+                document.getElementById('exportFormat').value === 'report'
+                    ? 'Built by the server from the whole CSV file, so it is not limited by the live buffer.'
+                    : `Copy of this page, so it only contains what the live buffer holds (${bufferSpanText()}).`;
 
             if (mode === 'day' || mode === 'week') {
                 const periods = mode === 'day'
@@ -1035,35 +1002,100 @@
         }
 
         function doExport() {
-            const mode = document.getElementById('exportMode').value;
-            const limitEl = document.getElementById('limitInput');
-            const limit = limitEl ? (parseInt(limitEl.value) || 10000) : 10000;
-            let url = `/api/export/html?mode=${mode}&limit=${limit}`;
+            const format = document.getElementById('exportFormat').value;
+            const range = document.getElementById('exportRange').value;
+            const period = document.getElementById('exportPeriod').value;
+            const split = document.getElementById('exportSplit').value;
 
-            if (mode === 'day') {
-                const period = document.getElementById('exportPeriod').value;
-                if (period) url += `&date=${encodeURIComponent(period)}`;
-            } else if (mode === 'week') {
-                const period = document.getElementById('exportPeriod').value;
-                if (period) url += `&week=${encodeURIComponent(period)}`;
+            let query = 'mode=full';
+            if (range.startsWith('last:')) {
+                query = `mode=last&seconds=${range.slice(5)}`;
+            } else if (range === 'day' && period) {
+                query = `mode=day&date=${encodeURIComponent(period)}`;
+            } else if (range === 'week' && period) {
+                query = `mode=week&week=${encodeURIComponent(period)}`;
             }
 
-            window.open(url, '_blank');
+            if (split && format === 'report') query += `&split=${split}`;
+
+            const link = document.createElement('a');
+            link.href = `/api/export/${format}?${query}`;
+            link.download = '';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
             closeExportPanel();
         }
 
-        // Initialize
-        document.addEventListener('DOMContentLoaded', async function() {
-            if (window.STATIC_DATA) {
-                document.querySelector('.controls').style.display = 'none';
-                document.getElementById('exportBtn').style.display = 'none';
+        // ── Init ──────────────────────────────────────────────────────────────
+
+        /// How much history the ring buffer can hold at the configured interval.
+        function bufferSpanSeconds() {
+            return (metadata?.max_buffer_size || 0) * (metadata?.check_interval || 1);
+        }
+
+        function bufferSpanText() {
+            const seconds = bufferSpanSeconds();
+            if (!seconds) return 'unknown size';
+            const hours = seconds / 3600;
+            return hours >= 1 ? `~${hours.toFixed(1)} h` : `~${Math.round(seconds / 60)} min`;
+        }
+
+        /// The live view can never show more than the buffer holds, so say it out
+        /// loud instead of silently showing a shorter period than was asked for.
+        function updateBufferHint() {
+            const hint = document.getElementById('bufferHint');
+            const span = bufferSpanSeconds();
+            if (state.rangeSeconds && state.rangeSeconds > span) {
+                hint.textContent = `Buffer only holds ${bufferSpanText()} (--max-results ${metadata.max_buffer_size}); `
+                    + 'use Export for longer periods.';
+            } else {
+                hint.textContent = `Buffer holds ${bufferSpanText()}.`;
             }
+        }
+
+        function setupControls() {
+            const rangeSelect = document.getElementById('rangeSelect');
+            rangeSelect.innerHTML = RANGES
+                .map(([label, seconds]) => `<option value="${seconds}"${seconds === DEFAULT_RANGE_SECONDS ? ' selected' : ''}>${label}</option>`)
+                .join('');
+            rangeSelect.addEventListener('change', () => {
+                state.rangeSeconds = parseInt(rangeSelect.value, 10);
+                updateBufferHint();
+                reloadSnapshot();
+            });
+            updateBufferHint();
+
+            const redrawSelect = document.getElementById('redrawInterval');
+            redrawSelect.innerHTML = REDRAW_INTERVALS
+                .map(s => `<option value="${s}"${s === DEFAULT_REDRAW_SECONDS ? ' selected' : ''}>${s} s</option>`)
+                .join('');
+            redrawSelect.addEventListener('change', () => {
+                state.redrawSeconds = parseInt(redrawSelect.value, 10);
+            });
+
+            document.getElementById('liveUpdates').addEventListener('change', function () {
+                if (this.checked) {
+                    reloadSnapshot().then(connectWebsocket);
+                } else {
+                    disconnectWebsocket();
+                }
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', async function () {
             await loadMetadata();
-            await loadData();
-            await loadTopData();
-            if (!window.STATIC_DATA) {
-                setupAutoRefresh();
+
+            if (isStatic()) {
+                document.getElementById('liveControls').style.display = 'none';
+                document.getElementById('exportBtn').style.display = 'none';
+                loadStaticSnapshot();
+                return;
             }
+
+            setupControls();
+            await reloadSnapshot();
+            connectWebsocket();
         });
     </script>
 </body>
