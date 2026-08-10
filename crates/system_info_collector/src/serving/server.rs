@@ -90,6 +90,19 @@ impl FromRef<AppState> for Arc<ExportPaths> {
     }
 }
 
+/// Runtime for the HTTP server thread.  It only serves occasional requests and
+/// pushes websocket frames, so a couple of workers is plenty; exports run on the
+/// blocking pool, which is bounded so parallel exports queue instead of piling
+/// up several full CSV parses in memory at once.
+pub fn build_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(4)
+        .thread_name("sic-server")
+        .enable_all()
+        .build()
+}
+
 pub async fn start_server(port: u16, data_buffer: DataBuffer, export_paths: ExportPaths) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = AppState {
         buffer: Arc::new(data_buffer),

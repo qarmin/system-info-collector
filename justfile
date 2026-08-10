@@ -109,7 +109,7 @@ samplyrd:
              network-rx network-tx \
              gpu-utilization gpu-memory-used gpu-temperature \
              disk-used disk-available \
-        --all-networks --all-disk \
+        --all-networks --all-disks \
         -c 0.5 -s --top-n-processes 5
         
 cleancsv:

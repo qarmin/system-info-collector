@@ -33,7 +33,10 @@ mod converting;
 mod serving;
 mod settings;
 
-#[tokio::main]
+// The collector runs a handful of periodic tasks that spend nearly all their
+// time asleep, so the default "one worker per core" runtime is pure waste -
+// on a 80-core machine it would spawn 80 threads to do the work of two.
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
     let _ = TermLogger::init(ConfigBuilder::default().build(), TerminalMode::Mixed, ColorChoice::Auto);
 
@@ -201,7 +204,7 @@ async fn main() {
                 let port = settings.port;
                 std::thread::spawn(move || {
                     info!("Starting HTTP server thread on port {port}");
-                    let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime for server");
+                    let runtime = crate::serving::server::build_runtime().expect("Failed to create Tokio runtime for server");
                     runtime.block_on(async move {
                         if let Err(e) = crate::serving::server::start_server(port, server_buffer, export_paths).await {
                             error!("Server error: {e}");
