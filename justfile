@@ -159,3 +159,16 @@ publish:
 
 install:
     cargo install --path crates/system_info_collector
+
+# Local equivalent of full_send: builds, installs, and starts the systemd service on this machine, no ssh involved.
+# Uses cargo zigbuild against the same older glibc target as full_send/x86_64_send, so it's the exact same binary either way ships.
+full_install service_file="system-info-collector.service":
+    cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+    mkdir -p /home/{{ user }}/data_collector
+    cp target/x86_64-unknown-linux-gnu/release/system_info_collector /home/{{ user }}/data_collector/system_info_collector
+    sed 's/__USER__/{{ user }}/g' "{{ service_file }}" > /tmp/system-info-collector.service
+    sudo cp /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable system-info-collector
+    sudo systemctl restart system-info-collector
+    sudo systemctl status --no-pager system-info-collector

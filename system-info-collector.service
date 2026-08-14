@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=__USER__
 WorkingDirectory=/home/__USER__/data_collector
-ExecStart=/home/__USER__/data_collector/system_info_collector collect -d /home/__USER__/data_collector/data.csv -m cpu-usage-total memory-used memory-free network-rx network-tx --all-networks -c 1.0 -s
+ExecStart=/home/__USER__/data_collector/system_info_collector collect -d /home/__USER__/data_collector/data.csv -m cpu-usage-total memory-used memory-free memory-available network-rx network-tx --all-networks -c 1.0 -s
 Restart=on-failure
 RestartSec=5
 
