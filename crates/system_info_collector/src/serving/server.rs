@@ -4,8 +4,8 @@ use axum::extract::{FromRef, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::get;
-use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
-use log::{error, info};
+use chrono::{Datelike, Local, NaiveDate};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io::{Cursor, Write};
@@ -18,7 +18,8 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use super::data_buffer::{DataBuffer, DataPoint, TopDataPoint};
-use crate::converting::csv_file_loader::{load_csv_results, scan_timestamps};
+use super::data_sources::{self, DataSource, SourceCache, abs_ts_to_naive_date, list_sources, parse_week_str, period_key, resolve};
+use crate::converting::csv_file_loader::load_csv_results;
 use crate::converting::ploty_creator::{build_report_html, subset_by_time};
 
 /// Rows selected for an export are capped so a huge buffer cannot stall the
@@ -41,12 +42,14 @@ struct ExportQuery {
     week: Option<String>,
     /// `day` or `week` splits the report into one file per period, delivered as a zip.
     split: Option<String>,
+    /// Data file to export: a file name from `/api/export/sources`, `all` for
+    /// every file, or absent for the file this run writes.
+    source: Option<String>,
 }
 
 #[derive(Serialize)]
-struct ExportDatesResponse {
-    days: Vec<String>,
-    weeks: Vec<String>,
+struct ExportSourcesResponse {
+    sources: Vec<DataSource>,
 }
 
 #[derive(Serialize)]
@@ -66,10 +69,24 @@ struct SnapshotResponse {
 }
 
 /// Data files written by this run, used as the source for exported reports.
+/// Older files sitting next to `data_path` (previous runs, rotated files) are
+/// discovered on demand, so restarting the machine does not put their data out
+/// of reach.
 pub struct ExportPaths {
     pub data_path: String,
     /// Top-N process files, when `--top-n-processes` is active.
     pub extra_data_paths: Vec<String>,
+    source_cache: SourceCache,
+}
+
+impl ExportPaths {
+    pub fn new(data_path: String, extra_data_paths: Vec<String>) -> Self {
+        Self {
+            data_path,
+            extra_data_paths,
+            source_cache: SourceCache::default(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -116,7 +133,7 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer, export_paths: Expo
         .route("/api/ws", get(ws_handler))
         .route("/api/export/html", get(export_html_handler))
         .route("/api/export/report", get(export_report_handler))
-        .route("/api/export/dates", get(export_dates_handler))
+        .route("/api/export/sources", get(export_sources_handler))
         .route("/static/chart.min.js", get(chartjs_handler))
         .with_state(app_state);
 
@@ -187,52 +204,20 @@ async fn push_live_updates(mut socket: WebSocket, buffer: Arc<DataBuffer>) {
     }
 }
 
-fn abs_ts_to_naive_date(abs_ts: f64) -> Option<NaiveDate> {
-    DateTime::from_timestamp(abs_ts as i64, 0).map(|dt: DateTime<Utc>| dt.date_naive())
-}
-
-fn parse_week_str(s: &str) -> Option<(i32, u32)> {
-    let (year_part, week_part) = s.split_once('-')?;
-    let year: i32 = year_part.parse().ok()?;
-    let week: u32 = week_part.strip_prefix('W')?.parse().ok()?;
-    Some((year, week))
-}
-
-/// Days and weeks offered in the export dialog.  Scanned from the CSV (only its
-/// timestamp column) rather than the buffer, so periods older than
-/// `--max-results` are selectable too.
-async fn export_dates_handler(State(paths): State<Arc<ExportPaths>>) -> impl IntoResponse {
-    let data_path = paths.data_path.clone();
-    let scanned = tokio::task::spawn_blocking(move || scan_timestamps(&data_path)).await;
-
-    let (start_time, timestamps) = match scanned {
-        Ok(Ok(result)) => result,
-        Ok(Err(e)) => {
-            error!("Failed to scan {} for export dates: {e}", paths.data_path);
-            (0.0, vec![])
-        }
+/// Every data file that can be exported, with the period each one covers.
+///
+/// Scanned from the CSV files on disk (only their timestamp column), so files
+/// from earlier runs and periods older than the live buffer show up too.
+async fn export_sources_handler(State(paths): State<Arc<ExportPaths>>) -> impl IntoResponse {
+    let sources = match tokio::task::spawn_blocking(move || list_sources(&paths.data_path, &paths.source_cache)).await {
+        Ok(sources) => sources,
         Err(e) => {
-            error!("Export date scan failed: {e}");
-            (0.0, vec![])
+            error!("Export source scan failed: {e}");
+            vec![]
         }
     };
 
-    let mut days: BTreeSet<String> = BTreeSet::new();
-    let mut weeks: BTreeSet<String> = BTreeSet::new();
-    for timestamp in timestamps {
-        if let Some(date) = abs_ts_to_naive_date(start_time + timestamp) {
-            days.insert(date.format("%Y-%m-%d").to_string());
-            weeks.insert(format!("{:04}-W{:02}", date.iso_week().year(), date.iso_week().week()));
-        }
-    }
-
-    (
-        StatusCode::OK,
-        Json(ExportDatesResponse {
-            days: days.into_iter().collect(),
-            weeks: weeks.into_iter().collect(),
-        }),
-    )
+    (StatusCode::OK, Json(ExportSourcesResponse { sources }))
 }
 
 /// Which rows of the *live buffer* to include in a dashboard snapshot.
@@ -295,6 +280,12 @@ fn export_slug(params: &ExportQuery) -> String {
             .replace(['/', '\\', ' '], "_"),
         _ => "full".to_string(),
     }
+}
+
+fn sanitize_slug(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+        .collect()
 }
 
 fn download_headers(file_name: &str) -> [(axum::http::HeaderName, String); 2] {
@@ -384,19 +375,85 @@ struct ExportFile {
     bytes: Vec<u8>,
 }
 
-fn build_report_export(paths: &ExportPaths, params: &ExportQuery) -> Result<ExportFile, anyhow::Error> {
+/// One CSV file an export reads from.
+struct ExportSource {
+    path: String,
+    /// Top-N process files only exist for the file of the running collector.
+    extra_paths: Vec<String>,
+    slug: String,
+}
+
+/// Which files the request asks for: one named file, every file, or - when the
+/// browser sends no `source` - the file this run writes.
+fn resolve_export_sources(paths: &ExportPaths, params: &ExportQuery) -> Result<Vec<ExportSource>, anyhow::Error> {
+    let current = || ExportSource {
+        path: paths.data_path.clone(),
+        extra_paths: paths.extra_data_paths.clone(),
+        slug: source_slug(&paths.data_path),
+    };
+
+    match params.source.as_deref() {
+        None | Some("" | "current") => Ok(vec![current()]),
+        Some("all") => {
+            let sources = list_sources(&paths.data_path, &paths.source_cache);
+            if sources.is_empty() {
+                return Err(anyhow::Error::msg("No data files with recorded data were found"));
+            }
+            Ok(sources
+                .into_iter()
+                .map(|source| {
+                    let path = replace_file_name(&paths.data_path, &source.name);
+                    ExportSource {
+                        extra_paths: if source.current { paths.extra_data_paths.clone() } else { vec![] },
+                        slug: source_slug(&path),
+                        path,
+                    }
+                })
+                .collect())
+        }
+        Some(name) => match resolve(&paths.data_path, name) {
+            Some((path, kind)) => Ok(vec![ExportSource {
+                extra_paths: if kind == data_sources::CURRENT {
+                    paths.extra_data_paths.clone()
+                } else {
+                    vec![]
+                },
+                slug: source_slug(&path),
+                path,
+            }]),
+            None => Err(anyhow::Error::msg(format!("Unknown data file \"{name}\""))),
+        },
+    }
+}
+
+fn source_slug(path: &str) -> String {
+    sanitize_slug(
+        &std::path::Path::new(path)
+            .file_stem()
+            .map_or_else(|| "data".to_string(), |s| s.to_string_lossy().into_owned()),
+    )
+}
+
+fn replace_file_name(data_path: &str, file_name: &str) -> String {
+    std::path::Path::new(data_path).with_file_name(file_name).to_string_lossy().into_owned()
+}
+
+fn load_source(source: &ExportSource) -> Result<(CollectedItemModels, ConvertSettings), anyhow::Error> {
     let settings = ConvertSettings {
-        data_path: paths.data_path.clone(),
-        extra_data_paths: paths.extra_data_paths.clone(),
+        data_path: source.path.clone(),
+        extra_data_paths: source.extra_paths.clone(),
         plot_width: 1700,
         plot_height: 800,
         split_mode: SplitMode::Full,
         ..ConvertSettings::default()
     };
     let model = load_csv_results(&settings)?;
-    let timezone_ms = i64::from(Local::now().offset().local_minus_utc()) * 1000;
+    Ok((model, settings))
+}
 
-    // "last N seconds" is relative to the newest row in the file.
+/// Period predicate for one file.  `last N seconds` is relative to the newest row
+/// of that file, so it also works for files an earlier run left behind.
+fn keep_filter(model: &CollectedItemModels, params: &ExportQuery) -> Box<dyn Fn(f64) -> bool + Send> {
     let newest = model
         .collected_data
         .get(&DataType::SECONDS_SINCE_START)
@@ -404,66 +461,108 @@ fn build_report_export(paths: &ExportPaths, params: &ExportQuery) -> Result<Expo
         .and_then(|s| s.parse::<f64>().ok())
         .map(|t| t + model.start_time);
 
-    let keep: Box<dyn Fn(f64) -> bool + Send> = match (params.mode.as_deref(), newest) {
+    match (params.mode.as_deref(), newest) {
         (Some("last"), Some(newest)) => {
             let cutoff = newest - params.seconds.unwrap_or(3600.0);
             Box::new(move |ts| ts >= cutoff)
         }
         _ => period_filter(params),
-    };
+    }
+}
 
-    let Some(split) = params.split.as_deref().filter(|s| *s == "day" || *s == "week") else {
-        let subset = subset_by_time(&model, &keep, MAX_EXPORT_POINTS);
+fn build_report_export(paths: &ExportPaths, params: &ExportQuery) -> Result<ExportFile, anyhow::Error> {
+    let sources = resolve_export_sources(paths, params)?;
+    let split = params.split.as_deref().filter(|s| *s == "day" || *s == "week");
+    let timezone_ms = i64::from(Local::now().offset().local_minus_utc()) * 1000;
+
+    // A single file with no split is the common case and needs no zip container.
+    if let ([source], None) = (sources.as_slice(), split) {
+        let (model, settings) = load_source(source)?;
+        let subset = subset_by_time(&model, &keep_filter(&model, params), MAX_EXPORT_POINTS);
         if row_count(&subset) == 0 {
             return Err(anyhow::Error::msg("No data in the selected period"));
         }
-        info!("Building plotly report for {} points", row_count(&subset));
+        info!("Building plotly report for {} points from {}", row_count(&subset), source.path);
         return Ok(ExportFile {
-            name: export_file_name("report", &export_slug(params), "html"),
+            name: export_file_name("report", &format!("{}_{}", source.slug, export_slug(params)), "html"),
             content_type: "text/html; charset=utf-8",
             bytes: build_report_html(&subset, &settings, timezone_ms)?.into_bytes(),
         });
-    };
-
-    let periods = distinct_periods(&model, &keep, split);
-    if periods.is_empty() {
-        return Err(anyhow::Error::msg("No data in the selected period"));
     }
-    info!("Building {} split report file(s) by {split}", periods.len());
 
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    for period in &periods {
-        let subset = subset_by_time(
-            &model,
-            &|ts| keep(ts) && period_key(ts, split).as_ref() == Some(period),
-            MAX_EXPORT_POINTS,
-        );
-        if row_count(&subset) == 0 {
-            continue;
+    let mut written = 0;
+    for source in &sources {
+        // One unreadable file must not sink an export covering several of them.
+        let (model, settings) = match load_source(source) {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                warn!("Skipping {} in export: {e}", source.path);
+                continue;
+            }
+        };
+        let keep = keep_filter(&model, params);
+
+        match split {
+            None => {
+                let name = format!("system_info_report_{}.html", source.slug);
+                written += write_report_entry(&mut zip, &name, &model, &keep, &settings, timezone_ms)?;
+            }
+            Some(split) => {
+                for period in distinct_periods(&model, &keep, split) {
+                    let name = format!("system_info_report_{}_{period}.html", source.slug);
+                    let keep_period = |ts: f64| keep(ts) && period_key(ts, split).as_ref() == Some(&period);
+                    written += write_report_entry(&mut zip, &name, &model, &keep_period, &settings, timezone_ms)?;
+                }
+            }
         }
-        zip.start_file(format!("system_info_report_{period}.html"), options)?;
-        zip.write_all(build_report_html(&subset, &settings, timezone_ms)?.as_bytes())?;
     }
 
+    if written == 0 {
+        return Err(anyhow::Error::msg("No data in the selected period"));
+    }
+    info!("Built {written} report file(s) into a zip");
+
     Ok(ExportFile {
-        name: export_file_name("reports", &format!("per_{split}"), "zip"),
+        name: export_file_name("reports", &zip_slug(params, sources.len(), split), "zip"),
         content_type: "application/zip",
         bytes: zip.finish()?.into_inner(),
     })
 }
 
-fn row_count(model: &CollectedItemModels) -> usize {
-    model.collected_data.get(&DataType::SECONDS_SINCE_START).map_or(0, Vec::len)
+/// Adds one report to the zip, or nothing when the period holds no rows.
+fn write_report_entry(
+    zip: &mut ZipWriter<Cursor<Vec<u8>>>,
+    name: &str,
+    model: &CollectedItemModels,
+    keep: &dyn Fn(f64) -> bool,
+    settings: &ConvertSettings,
+    timezone_ms: i64,
+) -> Result<usize, anyhow::Error> {
+    let subset = subset_by_time(model, keep, MAX_EXPORT_POINTS);
+    if row_count(&subset) == 0 {
+        return Ok(0);
+    }
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip.start_file(name, options)?;
+    zip.write_all(build_report_html(&subset, settings, timezone_ms)?.as_bytes())?;
+    Ok(1)
 }
 
-/// Calendar key an absolute timestamp belongs to, for split exports.
-fn period_key(abs_ts: f64, split: &str) -> Option<String> {
-    let date = abs_ts_to_naive_date(abs_ts)?;
-    Some(match split {
-        "week" => format!("{:04}-W{:02}", date.iso_week().year(), date.iso_week().week()),
-        _ => date.format("%Y-%m-%d").to_string(),
-    })
+fn zip_slug(params: &ExportQuery, source_count: usize, split: Option<&str>) -> String {
+    let base = if source_count > 1 {
+        "all_files".to_string()
+    } else {
+        export_slug(params)
+    };
+    match split {
+        Some(split) => format!("{base}_per_{split}"),
+        None => base,
+    }
+}
+
+fn row_count(model: &CollectedItemModels) -> usize {
+    model.collected_data.get(&DataType::SECONDS_SINCE_START).map_or(0, Vec::len)
 }
 
 fn distinct_periods(model: &CollectedItemModels, keep: &dyn Fn(f64) -> bool, split: &str) -> Vec<String> {

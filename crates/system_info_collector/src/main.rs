@@ -186,9 +186,9 @@ async fn main() {
 
                 // Reports are rendered from the CSV on disk, so the server needs to know
                 // where this run writes it.
-                let export_paths = ExportPaths {
-                    data_path: settings.convert.data_path.clone(),
-                    extra_data_paths: if settings.top_n_processes > 0 {
+                let export_paths = ExportPaths::new(
+                    settings.convert.data_path.clone(),
+                    if settings.top_n_processes > 0 {
                         vec![
                             top_n_path(&settings.convert.data_path, "cpu"),
                             top_n_path(&settings.convert.data_path, "ram"),
@@ -196,7 +196,7 @@ async fn main() {
                     } else {
                         vec![]
                     },
-                };
+                );
 
                 // Start the HTTP server in its own OS thread with an independent
                 // Tokio runtime so it never blocks data collection.

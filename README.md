@@ -291,7 +291,11 @@ After starting, open your browser and go to `http://localhost:5998/`.
   N seconds (1 / 2 / 5 / 10 / 30 / 60, default 5) because repainting is where the browser CPU goes
 - **Data table** – hidden behind a checkbox, because rendering thousands of rows is what makes the page
   feel slow; when enabled only the newest 1000 rows are rendered
-- **Export** – server-side generated report downloaded as a file (see below)
+- **Remembered view settings** – series hidden by clicking a legend entry stay hidden through a reload, a
+  time-range change and a page refresh (as do the time range, redraw interval, table and width choices);
+  **Show all series** brings every hidden series back
+- **Export** – server-side generated report downloaded as a file, from this run or from an older data file
+  (see below)
 - **Dark mode**
 - **No external dependencies** – static files (e.g. Chart.js) are embedded in the binary and served by the backend
 
@@ -320,9 +324,17 @@ The **Export** button generates the file on the server and downloads it. Two for
   embedded in the same document). Built from the **CSV file on disk**, so it covers the whole recorded
   history regardless of `--buffer-seconds`
 - **Dashboard snapshot** – a self-contained copy of the live page with the data baked in and Chart.js
-  inlined. This one is a copy of what the page shows, so it *is* limited to the live buffer
+  inlined. This one is a copy of what the page shows, so it *is* limited to the live buffer of the current run
 
-The period can be everything recorded, a relative window (15 minutes … 7 days) or one specific day / ISO week.
+The **Data file** selector lists every CSV next to the output file, not just the one this run writes:
+the backups of earlier runs (`system_data__1.csv` …, see `--backup-number`) and the files created by
+size-based rotation. Each entry shows the period it covers, its duration, how many points it holds and how
+big it is, so data recorded before a restart stays reachable. `All files` writes one report per file into a
+single `.zip`. Only the current file can be exported as a dashboard snapshot, because that format is a copy
+of the live page.
+
+The period can be everything recorded, a relative window (15 minutes … 7 days) or one specific day / ISO week;
+the offered days and weeks are the ones actually present in the selected file.
 
 A plotly report can additionally be split into **one file per day or per ISO week** (the same grouping as
 `convert --split-mode`), delivered as a single `.zip`.
@@ -337,9 +349,9 @@ covers the whole period instead of just its tail. The reduction is logged.
 | `GET /api/metadata` | hardware info, column headers, buffer size, check interval |
 | `GET /api/snapshot?seconds=<n>&limit=<n>` | history for the requested window plus buffer counters |
 | `GET /api/ws` | websocket upgrade - see below |
-| `GET /api/export/report?mode=full\|last\|day\|week&seconds=&date=&week=&split=day\|week` | plotly report download, `split` returns a zip of per-period files |
+| `GET /api/export/report?mode=full\|last\|day\|week&seconds=&date=&week=&split=day\|week&source=` | plotly report download, `split` returns a zip of per-period files, `source` selects the data file (`all` for every file, default is the current one) |
 | `GET /api/export/html?mode=…` | dashboard snapshot download |
-| `GET /api/export/dates` | days and ISO weeks present in the buffer |
+| `GET /api/export/sources` | data files available for export, with the period, point count and size of each |
 
 ### Live update protocol
 

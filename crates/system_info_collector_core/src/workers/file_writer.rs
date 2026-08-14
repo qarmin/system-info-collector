@@ -490,7 +490,7 @@ fn cleanup_rotated_files(data_path: &str, max_count: usize) {
 
 /// Returns `true` if `file_name` looks like a rotated file for the given `base` and `ext`.
 /// Expected middle part: `_YYYY-MM-DD_HH-MM-SS` (20 chars including the leading underscore).
-fn is_rotated_filename(file_name: &str, base: &str, ext: &str) -> bool {
+pub fn is_rotated_filename(file_name: &str, base: &str, ext: &str) -> bool {
     let prefix = format!("{base}_");
     if !file_name.starts_with(&prefix) || !file_name.ends_with(ext) {
         return false;

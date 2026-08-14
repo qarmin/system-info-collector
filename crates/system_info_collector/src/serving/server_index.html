@@ -210,8 +210,13 @@
 
         <!-- Export modal -->
         <div id="exportOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:999;" onclick="closeExportPanel()"></div>
-        <div id="exportPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3136; padding:24px; border-radius:10px; z-index:1000; box-shadow:0 6px 24px rgba(0,0,0,0.8); min-width:340px;">
+        <div id="exportPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3136; padding:24px; border-radius:10px; z-index:1000; box-shadow:0 6px 24px rgba(0,0,0,0.8); min-width:340px; max-width:min(760px, 92vw); max-height:88vh; overflow-y:auto;">
             <h3 style="margin-top:0; color:#90caf9;">Export report</h3>
+            <label style="display:block; margin-bottom:6px;">
+                Data file:
+                <select id="exportSource" onchange="updateExportPanel()" style="margin-left:8px; min-width:340px; max-width:100%;"></select>
+            </label>
+            <div class="hint" id="exportSourceRange" style="margin-bottom:12px;"></div>
             <label style="display:block; margin-bottom:12px;">
                 Format:
                 <select id="exportFormat" onchange="updateExportPanel()" style="margin-left:8px; min-width:230px;">
@@ -360,6 +365,7 @@
                 <input type="checkbox" id="showTable" onchange="toggleTable()"> Show raw data table
             </label>
             <span class="hint" id="tableHint">Hidden by default - rendering thousands of rows is slow.</span>
+            <button onclick="resetSeriesFilters()" title="Show every series hidden by clicking legend entries">Show all series</button>
         </div>
 
         <div id="dataContainer"></div>
@@ -394,11 +400,85 @@
             totalCount: 0,
             maxBufferSize: 0,
             showTable: false,
+            fullWidth: false,
+            /// Chart key → labels of the series hidden via the legend.
+            hiddenSeries: {},
         };
         const charts = {};
         let chartSpecs = [];
 
         const isStatic = () => !!window.STATIC_DATA;
+
+        // ── Persisted UI state ────────────────────────────────────────────────
+        //
+        // Charts are destroyed and rebuilt on every reload, time-range change and
+        // whenever a new metric appears, and Chart.js keeps the legend filters in
+        // the chart object - so which series are hidden is tracked here and
+        // reapplied, and kept in localStorage to survive a page refresh too.
+
+        const UI_STATE_KEY = 'system-info-collector-ui-v1';
+
+        function saveUiState() {
+            try {
+                localStorage.setItem(UI_STATE_KEY, JSON.stringify({
+                    rangeSeconds: state.rangeSeconds,
+                    redrawSeconds: state.redrawSeconds,
+                    showTable: state.showTable,
+                    fullWidth: state.fullWidth,
+                    hiddenSeries: state.hiddenSeries,
+                }));
+            } catch (e) {
+                // Storage can be unavailable (private mode, quota) - not worth failing over.
+            }
+        }
+
+        function loadUiState() {
+            let saved = null;
+            try {
+                saved = JSON.parse(localStorage.getItem(UI_STATE_KEY) || 'null');
+            } catch (e) {
+                saved = null;
+            }
+            if (!saved) return;
+
+            if (RANGES.some(([, seconds]) => seconds === saved.rangeSeconds)) state.rangeSeconds = saved.rangeSeconds;
+            if (REDRAW_INTERVALS.includes(saved.redrawSeconds)) state.redrawSeconds = saved.redrawSeconds;
+            state.showTable = !!saved.showTable;
+            state.fullWidth = !!saved.fullWidth;
+            if (saved.hiddenSeries && typeof saved.hiddenSeries === 'object') state.hiddenSeries = saved.hiddenSeries;
+        }
+
+        function hiddenLabels(chartKey) {
+            return state.hiddenSeries[chartKey] || (state.hiddenSeries[chartKey] = []);
+        }
+
+        function setSeriesHidden(chartKey, label, hidden) {
+            const labels = hiddenLabels(chartKey);
+            const index = labels.indexOf(label);
+            if (hidden && index < 0) {
+                labels.push(label);
+            } else if (!hidden && index >= 0) {
+                labels.splice(index, 1);
+            } else {
+                return;
+            }
+            saveUiState();
+        }
+
+        function legendClickHandler(chartKey) {
+            return function (event, legendItem, legend) {
+                Chart.defaults.plugins.legend.onClick.call(this, event, legendItem, legend);
+                const index = legendItem.datasetIndex;
+                const label = legend.chart.data.datasets[index]?.label;
+                if (label !== undefined) setSeriesHidden(chartKey, label, !legend.chart.isDatasetVisible(index));
+            };
+        }
+
+        function resetSeriesFilters() {
+            state.hiddenSeries = {};
+            saveUiState();
+            rebuildAll();
+        }
 
         // ── Data loading ──────────────────────────────────────────────────────
 
@@ -696,7 +776,14 @@
             const legendLabels = spec.legendPosition === 'right' ? { boxWidth: 12, font: { size: 11 } } : {};
             return {
                 responsive: true,
-                plugins: { legend: { display: true, position: spec.legendPosition || 'top', labels: legendLabels } },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: spec.legendPosition || 'top',
+                        labels: legendLabels,
+                        onClick: legendClickHandler(spec.key),
+                    },
+                },
                 animation: false,
                 backgroundColor: '#23272a',
                 color: '#e0e0e0',
@@ -727,6 +814,7 @@
             container.style.display = '';
 
             const labels = points.map(p => pointLabel(p.timestamp));
+            const hidden = hiddenLabels(spec.key);
             const chartDatasets = datasets.map(d => ({
                 label: d.label,
                 data: points.map(d.extract),
@@ -736,6 +824,7 @@
                 tension: 0.1,
                 borderWidth: d.borderWidth ?? 2,
                 pointRadius: 0,
+                hidden: hidden.includes(d.label),
                 _extract: d.extract,
             }));
 
@@ -835,6 +924,7 @@
 
         function toggleTable() {
             state.showTable = document.getElementById('showTable').checked;
+            saveUiState();
             renderTable();
         }
 
@@ -906,14 +996,51 @@
             return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}.${milliseconds}`;
         }
 
-        function toggleFullWidth() {
-            const container = document.getElementById('mainContainer');
-            const btn = document.getElementById('toggleWidthBtn');
-            const fullWidth = !container.classList.contains('full-width');
-            container.classList.toggle('full-width', fullWidth);
-            btn.textContent = fullWidth ? 'Normal Width' : 'Full Width';
+        function formatShortTimestamp(unixTimestamp) {
+            if (!unixTimestamp) return 'unknown';
+            const date = new Date(unixTimestamp * 1000);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${day}/${month} ${hours}:${minutes}`;
+        }
+
+        function formatDuration(seconds) {
+            if (!(seconds > 0)) return '0 s';
+            if (seconds < 60) return `${Math.round(seconds)} s`;
+            if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+            if (seconds < 86400) return `${(seconds / 3600).toFixed(1)} h`;
+            return `${(seconds / 86400).toFixed(1)} days`;
+        }
+
+        function formatCount(count) {
+            return (count || 0).toLocaleString('en-US').replace(/,/g, ' ');
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes) return '0 B';
+            const units = ['B', 'KiB', 'MiB', 'GiB'];
+            let value = bytes;
+            let unit = 0;
+            while (value >= 1024 && unit < units.length - 1) {
+                value /= 1024;
+                unit++;
+            }
+            return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+        }
+
+        function applyFullWidth() {
+            document.getElementById('mainContainer').classList.toggle('full-width', state.fullWidth);
+            document.getElementById('toggleWidthBtn').textContent = state.fullWidth ? 'Normal Width' : 'Full Width';
             document.querySelectorAll('.chart-container, .table-scroll')
-                .forEach(el => el.style.maxWidth = fullWidth ? '100%' : '');
+                .forEach(el => el.style.maxWidth = state.fullWidth ? '100%' : '');
+        }
+
+        function toggleFullWidth() {
+            state.fullWidth = !state.fullWidth;
+            applyFullWidth();
+            saveUiState();
         }
 
         function setupTableSort() {
@@ -959,50 +1086,127 @@
 
         // ── Export panel ──────────────────────────────────────────────────────
 
+        /// Data files the server offers, current run first.  Files from earlier runs
+        /// and rotated files are included, so old data stays exportable after a
+        /// restart even though the live buffer only knows this run.
+        let exportSources = [];
+
         function closeExportPanel() {
             document.getElementById('exportPanel').style.display = 'none';
             document.getElementById('exportOverlay').style.display = 'none';
         }
 
         async function showExportPanel() {
-            try {
-                const response = await fetch('/api/export/dates');
-                window._exportDates = await response.json();
-            } catch (e) {
-                window._exportDates = { days: [], weeks: [] };
-            }
-            updateExportPanel();
+            const sourceSelect = document.getElementById('exportSource');
+            sourceSelect.innerHTML = '<option value="">Scanning data files…</option>';
+            document.getElementById('exportSourceRange').textContent = '';
             document.getElementById('exportOverlay').style.display = '';
             document.getElementById('exportPanel').style.display = '';
+
+            try {
+                const response = await fetch('/api/export/sources');
+                exportSources = (await response.json()).sources || [];
+            } catch (e) {
+                console.error('Error loading export sources:', e);
+                exportSources = [];
+            }
+
+            renderSourceOptions();
+            updateExportPanel();
+        }
+
+        function renderSourceOptions() {
+            const select = document.getElementById('exportSource');
+            if (exportSources.length === 0) {
+                select.innerHTML = '<option value="">No data files with recorded data found</option>';
+                return;
+            }
+            const options = exportSources.map(s => `<option value="${s.name}">${sourceOptionLabel(s)}</option>`);
+            if (exportSources.length > 1) {
+                options.push(`<option value="all">All ${exportSources.length} files (one report per file, zip)</option>`);
+            }
+            select.innerHTML = options.join('');
+        }
+
+        function sourceOptionLabel(source) {
+            return `${source.name} — ${source.kind} — ${formatSpan(source)} — ${formatCount(source.points)} points`;
+        }
+
+        function selectedSources() {
+            const value = document.getElementById('exportSource').value;
+            if (value === 'all') return exportSources;
+            return exportSources.filter(s => s.name === value);
+        }
+
+        function formatSpan(source) {
+            if (!source.first_timestamp || !source.last_timestamp) return 'empty';
+            return `${formatShortTimestamp(source.first_timestamp)} → ${formatShortTimestamp(source.last_timestamp)}`;
+        }
+
+        function describeSource(source) {
+            const days = (source.days || []).join(', ');
+            return `Covers ${formatAbsoluteTimestamp(source.first_timestamp)} → ${formatAbsoluteTimestamp(source.last_timestamp)}`
+                + ` (${formatDuration(source.last_timestamp - source.first_timestamp)}, ${formatCount(source.points)} points,`
+                + ` ${formatBytes(source.size_bytes)}). Days: ${days || 'none'}.`;
         }
 
         function updateExportPanel() {
+            const sources = selectedSources();
+            const format = document.getElementById('exportFormat');
             const mode = document.getElementById('exportRange').value;
             const periodRow = document.getElementById('exportPeriodRow');
             const periodSelect = document.getElementById('exportPeriod');
+            const splitSelect = document.getElementById('exportSplit');
 
-            const splitRow = document.getElementById('exportSplit');
-            splitRow.disabled = document.getElementById('exportFormat').value !== 'report';
-            if (splitRow.disabled) splitRow.value = '';
+            // The dashboard snapshot is a copy of this page, which only ever holds the
+            // live buffer of the running collector - it cannot show an older file.
+            const snapshotOption = format.querySelector('option[value="html"]');
+            const currentOnly = sources.length === 1 && sources[0].current;
+            snapshotOption.disabled = !currentOnly;
+            if (snapshotOption.disabled && format.value === 'html') format.value = 'report';
 
-            document.getElementById('exportSourceHint').textContent =
-                document.getElementById('exportFormat').value === 'report'
-                    ? 'Built by the server from the whole CSV file, so it is not limited by the live buffer.'
-                    : `Copy of this page, so it only contains what the live buffer holds (${bufferSpanText()}).`;
+            splitSelect.disabled = format.value !== 'report';
+            if (splitSelect.disabled) splitSelect.value = '';
+
+            document.getElementById('exportSourceRange').textContent = describeSelection(sources);
+            document.getElementById('exportSourceHint').textContent = format.value === 'report'
+                ? 'Built by the server from the whole selected CSV file, so it is not limited by the live buffer.'
+                : `Copy of this page, so it only contains what the live buffer holds (${bufferSpanText()}).`;
 
             if (mode === 'day' || mode === 'week') {
-                const periods = mode === 'day'
-                    ? (window._exportDates?.days || [])
-                    : (window._exportDates?.weeks || []);
+                const previous = periodSelect.value;
+                const periods = periodsFor(mode, sources);
                 periodSelect.innerHTML = periods.map(p => `<option value="${p}">${p}</option>`).join('');
+                if (periods.includes(previous)) periodSelect.value = previous;
                 periodRow.style.display = '';
             } else {
                 periodRow.style.display = 'none';
             }
         }
 
+        function describeSelection(sources) {
+            if (sources.length === 0) return 'No CSV data files were found next to the collector output file.';
+            if (sources.length === 1) return describeSource(sources[0]);
+
+            const first = Math.min(...sources.map(s => s.first_timestamp));
+            const last = Math.max(...sources.map(s => s.last_timestamp));
+            const points = sources.reduce((sum, s) => sum + s.points, 0);
+            return `${sources.length} files, together covering ${formatAbsoluteTimestamp(first)} → ${formatAbsoluteTimestamp(last)}`
+                + ` (${formatCount(points)} points). Every file becomes its own report inside the zip.`;
+        }
+
+        function periodsFor(mode, sources) {
+            const key = mode === 'week' ? 'weeks' : 'days';
+            const periods = new Set();
+            for (const source of sources) {
+                for (const period of source[key] || []) periods.add(period);
+            }
+            return [...periods].sort();
+        }
+
         function doExport() {
             const format = document.getElementById('exportFormat').value;
+            const source = document.getElementById('exportSource').value;
             const range = document.getElementById('exportRange').value;
             const period = document.getElementById('exportPeriod').value;
             const split = document.getElementById('exportSplit').value;
@@ -1017,6 +1221,7 @@
             }
 
             if (split && format === 'report') query += `&split=${split}`;
+            if (source && format === 'report') query += `&source=${encodeURIComponent(source)}`;
 
             const link = document.createElement('a');
             link.href = `/api/export/${format}?${query}`;
@@ -1057,10 +1262,11 @@
         function setupControls() {
             const rangeSelect = document.getElementById('rangeSelect');
             rangeSelect.innerHTML = RANGES
-                .map(([label, seconds]) => `<option value="${seconds}"${seconds === DEFAULT_RANGE_SECONDS ? ' selected' : ''}>${label}</option>`)
+                .map(([label, seconds]) => `<option value="${seconds}"${seconds === state.rangeSeconds ? ' selected' : ''}>${label}</option>`)
                 .join('');
             rangeSelect.addEventListener('change', () => {
                 state.rangeSeconds = parseInt(rangeSelect.value, 10);
+                saveUiState();
                 updateBufferHint();
                 reloadSnapshot();
             });
@@ -1068,10 +1274,11 @@
 
             const redrawSelect = document.getElementById('redrawInterval');
             redrawSelect.innerHTML = REDRAW_INTERVALS
-                .map(s => `<option value="${s}"${s === DEFAULT_REDRAW_SECONDS ? ' selected' : ''}>${s} s</option>`)
+                .map(s => `<option value="${s}"${s === state.redrawSeconds ? ' selected' : ''}>${s} s</option>`)
                 .join('');
             redrawSelect.addEventListener('change', () => {
                 state.redrawSeconds = parseInt(redrawSelect.value, 10);
+                saveUiState();
             });
 
             document.getElementById('liveUpdates').addEventListener('change', function () {
@@ -1084,6 +1291,10 @@
         }
 
         document.addEventListener('DOMContentLoaded', async function () {
+            loadUiState();
+            applyFullWidth();
+            document.getElementById('showTable').checked = state.showTable;
+
             await loadMetadata();
 
             if (isStatic()) {

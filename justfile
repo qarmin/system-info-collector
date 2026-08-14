@@ -32,22 +32,29 @@ runrs:
 cross_arm_32:
     cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
 
+stop_remote ip_address:
+    ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
+    ssh root@{{ ip_address }} 'pkill -f /home/root/data_collector/system_info_collector' || true
+
 arm_send ip_address:
     # To avoid glibc version issues, using zigbuild
     cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28 -p system_info_collector
     ssh root@{{ ip_address }} 'mkdir -p /home/root/data_collector'
+    just stop_remote {{ ip_address }}
+    # Removing the old binary, because scp into a still running one fails with "Text file busy"
+    ssh root@{{ ip_address }} 'rm -f /home/root/data_collector/system_info_collector' || true
     scp -O target/armv7-unknown-linux-gnueabihf/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
 
 full_send ip_address service_file:
-    just arm_send {{ip_address}}
     ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
-    ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
+    just stop_remote {{ ip_address }}
+    just arm_send {{ ip_address }}
     scp -O "{{ service_file }}" root@{{ ip_address }}:/etc/systemd/system/system-info-collector.service
     ssh root@{{ ip_address }} 'systemctl daemon-reload'
     ssh root@{{ ip_address }} 'systemctl enable system-info-collector'
-    ssh root@{{ ip_address }} 'systemctl start system-info-collector'
-    ssh root@{{ ip_address }} 'cat /home/root/data_collector/data.csv'
-    ssh root@{{ ip_address }} 'systemctl status system-info-collector'
+    ssh root@{{ ip_address }} 'systemctl restart system-info-collector'
+    ssh root@{{ ip_address }} 'cat /home/root/data_collector/data.csv' || true
+    ssh root@{{ ip_address }} 'systemctl status system-info-collector' || true
 
 show_data ip_address:
     scp -O root@{{ ip_address }}:/home/root/data_collector/data.csv .
