@@ -1,3 +1,5 @@
+user := `whoami`
+
 build_all:
     cargo build --release
     cargo build
@@ -32,9 +34,18 @@ runrs:
 cross_arm_32:
     cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
 
+cross_x86_64:
+    # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
+    cargo zigbuild --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+
 stop_remote ip_address:
     ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
     ssh root@{{ ip_address }} 'pkill -f /home/root/data_collector/system_info_collector' || true
+
+# The x86_64 target is a regular user's machine, not the root-only ARM perimeter device, so it connects as $USER and needs sudo for service management
+stop_remote_x86_64 ip_address:
+    ssh -t {{ user }}@{{ ip_address }} 'sudo systemctl stop system-info-collector' || true
+    ssh {{ user }}@{{ ip_address }} 'pkill -f /home/{{ user }}/data_collector/system_info_collector' || true
 
 arm_send ip_address:
     # To avoid glibc version issues, using zigbuild
@@ -45,7 +56,15 @@ arm_send ip_address:
     ssh root@{{ ip_address }} 'rm -f /home/root/data_collector/system_info_collector' || true
     scp -O target/armv7-unknown-linux-gnueabihf/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
 
-full_send ip_address service_file:
+x86_64_send ip_address:
+    # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
+    cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+    ssh {{ user }}@{{ ip_address }} 'mkdir -p /home/{{ user }}/data_collector'
+    # Uploading under a temp name and renaming into place atomically, instead of stopping the service first, so scp never hits "Text file busy" and no sudo/password is needed here
+    scp -O target/x86_64-unknown-linux-gnu/release/system_info_collector {{ user }}@{{ ip_address }}:/home/{{ user }}/data_collector/system_info_collector.new
+    ssh {{ user }}@{{ ip_address }} 'mv -f /home/{{ user }}/data_collector/system_info_collector.new /home/{{ user }}/data_collector/system_info_collector'
+
+full_send_arm ip_address service_file:
     ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
     just stop_remote {{ ip_address }}
     just arm_send {{ ip_address }}
@@ -55,6 +74,16 @@ full_send ip_address service_file:
     ssh root@{{ ip_address }} 'systemctl restart system-info-collector'
     ssh root@{{ ip_address }} 'cat /home/root/data_collector/data.csv' || true
     ssh root@{{ ip_address }} 'systemctl status system-info-collector' || true
+
+# Unlike full_send_arm (root, perimeter device), this targets a normal x86_64 machine reachable as the local $USER account,
+# so the service file's __USER__ placeholder is filled in with that username instead of root before it's shipped over.
+# All sudo steps are bundled into a single `ssh -t` call so the remote password is only asked once.
+full_send ip_address service_file="system-info-collector.service":
+    sed 's/__USER__/{{ user }}/g' "{{ service_file }}" > /tmp/system-info-collector.service
+    just x86_64_send {{ ip_address }}
+    scp -O /tmp/system-info-collector.service {{ user }}@{{ ip_address }}:/tmp/system-info-collector.service
+    ssh -t {{ user }}@{{ ip_address }} 'sudo mv /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service && sudo systemctl daemon-reload && sudo systemctl enable system-info-collector && sudo systemctl restart system-info-collector && sudo systemctl status --no-pager system-info-collector'
+    ssh {{ user }}@{{ ip_address }} 'cat /home/{{ user }}/data_collector/data.csv' || true
 
 show_data ip_address:
     scp -O root@{{ ip_address }}:/home/root/data_collector/data.csv .
