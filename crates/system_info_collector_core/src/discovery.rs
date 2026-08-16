@@ -12,8 +12,11 @@ pub enum GpuVendor {
         nvml_index: u32,
         name: String,
     },
-    /// AMD GPU on Linux, monitored via `/sys/class/drm/cardN/device/`.
-    AmdLinux { card_device_path: PathBuf, name: String },
+    /// AMD GPU on Linux, monitored via `amdgpu-sysfs` (`/sys/class/drm/cardN/device/`).
+    AmdLinux {
+        handle: amdgpu_sysfs::gpu_handle::GpuHandle,
+        name: String,
+    },
     /// Intel GPU on Linux, monitored via `/sys/class/drm/cardN/`.
     IntelLinux { card_device_path: PathBuf, name: String },
 }
@@ -142,7 +145,7 @@ fn discover_nvidia_gpus(gpus: &mut Vec<DiscoveredGpu>) {
         match nvml.device_by_index(i) {
             Ok(device) => {
                 let name = device.name().unwrap_or_else(|_| format!("NVIDIA GPU {i}"));
-                let vram_total_mb = device.memory_info().map(|m| m.total / 1024 / 1024).unwrap_or(0);
+                let vram_total_mb = device.memory_info().map_or(0, |m| m.total / 1024 / 1024);
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu {
                     gpu_index,
@@ -198,22 +201,23 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
         match vendor_str.as_str() {
             "0x1002" => {
                 // AMD
-                if !device_path.join("gpu_busy_percent").exists() {
+                let handle = match amdgpu_sysfs::gpu_handle::GpuHandle::new_from_path(device_path.clone()) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        info!("AMD card {card_name}: failed to open sysfs handle ({e}), skipping");
+                        continue;
+                    }
+                };
+                if handle.get_busy_percent().is_err() {
                     info!("AMD card {card_name}: gpu_busy_percent not available, skipping");
                     continue;
                 }
                 let name = resolve_gpu_name(&device_path, &format!("AMD GPU ({card_name})"));
-                let vram_total_mb = fs::read_to_string(device_path.join("mem_info_vram_total"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<u64>().ok())
-                    .map_or(0, |b| b / 1024 / 1024);
+                let vram_total_mb = handle.get_total_vram().unwrap_or(0) / 1024 / 1024;
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu {
                     gpu_index,
-                    vendor: GpuVendor::AmdLinux {
-                        card_device_path: device_path,
-                        name,
-                    },
+                    vendor: GpuVendor::AmdLinux { handle, name },
                     vram_total_mb,
                 });
             }

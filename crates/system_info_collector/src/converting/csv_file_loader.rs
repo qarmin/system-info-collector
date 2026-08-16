@@ -307,6 +307,9 @@ fn parse_header(
     if collected_data_names.iter().any(|e| e.is_network()) {
         collected_groups.push(GeneralInfoGroup::NETWORK);
     }
+    if collected_data_names.iter().any(|e| e.is_network_total()) {
+        collected_groups.push(GeneralInfoGroup::NETWORK_TOTAL);
+    }
     if collected_data_names.iter().any(|e| e.is_gpu()) {
         collected_groups.push(GeneralInfoGroup::GPU);
     }

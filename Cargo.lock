@@ -18,6 +18,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "amdgpu-sysfs"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c67148270d0240773b7c69d6a98949a0f1e20fe91a756add562b5e6d3de3cf2"
+dependencies = [
+ "enum_dispatch",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -536,6 +545,18 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+
+[[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "equivalent"
@@ -1319,8 +1340,6 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "plotly"
 version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7291750f368f10b87422a0407c0db27acf50cbcc5864564b8ac17c9711ee6afe"
 dependencies = [
  "askama",
  "dyn-clone",
@@ -1834,6 +1853,7 @@ dependencies = [
 name = "system_info_collector_core"
 version = "0.7.0"
 dependencies = [
+ "amdgpu-sysfs",
  "anyhow",
  "chrono",
  "clap",

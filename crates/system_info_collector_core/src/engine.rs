@@ -30,15 +30,13 @@ impl CollectorEngine {
     /// Create the engine and run hardware discovery once.
     /// Discovery results are stored and exposed via [`CollectorEngine::discovery`].
     pub fn new(settings: Arc<CollectSettings>) -> Self {
-        let needs_gpu = settings.collection_mode.iter().any(|m| m.is_gpu());
-        let needs_network = settings.collection_mode.iter().any(|m| m.is_network());
-
-        let gpus = if needs_gpu { discover_gpus() } else { vec![] };
-        let interfaces = if needs_network {
-            discover_interfaces(&settings.network_interfaces, settings.all_networks)
-        } else {
-            vec![]
-        };
+        // Hardware discovery always runs, independent of which `-m` metrics were
+        // requested, so startup logging / CSV header metadata (detected GPU model,
+        // available network interfaces, ...) is accurate even when e.g. no GPU
+        // metric is being collected. `discover_interfaces`/`discover_disks` already
+        // self-gate on the --network/--all-networks/--disk/--all-disks CLI flags.
+        let gpus = discover_gpus();
+        let interfaces = discover_interfaces(&settings.network_interfaces, settings.all_networks);
         let disks = discover_disks(&settings.disk_mount_points, settings.all_disks);
 
         let state = SharedState {

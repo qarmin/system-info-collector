@@ -353,6 +353,10 @@
             <h3>Network [MB/s]</h3>
             <canvas id="networkChart" height="120"></canvas>
         </div>
+        <div class="chart-container" id="networkTotalChartContainer" style="display:none;">
+            <h3>Network Total [MB]</h3>
+            <canvas id="networkTotalChart" height="120"></canvas>
+        </div>
         <div class="chart-container" id="diskChartContainer" style="display:none;">
             <h3>Disk Space [GB]</h3>
             <canvas id="diskChart" height="120"></canvas>
@@ -688,6 +692,7 @@
             const isGpuTemp = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_TEMPERATURE' || /^GPU_\d+_TEMP_C$/.test(h.toUpperCase()));
             const isSwap = h => /^SWAP_(USED|FREE)$/.test(h.toUpperCase());
             const isNet = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
+            const isNetTotal = h => /^NET_\d+_(RX|TX)_TOTAL_MB$/.test(h.toUpperCase());
             const isDisk = h => /^DISK_\d+_(USED|AVAIL)_GB$/.test(h.toUpperCase());
 
             const cpuColumns = indexed.filter(({ h }) => h.toLowerCase().includes('cpu') && !isGpuCol(h));
@@ -768,6 +773,7 @@
                 { key: 'gpuTemp', container: 'gpuTempChartContainer', canvas: 'gpuTempChart', yTitle: 'Temperature [°C]', yMin: 0, datasets: gpuDatasets(isGpuTemp, 0) },
                 { key: 'swap', container: 'swapChartContainer', canvas: 'swapChart', yTitle: 'Swap [MB]', yMin: 0, yMax: metadata?.system_info?.total_swap_mb || undefined, datasets: basicDatasets(isSwap, 45) },
                 { key: 'network', container: 'networkChartContainer', canvas: 'networkChart', yTitle: 'Network [MB/s]', yMin: 0, datasets: basicDatasets(isNet, 180) },
+                { key: 'networkTotal', container: 'networkTotalChartContainer', canvas: 'networkTotalChart', yTitle: 'Network Total [MB]', yMin: 0, datasets: basicDatasets(isNetTotal, 200) },
                 { key: 'disk', container: 'diskChartContainer', canvas: 'diskChart', yTitle: 'Disk [GB]', yMin: 0, datasets: basicDatasets(isDisk, 270) },
             ];
         }

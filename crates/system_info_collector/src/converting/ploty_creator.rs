@@ -280,6 +280,10 @@ fn per_chart_legends_script() -> &'static str {
 
 // ── main plot ─────────────────────────────────────────────────────────────────
 
+/// vendor/plotly patches the upstream `Layout` struct (capped at axis 8) up to
+/// axis 12 - see vendor/plotly/src/layout/mod.rs and `set_axes` below.
+const MAX_CHART_ROWS: usize = 12;
+
 /// Fine-grained chart groups.  GPU is split into three separate charts so that
 /// utilisation (%), VRAM (MB), and temperature (°C) each get their own axis.
 /// Top-N process data is rendered as separate standalone HTML files.
@@ -289,6 +293,7 @@ enum ChartGroup {
     Cpu,
     Swap,
     Network,
+    NetworkTotal,
     GpuUtil,
     GpuVram,
     GpuTemp,
@@ -377,6 +382,9 @@ fn build_main_plot(loaded_results: &CollectedItemModels, settings: &ConvertSetti
     if let Some(&i) = layout_info.get(&ChartGroup::Network) {
         create_network_plot(&mut plot, &dates, loaded_results, i);
     }
+    if let Some(&i) = layout_info.get(&ChartGroup::NetworkTotal) {
+        create_network_total_plot(&mut plot, &dates, loaded_results, i);
+    }
     if let Some(&i) = layout_info.get(&ChartGroup::GpuUtil) {
         create_gpu_util_plot(&mut plot, &dates, loaded_results, i);
     }
@@ -435,6 +443,7 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     let has_cpu = groups.contains(&GeneralInfoGroup::CPU);
     let has_swap = groups.contains(&GeneralInfoGroup::SWAP);
     let has_network = groups.contains(&GeneralInfoGroup::NETWORK);
+    let has_network_total = groups.contains(&GeneralInfoGroup::NETWORK_TOTAL);
 
     // GPU split into three independent sub-charts based on what data is present.
     let has_gpu_util = loaded_results
@@ -455,13 +464,15 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         + has_cpu as usize
         + has_swap as usize
         + has_network as usize
+        + has_network_total as usize
         + has_gpu_util as usize
         + has_gpu_vram as usize
         + has_gpu_temp as usize
         + has_disk as usize;
 
-    // plotly 0.14 supports up to 8 named axes; cap the grid accordingly.
-    let capped_rows = rows.min(8);
+    // Upstream plotly caps out at 8 named axes; vendor/plotly patches in xaxis9-12
+    // (see set_axes below), so the grid can go up to MAX_CHART_ROWS.
+    let capped_rows = rows.min(MAX_CHART_ROWS);
     let dynamic_height = settings.plot_height.max(capped_rows as u32 * 380);
 
     let mut layout = Layout::new()
@@ -479,7 +490,7 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
 
     macro_rules! add_chart {
         ($group:expr, $y:expr) => {
-            if current <= 8 {
+            if current <= MAX_CHART_ROWS as u32 {
                 idx_info.insert($group, current);
                 layout = set_axes(current, layout, x_axis.clone(), $y);
                 current += 1;
@@ -508,6 +519,9 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     }
     if has_network {
         add_chart!(ChartGroup::Network, Axis::new().title(Title::with_text("Network [MB/s]")));
+    }
+    if has_network_total {
+        add_chart!(ChartGroup::NetworkTotal, Axis::new().title(Title::with_text("Network Total [MB]")));
     }
     if has_gpu_util {
         add_chart!(
@@ -748,6 +762,18 @@ fn create_network_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results:
     }
 }
 
+fn create_network_total_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_network_total()).collect();
+    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
+    for (data_type, data) in entries {
+        let trace = Scatter::new(dates.to_owned(), data.clone())
+            .name(data_type.pretty_print())
+            .y_axis(format!("y{i}"))
+            .x_axis(format!("x{i}"));
+        plot.add_trace(trace);
+    }
+}
+
 fn create_gpu_util_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
     let mut entries: Vec<_> = loaded_results
         .collected_data
@@ -818,6 +844,10 @@ fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {
         6 => layout.x_axis6(x).y_axis6(y),
         7 => layout.x_axis7(x).y_axis7(y),
         8 => layout.x_axis8(x).y_axis8(y),
+        9 => layout.x_axis9(x).y_axis9(y),
+        10 => layout.x_axis10(x).y_axis10(y),
+        11 => layout.x_axis11(x).y_axis11(y),
+        12 => layout.x_axis12(x).y_axis12(y),
         _ => layout,
     }
 }

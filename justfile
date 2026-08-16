@@ -6,6 +6,12 @@ build_all:
     cargo clippy
     cargo test
 
+# Prints detected CPU, memory, disks, network interfaces and GPUs (with one live sample per GPU),
+# reusing the same discovery/monitoring code the collector uses. Handy for verifying GPU detection
+# (e.g. AMD) on a machine without re-running the full collector.
+system-check:
+    cargo run -p system_info_collector_core --example system_check
+
 upgrade:
     cargo +nightly -Z unstable-options update --breaking
     cargo update
@@ -110,7 +116,7 @@ all:
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
            swap-used swap-free \
-           network-rx network-tx \
+           network-rx network-tx network-total \
            gpu-utilization gpu-memory-used gpu-temperature \
            disk-used disk-available \
            cpu-usage-per-core \
@@ -124,7 +130,7 @@ normal:
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
-           network-rx network-tx \
+           network-rx network-tx network-total \
            gpu-utilization gpu-memory-used gpu-temperature \
            disk-used disk-available \
         --all-networks --all-disks -e "GNOME SHELL|gnome-shell" \
@@ -142,7 +148,7 @@ samplyrd:
         -m cpu-usage-total  \
              memory-used memory-free memory-available \
              swap-used swap-free \
-             network-rx network-tx \
+             network-rx network-tx network-total \
              gpu-utilization gpu-memory-used gpu-temperature \
              disk-used disk-available \
         --all-networks --all-disks \

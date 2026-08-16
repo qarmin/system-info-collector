@@ -48,11 +48,10 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                 }
             };
 
-            let utilization_gpu = device.utilization_rates().map(|u| u.gpu).unwrap_or(0);
+            let utilization_gpu = device.utilization_rates().map_or(0, |u| u.gpu);
             let (memory_used_mb, memory_total_mb) = device
                 .memory_info()
-                .map(|m| (m.used / 1024 / 1024, m.total / 1024 / 1024))
-                .unwrap_or((0, 0));
+                .map_or((0, 0), |m| (m.used / 1024 / 1024, m.total / 1024 / 1024));
             let temperature = device.temperature(TemperatureSensor::Gpu).unwrap_or(0);
 
             let snapshot = GpuSnapshot {

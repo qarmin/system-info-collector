@@ -5,6 +5,12 @@ members = [
 ]
 resolver = "2"
 
+# Local patch: vendor/plotly adds xaxis9-12/yaxis9-12/zaxis9-12 to the upstream
+# Layout struct (which stops at axis 8), so the exported HTML report can have
+# more than 8 chart rows. See vendor/plotly/src/layout/mod.rs for the diff.
+[patch.crates-io]
+plotly = { path = "vendor/plotly" }
+
 [workspace.package]
 version = "0.7.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]

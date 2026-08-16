@@ -25,7 +25,7 @@ use log::{error, info};
 use sysinfo::{Disks, System};
 
 use crate::discovery::RuntimeDiscovery;
-use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
+use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
 use crate::workers::sysinfo_worker::bytes_to_mb;
@@ -132,6 +132,10 @@ pub async fn run<F>(
         let mut row: Vec<String> = Vec::with_capacity(16);
         row.push(fmt_f64(seconds_since_start));
 
+        let has_rx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC);
+        let has_tx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC);
+        let mut network_rate_written = false;
+
         for mode in &settings.collection_mode {
             match mode {
                 SimpleDataCollectionMode::CPU_USAGE_TOTAL => {
@@ -157,16 +161,35 @@ pub async fn run<F>(
                 SimpleDataCollectionMode::SWAP_FREE => {
                     row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.swap_free_mb)));
                 }
-                // Network modes expand to one column per discovered interface.
+                // Network rate modes expand to one column per discovered interface,
+                // interleaved rx/tx per interface (see `network_rate_columns`).
                 // Values are written in MB/s (bytes ÷ 1 048 576) for readability.
-                SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
-                    for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.rx_bytes_per_sec / 1_048_576.0)));
+                SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                    if !network_rate_written {
+                        network_rate_written = true;
+                        for snap in &network_snaps {
+                            if has_rx {
+                                row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.rx_bytes_per_sec / 1_048_576.0)));
+                            }
+                            if has_tx {
+                                row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.tx_bytes_per_sec / 1_048_576.0)));
+                            }
+                        }
                     }
                 }
-                SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                // Cumulative RX/TX totals since interface up, in MB - own chart, separate from the rate above.
+                SimpleDataCollectionMode::NETWORK_TOTAL => {
                     for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.tx_bytes_per_sec / 1_048_576.0)));
+                        match snap {
+                            Some(n) => {
+                                row.push(fmt_f64(n.total_rx_bytes as f64 / 1_048_576.0));
+                                row.push(fmt_f64(n.total_tx_bytes as f64 / 1_048_576.0));
+                            }
+                            None => {
+                                row.push("-1".to_string());
+                                row.push("-1".to_string());
+                            }
+                        }
                     }
                 }
                 // GPU modes expand to one column per discovered GPU.
@@ -376,16 +399,25 @@ pub fn write_csv_header(
     // GPU/network modes expand to one column per discovered GPU/interface.
     let mut columns: Vec<String> = vec![DataType::SECONDS_SINCE_START.column_name()];
 
+    let has_rx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC);
+    let has_tx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC);
+    let mut network_rate_emitted = false;
+
     for mode in &settings.collection_mode {
         match mode {
-            SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
-                for iface in &discovery.interfaces {
-                    columns.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())).column_name());
+            SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                if !network_rate_emitted {
+                    network_rate_emitted = true;
+                    let interfaces = discovery.interfaces.iter().map(|iface| (iface.iface_index, iface.name.clone()));
+                    for column in network_rate_columns(has_rx, has_tx, interfaces) {
+                        columns.push(column.column_name());
+                    }
                 }
             }
-            SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+            SimpleDataCollectionMode::NETWORK_TOTAL => {
                 for iface in &discovery.interfaces {
-                    columns.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                    columns.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.name.clone())).column_name());
+                    columns.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.name.clone())).column_name());
                 }
             }
             SimpleDataCollectionMode::GPU_UTILIZATION => {

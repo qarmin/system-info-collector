@@ -17,7 +17,7 @@ use log::{error, info, warn};
 use sysinfo::System;
 use system_info_collector_core::discovery::{list_real_disks, list_real_interfaces};
 use system_info_collector_core::engine::CollectorEngine;
-use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode};
+use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
 use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
 use system_info_collector_core::workers::file_writer::top_n_path;
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
@@ -80,6 +80,8 @@ async fn main() {
             let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
             if gpu_names.is_empty() {
                 info!("GPU: none detected");
+            } else {
+                info!("GPU: {}", gpu_names.join(", "));
             }
 
             let shutdown = engine.shutdown_handle();
@@ -107,6 +109,9 @@ async fn main() {
                 // Mirror the expanded per-GPU / per-interface column layout produced by
                 // file_writer, so the chart detector in the web UI finds the columns.
                 let mut data_types = vec![DataType::SECONDS_SINCE_START];
+                let has_rx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC);
+                let has_tx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC);
+                let mut network_rate_emitted = false;
                 for mode in &settings.collection_mode {
                     match mode {
                         SimpleDataCollectionMode::GPU_UTILIZATION => {
@@ -124,14 +129,17 @@ async fn main() {
                                 data_types.push(DataType::GPU_N_TEMP_C((idx, name.clone())));
                             }
                         }
-                        SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
-                            for iface in &interfaces {
-                                data_types.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())));
+                        SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                            if !network_rate_emitted {
+                                network_rate_emitted = true;
+                                let ifaces = interfaces.iter().map(|iface| (iface.iface_index, iface.name.clone()));
+                                data_types.extend(network_rate_columns(has_rx, has_tx, ifaces));
                             }
                         }
-                        SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                        SimpleDataCollectionMode::NETWORK_TOTAL => {
                             for iface in &interfaces {
-                                data_types.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())));
+                                data_types.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.name.clone())));
+                                data_types.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_USED => {
