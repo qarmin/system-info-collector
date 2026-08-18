@@ -78,6 +78,7 @@ async fn main() {
             let engine = CollectorEngine::new(std::sync::Arc::clone(&settings));
 
             let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
+            let gpu_vram_mb: Vec<u64> = engine.discovery().gpus.iter().map(|g| g.vram_total_mb).collect();
             if gpu_names.is_empty() {
                 info!("GPU: none detected");
             } else {
@@ -183,6 +184,7 @@ async fn main() {
                         cpu_physical_cores,
                         cpu_model: cpu_model.clone(),
                         gpu_names: gpu_names.clone(),
+                        gpu_vram_mb: gpu_vram_mb.clone(),
                         start_time: settings.start_time,
                         app_version: env!("CARGO_PKG_VERSION").to_string(),
                     },
@@ -235,7 +237,7 @@ async fn main() {
                     None
                 };
 
-            let _ = (cpu_model, gpu_names); // suppress unused warnings when !serve
+            let _ = (cpu_model, gpu_names, gpu_vram_mb); // suppress unused warnings when !serve
 
             // Register Ctrl-C handler: first press → graceful stop, second → immediate exit.
             let shutdown_for_ctrlc = shutdown.clone();

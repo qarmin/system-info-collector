@@ -286,6 +286,10 @@
                     <div class="stat-value" id="gpuNames">Loading...</div>
                 </div>
                 <div class="stat-item">
+                    <div class="stat-label">GPU VRAM</div>
+                    <div class="stat-value" id="gpuVram">Loading...</div>
+                </div>
+                <div class="stat-item">
                     <div class="stat-label">App Version</div>
                     <div class="stat-value" id="appVersion">Loading...</div>
                 </div>
@@ -502,6 +506,11 @@
             const gpuNames = metadata.system_info.gpu_names;
             document.getElementById('gpuNames').textContent =
                 (gpuNames && gpuNames.length > 0) ? gpuNames.join(', ') : 'None detected';
+            const gpuVramMb = metadata.system_info.gpu_vram_mb || [];
+            document.getElementById('gpuVram').textContent =
+                (gpuNames && gpuNames.length > 0)
+                    ? gpuNames.map((name, i) => `${name}: ${gpuVramMb[i] ? gpuVramMb[i].toFixed(0) + ' MB' : 'unknown'}`).join(', ')
+                    : 'N/A';
             document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
             document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
         }
@@ -765,11 +774,16 @@
                 return { label: h, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
 
+            // Largest VRAM among GPUs, used as the chart ceiling - individual GPUs with less
+            // VRAM just won't reach the top of the shared axis.
+            const gpuVramMb = metadata?.system_info?.gpu_vram_mb || [];
+            const gpuVramMax = gpuVramMb.length > 0 ? Math.max(...gpuVramMb) : undefined;
+
             return [
                 { key: 'cpu', container: 'cpuChartContainer', canvas: 'cpuChart', yTitle: 'CPU [%]', yMin: 0, yMax: 100, datasets: cpuDatasets },
                 { key: 'ram', container: 'ramChartContainer', canvas: 'ramChart', yTitle: 'RAM [MB]', yMin: 0, yMax: metadata?.system_info?.total_memory_mb || undefined, datasets: ramDatasets },
                 { key: 'gpuUtil', container: 'gpuUtilChartContainer', canvas: 'gpuUtilChart', yTitle: 'Utilization [%]', yMin: 0, yMax: 100, datasets: gpuDatasets(isGpuUtil, 30) },
-                { key: 'gpuVram', container: 'gpuVramChartContainer', canvas: 'gpuVramChart', yTitle: 'VRAM [MB]', yMin: 0, datasets: gpuDatasets(isGpuVram, 270) },
+                { key: 'gpuVram', container: 'gpuVramChartContainer', canvas: 'gpuVramChart', yTitle: 'VRAM [MB]', yMin: 0, yMax: gpuVramMax || undefined, datasets: gpuDatasets(isGpuVram, 270) },
                 { key: 'gpuTemp', container: 'gpuTempChartContainer', canvas: 'gpuTempChart', yTitle: 'Temperature [°C]', yMin: 0, datasets: gpuDatasets(isGpuTemp, 0) },
                 { key: 'swap', container: 'swapChartContainer', canvas: 'swapChart', yTitle: 'Swap [MB]', yMin: 0, yMax: metadata?.system_info?.total_swap_mb || undefined, datasets: basicDatasets(isSwap, 45) },
                 { key: 'network', container: 'networkChartContainer', canvas: 'networkChart', yTitle: 'Network [MB/s]', yMin: 0, datasets: basicDatasets(isNet, 180) },

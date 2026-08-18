@@ -530,7 +530,13 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         );
     }
     if has_gpu_vram {
-        add_chart!(ChartGroup::GpuVram, Axis::new().title(Title::with_text("GPU VRAM [MB]")));
+        // Largest VRAM among GPUs, used as the chart ceiling - individual GPUs with less
+        // VRAM just won't reach the top of the shared axis.
+        let mut axis = Axis::new().title(Title::with_text("GPU VRAM [MB]"));
+        if let Some(max_mb) = loaded_results.gpu_vram_mb.iter().copied().max().filter(|&m| m > 0) {
+            axis = axis.range(AxisRange::new(0, max_mb as usize));
+        }
+        add_chart!(ChartGroup::GpuVram, axis);
     }
     if has_gpu_temp {
         add_chart!(ChartGroup::GpuTemp, Axis::new().title(Title::with_text("GPU Temperature [°C]")));

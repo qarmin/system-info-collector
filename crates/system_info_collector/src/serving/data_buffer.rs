@@ -72,6 +72,8 @@ pub struct SystemInfo {
     pub cpu_physical_cores: usize,
     pub cpu_model: String,
     pub gpu_names: Vec<String>,
+    /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 = unknown).
+    pub gpu_vram_mb: Vec<u64>,
     pub start_time: f64,
     pub app_version: String,
 }
@@ -121,6 +123,7 @@ impl DataBuffer {
                 cpu_physical_cores: 0,
                 cpu_model: String::new(),
                 gpu_names: vec![],
+                gpu_vram_mb: vec![],
                 start_time: 0.0,
                 app_version: String::new(),
             },
