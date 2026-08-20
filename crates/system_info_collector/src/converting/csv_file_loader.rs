@@ -313,8 +313,14 @@ fn parse_header(
     if collected_data_names.iter().any(|e| e.is_gpu()) {
         collected_groups.push(GeneralInfoGroup::GPU);
     }
-    if collected_data_names.iter().any(|e| e.is_disk()) {
+    if collected_data_names.iter().any(|e| e.is_disk_space()) {
         collected_groups.push(GeneralInfoGroup::DISK);
+    }
+    if collected_data_names.iter().any(|e| e.is_disk_busy()) {
+        collected_groups.push(GeneralInfoGroup::DISK_BUSY);
+    }
+    if collected_data_names.iter().any(|e| e.is_disk_io()) {
+        collected_groups.push(GeneralInfoGroup::DISK_IO);
     }
 
     Ok((collected_data_names, collected_groups))

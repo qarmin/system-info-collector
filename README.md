@@ -138,6 +138,12 @@ Collect disk stats for all non-virtual disks
 ./system_info_collector collect -m disk-used --all-disks
 ```
 
+Collect disk activity (iostat-style busy% and read/write throughput) for all disks
+
+```
+./system_info_collector collect -m disk-busy -m disk-read -m disk-write --all-disks
+```
+
 List all available disks and exit
 
 ```
@@ -241,7 +247,18 @@ to track all non-virtual ones. Run with `--list-networks` to see available inter
 ## Disk monitoring
 
 Disk used/available space is collected in GB. Use `--disk <mount>` to track specific mount points (e.g. `/`, `/home`)
-or `--all-disks` to track all non-virtual disks. Run with `--list-disks` to see available disks.
+or `--all-disks` to track all non-virtual disks - one entry per device, so bind mounts and subvolumes of the same
+disk are not counted several times. Run with `--list-disks` to see available disks.
+
+Disk activity is read from the same counters `iostat` uses (`/proc/diskstats`, Linux only) and is available as three
+metrics per tracked disk:
+
+- `disk-busy` — share of wall time the device had at least one request in flight, i.e. iostat's `%util`
+- `disk-read` / `disk-write` — throughput in MB/s
+
+They are averaged over `--disk-io-interval` (1 s by default) rather than the main `--check-interval`. On NVMe drives,
+which serve many requests in parallel, `disk-busy` reaches 100% long before the drive is actually saturated - read it
+together with the throughput columns.
 
 ## GPU monitoring
 

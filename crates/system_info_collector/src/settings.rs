@@ -70,6 +70,7 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         network_interval_secs: args.network_interval.max(0.05),
         gpu_interval_secs: args.gpu_interval.max(0.05),
         disk_interval_secs: args.disk_interval.max(0.05),
+        disk_io_interval_secs: args.disk_io_interval.max(0.05),
         convert: convert_settings,
         collection_mode: args.collection_mode,
         disable_instant_flushing: args.disable_instant_flushing,

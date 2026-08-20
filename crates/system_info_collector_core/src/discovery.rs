@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use log::{info, warn};
 use sysinfo::{Disks, Networks};
 
+use crate::disk_stats::device_stat_name;
+
 /// Which GPU technology backs this device.
 #[derive(Debug, Clone)]
 pub enum GpuVendor {
@@ -79,6 +81,11 @@ pub struct DiscoveredDisk {
     pub disk_index: usize,
     /// Mount point path string, e.g. "/" or "/home/rafal/Projekty".
     pub mount_point: String,
+    /// Device path as reported by sysinfo, e.g. "/dev/nvme0n1p6".
+    pub device: String,
+    /// Kernel device name to look up in `/proc/diskstats`, e.g. "nvme0n1p6".
+    /// `None` when the device has no I/O counters, which disables its I/O metrics.
+    pub io_stat_name: Option<String>,
 }
 
 /// Everything discovered at startup.  Workers receive an `Arc` of this so
@@ -377,23 +384,44 @@ fn real_disks(disks: &Disks) -> Vec<(String, String)> {
         .collect()
 }
 
+/// One entry per device, keeping its shortest mount point - bind mounts and btrfs subvolumes
+/// otherwise report the same physical disk under a dozen different mount points.
+fn unique_devices(pairs: &[(String, String)]) -> Vec<(String, String)> {
+    let mut unique: Vec<(String, String)> = Vec::new();
+    for (dev, mount) in pairs {
+        match unique.iter_mut().find(|(d, _)| d == dev) {
+            Some((_, existing_mount)) => {
+                if mount.len() < existing_mount.len() {
+                    *existing_mount = mount.clone();
+                }
+            }
+            None => unique.push((dev.clone(), mount.clone())),
+        }
+    }
+    unique
+}
+
 /// Print available disks to the log (used by --list-disks).
 pub fn list_real_disks() {
     let disks = Disks::new_with_refreshed_list();
     let pairs = real_disks(&disks);
     if pairs.is_empty() {
         info!("No real disks found");
-    } else {
-        info!("Available disks:");
-        for (dev, mount) in &pairs {
-            info!("  device: {dev}  mount: {mount}");
-        }
+        return;
+    }
+    info!("Available disks:");
+    for (dev, mount) in &pairs {
+        info!("  device: {dev}  mount: {mount}");
+    }
+    info!("Disks tracked by --all-disks:");
+    for (dev, mount) in unique_devices(&pairs) {
+        info!("  device: {dev}  mount: {mount}");
     }
 }
 
 /// Discover disks to track.
 ///
-/// If `all_disks` is true, tracks all real (non-virtual) disks.
+/// If `all_disks` is true, tracks every real (non-virtual) disk, once per device.
 /// Otherwise each entry in `requested` is matched against either the device
 /// name (e.g. `/dev/sda1`) or the mount point (e.g. `/home`).
 pub fn discover_disks(requested: &[String], all_disks: bool) -> Vec<DiscoveredDisk> {
@@ -410,27 +438,15 @@ pub fn discover_disks(requested: &[String], all_disks: bool) -> Vec<DiscoveredDi
     let mut discovered: Vec<DiscoveredDisk> = Vec::new();
 
     if all_disks {
-        for (_, mount) in &pairs {
-            let disk_index = discovered.len();
-            info!("Tracking disk {disk_index}: {mount}");
-            discovered.push(DiscoveredDisk {
-                disk_index,
-                mount_point: mount.clone(),
-            });
+        for (dev, mount) in unique_devices(&pairs) {
+            discovered.push(track_disk(discovered.len(), mount, dev));
         }
     } else {
         for req in requested {
             // Match by mount point OR device name.
             let found = pairs.iter().find(|(dev, mount)| mount == req || dev == req);
             match found {
-                Some((_, mount)) => {
-                    let disk_index = discovered.len();
-                    info!("Tracking disk {disk_index}: {mount}");
-                    discovered.push(DiscoveredDisk {
-                        disk_index,
-                        mount_point: mount.clone(),
-                    });
-                }
+                Some((dev, mount)) => discovered.push(track_disk(discovered.len(), mount.clone(), dev.clone())),
                 None => {
                     warn!("Requested disk \"{req}\" not found (available: {})", available_display.join(", "));
                 }
@@ -439,6 +455,20 @@ pub fn discover_disks(requested: &[String], all_disks: bool) -> Vec<DiscoveredDi
     }
 
     discovered
+}
+
+fn track_disk(disk_index: usize, mount_point: String, device: String) -> DiscoveredDisk {
+    let io_stat_name = device_stat_name(&device);
+    match &io_stat_name {
+        Some(name) => info!("Tracking disk {disk_index}: {mount_point} ({device}, I/O counters from {name})"),
+        None => info!("Tracking disk {disk_index}: {mount_point} ({device}, no I/O counters available)"),
+    }
+    DiscoveredDisk {
+        disk_index,
+        mount_point,
+        device,
+        io_stat_name,
+    }
 }
 
 // ─── Network interface discovery ─────────────────────────────────────────────

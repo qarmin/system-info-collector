@@ -49,6 +49,8 @@ pub struct CollectSettings {
     pub gpu_interval_secs: f32,
     /// Interval at which disk stats are refreshed inside file_writer.
     pub disk_interval_secs: f32,
+    /// Interval at which disk_io_worker samples the cumulative I/O counters.
+    pub disk_io_interval_secs: f32,
 
     pub convert: ConvertSettings,
     pub collection_mode: Vec<SimpleDataCollectionMode>,

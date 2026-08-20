@@ -1,4 +1,5 @@
 pub mod discovery;
+pub mod disk_stats;
 pub mod engine;
 pub mod enums;
 pub mod model;

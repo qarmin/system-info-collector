@@ -32,6 +32,16 @@ pub enum SimpleDataCollectionMode {
     /// Write available-space column for each tracked disk (requires --disk or --all-disks).
     #[cfg_attr(feature = "clap", clap(name = "disk-available"))]
     DISK_AVAILABLE,
+    /// Write iostat-style %util for each tracked disk - the share of wall time the
+    /// device had I/O in flight (requires --disk or --all-disks, Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "disk-busy"))]
+    DISK_BUSY,
+    /// Write read throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "disk-read"))]
+    DISK_READ,
+    /// Write write throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "disk-write"))]
+    DISK_WRITE,
 }
 
 impl SimpleDataCollectionMode {
@@ -46,8 +56,12 @@ impl SimpleDataCollectionMode {
         matches!(self, Self::GPU_UTILIZATION | Self::GPU_MEMORY_USED | Self::GPU_TEMPERATURE)
     }
 
-    pub fn is_disk(self) -> bool {
+    pub fn is_disk_space(self) -> bool {
         matches!(self, Self::DISK_USED | Self::DISK_AVAILABLE)
+    }
+
+    pub fn is_disk_io(self) -> bool {
+        matches!(self, Self::DISK_BUSY | Self::DISK_READ | Self::DISK_WRITE)
     }
 }
 
@@ -97,6 +111,11 @@ pub enum DataType {
     // Dynamic per-disk columns: (disk_index, mount_point)
     DISK_N_USED_GB((usize, String)),
     DISK_N_AVAIL_GB((usize, String)),
+    // Dynamic per-disk I/O columns: (disk_index, mount_point).
+    // Kept apart from the space columns above so each unit gets its own chart.
+    DISK_N_BUSY_PCT((usize, String)),
+    DISK_N_READ_MBPS((usize, String)),
+    DISK_N_WRITE_MBPS((usize, String)),
 }
 
 impl std::fmt::Display for DataType {
@@ -133,6 +152,9 @@ impl DataType {
             Self::CUSTOM_MEMORY((idx, _)) => format!("CUSTOM_{idx}_MEMORY"),
             Self::DISK_N_USED_GB((idx, _)) => format!("DISK_{idx}_USED_GB"),
             Self::DISK_N_AVAIL_GB((idx, _)) => format!("DISK_{idx}_AVAIL_GB"),
+            Self::DISK_N_BUSY_PCT((idx, _)) => format!("DISK_{idx}_BUSY_PCT"),
+            Self::DISK_N_READ_MBPS((idx, _)) => format!("DISK_{idx}_READ_MBPS"),
+            Self::DISK_N_WRITE_MBPS((idx, _)) => format!("DISK_{idx}_WRITE_MBPS"),
         }
     }
 
@@ -214,6 +236,9 @@ impl DataType {
                         return match parts[1] {
                             "USED_GB" => Some(Self::DISK_N_USED_GB((idx, name))),
                             "AVAIL_GB" => Some(Self::DISK_N_AVAIL_GB((idx, name))),
+                            "BUSY_PCT" => Some(Self::DISK_N_BUSY_PCT((idx, name))),
+                            "READ_MBPS" => Some(Self::DISK_N_READ_MBPS((idx, name))),
+                            "WRITE_MBPS" => Some(Self::DISK_N_WRITE_MBPS((idx, name))),
                             _ => None,
                         };
                     }
@@ -250,6 +275,9 @@ impl DataType {
             "CUSTOM_N_MEMORY",
             "DISK_N_USED_GB",
             "DISK_N_AVAIL_GB",
+            "DISK_N_BUSY_PCT",
+            "DISK_N_READ_MBPS",
+            "DISK_N_WRITE_MBPS",
         ]
         .join(", ")
     }
@@ -294,8 +322,17 @@ impl DataType {
         )
     }
 
-    pub fn is_disk(&self) -> bool {
+    pub fn is_disk_space(&self) -> bool {
         matches!(self, Self::DISK_N_USED_GB(_) | Self::DISK_N_AVAIL_GB(_))
+    }
+
+    pub fn is_disk_busy(&self) -> bool {
+        matches!(self, Self::DISK_N_BUSY_PCT(_))
+    }
+
+    /// Read/write throughput columns only - busy% has its own chart, in percent.
+    pub fn is_disk_io(&self) -> bool {
+        matches!(self, Self::DISK_N_READ_MBPS(_) | Self::DISK_N_WRITE_MBPS(_))
     }
 
     pub fn pretty_print(&self) -> String {
@@ -324,6 +361,9 @@ impl DataType {
             Self::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
             Self::DISK_N_USED_GB((_, mount)) => format!("{mount} used GB"),
             Self::DISK_N_AVAIL_GB((_, mount)) => format!("{mount} avail GB"),
+            Self::DISK_N_BUSY_PCT((_, mount)) => format!("{mount} busy %"),
+            Self::DISK_N_READ_MBPS((_, mount)) => format!("{mount} read MB/s"),
+            Self::DISK_N_WRITE_MBPS((_, mount)) => format!("{mount} write MB/s"),
         }
     }
 }
@@ -368,4 +408,6 @@ pub enum GeneralInfoGroup {
     NETWORK_TOTAL,
     GPU,
     DISK,
+    DISK_BUSY,
+    DISK_IO,
 }

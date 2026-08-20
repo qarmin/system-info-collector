@@ -161,6 +161,14 @@ pub struct CollectArgs {
     )]
     pub disk_interval: f32,
 
+    #[arg(
+        long,
+        default_value = "1.0",
+        value_name = "DISK_IO_INTERVAL",
+        help = "Interval (seconds) over which disk busy% and read/write throughput are averaged."
+    )]
+    pub disk_io_interval: f32,
+
     // ── HTTP server ───────────────────────────────────────────────────────────
     #[arg(
         short = 's',

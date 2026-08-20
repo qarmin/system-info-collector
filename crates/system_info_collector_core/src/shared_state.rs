@@ -34,6 +34,16 @@ pub struct NetworkInterfaceSnapshot {
     pub total_tx_bytes: u64,
 }
 
+/// Snapshot of a single disk's I/O activity, derived from the same counters
+/// `iostat` uses.  Indexed by `DiscoveredDisk::disk_index`.
+#[derive(Debug, Clone, Default)]
+pub struct DiskIoSnapshot {
+    /// Share of wall time the device had at least one request in flight (iostat %util).
+    pub busy_pct: f64,
+    pub read_mb_per_sec: f64,
+    pub write_mb_per_sec: f64,
+}
+
 /// Per-process metrics for a single tracked process.
 #[derive(Debug, Clone)]
 pub struct ProcessSnapshot {
@@ -58,6 +68,9 @@ pub struct SharedState {
     /// Latest per-GPU snapshots, indexed by gpu_index.
     /// Sized to `RuntimeDiscovery::gpu_count()` at engine startup.
     pub latest_gpus: Vec<Option<GpuSnapshot>>,
+    /// Latest per-disk I/O snapshots, indexed by disk_index.
+    /// Sized to `RuntimeDiscovery::disk_count()` at engine startup.
+    pub latest_disk_io: Vec<Option<DiskIoSnapshot>>,
     /// Latest per-process snapshots, indexed by search-pattern slot.
     /// Written by sysinfo_worker alongside sysinfo data.
     pub latest_processes: Vec<Option<ProcessSnapshot>>,

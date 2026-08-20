@@ -58,9 +58,9 @@ pub async fn run<F>(
 
     let disks = &discovery.disks;
 
-    // Initialize disk monitor if any disks are requested and disk modes are active.
-    let has_disk_modes = settings.collection_mode.iter().any(|m| m.is_disk());
-    let mut sysinfo_disks = if disks.is_empty() || !has_disk_modes {
+    // Initialize disk monitor if any disks are requested and disk space modes are active.
+    let has_disk_space_modes = settings.collection_mode.iter().any(|m| m.is_disk_space());
+    let mut sysinfo_disks = if disks.is_empty() || !has_disk_space_modes {
         None
     } else {
         Some(Disks::new_with_refreshed_list())
@@ -107,12 +107,13 @@ pub async fn run<F>(
             - settings.start_time;
 
         // Brief read-lock to clone the latest snapshots.
-        let (sysinfo_snap, network_snaps, gpu_snaps, process_snaps, top_cpu_snap, top_ram_snap) = {
+        let (sysinfo_snap, network_snaps, gpu_snaps, disk_io_snaps, process_snaps, top_cpu_snap, top_ram_snap) = {
             let guard = state.read().expect("SharedState RwLock poisoned");
             (
                 guard.latest_sysinfo.clone(),
                 guard.latest_networks.clone(),
                 guard.latest_gpus.clone(),
+                guard.latest_disk_io.clone(),
                 guard.latest_processes.clone(),
                 guard.latest_top_cpu.clone(),
                 guard.latest_top_ram.clone(),
@@ -232,6 +233,22 @@ pub async fn run<F>(
                             Some(d) => row.push((d.available_space() / 1_073_741_824).to_string()),
                             None => row.push("-1".to_string()),
                         }
+                    }
+                }
+                // Disk I/O modes expand to one column per tracked disk, fed by disk_io_worker.
+                SimpleDataCollectionMode::DISK_BUSY => {
+                    for snap in &disk_io_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.busy_pct)));
+                    }
+                }
+                SimpleDataCollectionMode::DISK_READ => {
+                    for snap in &disk_io_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.read_mb_per_sec)));
+                    }
+                }
+                SimpleDataCollectionMode::DISK_WRITE => {
+                    for snap in &disk_io_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.write_mb_per_sec)));
                     }
                 }
             }
@@ -443,6 +460,21 @@ pub fn write_csv_header(
             SimpleDataCollectionMode::DISK_AVAILABLE => {
                 for disk in disks {
                     columns.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_BUSY => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_READ => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_WRITE => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
                 }
             }
             other => columns.push(other.to_string()),

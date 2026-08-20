@@ -298,6 +298,8 @@ enum ChartGroup {
     GpuVram,
     GpuTemp,
     Disk,
+    DiskBusy,
+    DiskIo,
 }
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
@@ -395,7 +397,13 @@ fn build_main_plot(loaded_results: &CollectedItemModels, settings: &ConvertSetti
         create_gpu_temp_plot(&mut plot, &dates, loaded_results, i);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::Disk) {
-        create_disk_plot(&mut plot, &dates, loaded_results, i);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_space);
+    }
+    if let Some(&i) = layout_info.get(&ChartGroup::DiskBusy) {
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_busy);
+    }
+    if let Some(&i) = layout_info.get(&ChartGroup::DiskIo) {
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_io);
     }
 
     Ok(plot)
@@ -459,6 +467,8 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         .keys()
         .any(|dt| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)));
     let has_disk = groups.contains(&GeneralInfoGroup::DISK);
+    let has_disk_busy = groups.contains(&GeneralInfoGroup::DISK_BUSY);
+    let has_disk_io = groups.contains(&GeneralInfoGroup::DISK_IO);
 
     let rows = has_memory as usize
         + has_cpu as usize
@@ -468,7 +478,9 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         + has_gpu_util as usize
         + has_gpu_vram as usize
         + has_gpu_temp as usize
-        + has_disk as usize;
+        + has_disk as usize
+        + has_disk_busy as usize
+        + has_disk_io as usize;
 
     // Upstream plotly caps out at 8 named axes; vendor/plotly patches in xaxis9-12
     // (see set_axes below), so the grid can go up to MAX_CHART_ROWS.
@@ -543,6 +555,15 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     }
     if has_disk {
         add_chart!(ChartGroup::Disk, Axis::new().title(Title::with_text("Disk Space [GB]")));
+    }
+    if has_disk_busy {
+        add_chart!(
+            ChartGroup::DiskBusy,
+            Axis::new().range(vec![-1, 100]).title(Title::with_text("Disk Busy [%]"))
+        );
+    }
+    if has_disk_io {
+        add_chart!(ChartGroup::DiskIo, Axis::new().title(Title::with_text("Disk I/O [MB/s]")));
     }
 
     let _ = current;
@@ -828,8 +849,9 @@ fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results
     }
 }
 
-fn create_disk_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_disk()).collect();
+/// One trace per column accepted by `belongs_to_chart`, sorted by label.
+fn create_traces(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32, belongs_to_chart: fn(&DataType) -> bool) {
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| belongs_to_chart(dt)).collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
         let trace = Scatter::new(dates.to_owned(), data.clone())

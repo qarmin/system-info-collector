@@ -365,6 +365,14 @@
             <h3>Disk Space [GB]</h3>
             <canvas id="diskChart" height="120"></canvas>
         </div>
+        <div class="chart-container" id="diskBusyChartContainer" style="display:none;">
+            <h3>Disk Busy [%]</h3>
+            <canvas id="diskBusyChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="diskIoChartContainer" style="display:none;">
+            <h3>Disk I/O [MB/s]</h3>
+            <canvas id="diskIoChart" height="120"></canvas>
+        </div>
 
         <div id="error" class="error" style="display: none;"></div>
 
@@ -703,6 +711,8 @@
             const isNet = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
             const isNetTotal = h => /^NET_\d+_(RX|TX)_TOTAL_MB$/.test(h.toUpperCase());
             const isDisk = h => /^DISK_\d+_(USED|AVAIL)_GB$/.test(h.toUpperCase());
+            const isDiskBusy = h => /^DISK_\d+_BUSY_PCT$/.test(h.toUpperCase());
+            const isDiskIo = h => /^DISK_\d+_(READ|WRITE)_MBPS$/.test(h.toUpperCase());
 
             const cpuColumns = indexed.filter(({ h }) => h.toLowerCase().includes('cpu') && !isGpuCol(h));
             const ramColumns = indexed.filter(({ h }) => (h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory')) && !isGpuCol(h));
@@ -789,6 +799,8 @@
                 { key: 'network', container: 'networkChartContainer', canvas: 'networkChart', yTitle: 'Network [MB/s]', yMin: 0, datasets: basicDatasets(isNet, 180) },
                 { key: 'networkTotal', container: 'networkTotalChartContainer', canvas: 'networkTotalChart', yTitle: 'Network Total [MB]', yMin: 0, datasets: basicDatasets(isNetTotal, 200) },
                 { key: 'disk', container: 'diskChartContainer', canvas: 'diskChart', yTitle: 'Disk [GB]', yMin: 0, datasets: basicDatasets(isDisk, 270) },
+                { key: 'diskBusy', container: 'diskBusyChartContainer', canvas: 'diskBusyChart', yTitle: 'Disk Busy [%]', yMin: 0, yMax: 100, datasets: basicDatasets(isDiskBusy, 15) },
+                { key: 'diskIo', container: 'diskIoChartContainer', canvas: 'diskIoChart', yTitle: 'Disk I/O [MB/s]', yMin: 0, datasets: basicDatasets(isDiskIo, 320) },
             ];
         }
 

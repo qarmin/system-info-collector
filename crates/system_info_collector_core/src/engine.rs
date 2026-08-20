@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use crate::discovery::{GpuVendor, RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
-use crate::workers::{file_writer, network_worker, nvidia_worker, sysinfo_worker};
+use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker, sysinfo_worker};
 
 #[cfg(target_os = "linux")]
 use crate::workers::amd_intel_gpu_worker;
@@ -43,6 +43,7 @@ impl CollectorEngine {
             latest_processes: vec![None; settings.process_cmd_to_search.len()],
             latest_gpus: vec![None; gpus.len()],
             latest_networks: vec![None; interfaces.len()],
+            latest_disk_io: vec![None; disks.len()],
             ..SharedState::default()
         };
 
@@ -89,6 +90,7 @@ impl CollectorEngine {
     {
         let needs_gpu = self.settings.collection_mode.iter().any(|m| m.is_gpu());
         let needs_network = self.settings.collection_mode.iter().any(|m| m.is_network());
+        let needs_disk_io = self.settings.collection_mode.iter().any(|m| m.is_disk_io());
 
         let discovery = Arc::clone(&self.discovery);
 
@@ -120,6 +122,16 @@ impl CollectorEngine {
         // network worker — only when network modes are selected and interfaces found
         if needs_network && !discovery.interfaces.is_empty() {
             join_set.spawn(network_worker::run(
+                Arc::clone(&self.settings),
+                Arc::clone(&self.state),
+                Arc::clone(&self.shutdown),
+                Arc::clone(&discovery),
+            ));
+        }
+
+        // disk I/O worker — only when a disk I/O metric is selected and disks were found
+        if needs_disk_io && !discovery.disks.is_empty() {
+            join_set.spawn(disk_io_worker::run(
                 Arc::clone(&self.settings),
                 Arc::clone(&self.state),
                 Arc::clone(&self.shutdown),

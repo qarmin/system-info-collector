@@ -153,6 +153,21 @@ async fn main() {
                                 data_types.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())));
                             }
                         }
+                        SimpleDataCollectionMode::DISK_BUSY => {
+                            for disk in &disks {
+                                data_types.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.mount_point.clone())));
+                            }
+                        }
+                        SimpleDataCollectionMode::DISK_READ => {
+                            for disk in &disks {
+                                data_types.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.mount_point.clone())));
+                            }
+                        }
+                        SimpleDataCollectionMode::DISK_WRITE => {
+                            for disk in &disks {
+                                data_types.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point.clone())));
+                            }
+                        }
                         SimpleDataCollectionMode::CPU_USAGE_TOTAL => data_types.push(DataType::CPU_USAGE_TOTAL),
                         SimpleDataCollectionMode::CPU_USAGE_PER_CORE => data_types.push(DataType::CPU_USAGE_PER_CORE),
                         SimpleDataCollectionMode::SWAP_FREE => data_types.push(DataType::SWAP_FREE),

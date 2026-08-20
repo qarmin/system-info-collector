@@ -4,13 +4,15 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use sysinfo::{CpuRefreshKind, Disks, Networks, System};
-use system_info_collector_core::discovery::{GpuVendor, discover_gpus};
+use system_info_collector_core::discovery::{GpuVendor, discover_disks, discover_gpus};
+use system_info_collector_core::disk_stats::{rates, read_counters};
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
 fn main() {
     print_cpu();
     print_memory();
     print_disks();
+    print_disk_io();
     print_network();
     print_gpus();
 }
@@ -59,6 +61,36 @@ fn print_disks() {
             disk.mount_point().display(),
             disk.file_system().to_string_lossy(),
         );
+    }
+    println!();
+}
+
+fn print_disk_io() {
+    let sample = Duration::from_millis(500);
+    println!("== Disk I/O (over a {}ms sample) ==", sample.as_millis());
+
+    let disks = discover_disks(&[], true);
+    let before = read_counters();
+    if before.is_empty() {
+        println!("no I/O counters available on this platform\n");
+        return;
+    }
+
+    sleep(sample);
+    let after = read_counters();
+
+    for disk in &disks {
+        let Some(stat_name) = disk.io_stat_name.as_deref() else {
+            println!("{:<30} {:<14} no I/O counters", disk.mount_point, disk.device);
+            continue;
+        };
+        match rates(stat_name, &after, &before, sample.as_secs_f64()) {
+            Some(io) => println!(
+                "{:<30} {stat_name:<14} busy={:>6.1} %  read={:>8.1} MB/s  write={:>8.1} MB/s",
+                disk.mount_point, io.busy_pct, io.read_mb_per_sec, io.write_mb_per_sec
+            ),
+            None => println!("{:<30} {stat_name:<14} counters disappeared mid-sample", disk.mount_point),
+        }
     }
     println!();
 }

@@ -1,6 +1,6 @@
 # Examples:
 #   just full_install
-#   just full_install "cpu-usage-total memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available" "/ /home"
+#   just full_install "cpu-usage-total memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy" "/ /home"
 #   just full_send 192.168.1.50
 #   just full_send 192.168.1.50 "cpu-usage-total memory-used" "/"
 #   just full_send_arm 192.168.1.60 "cpu-usage-total memory-used" "" system-info-collector-arm.service
@@ -8,7 +8,8 @@
 # Notes:
 #   - `metrics` is space-separated (matches the CLI's `-m` flag), not comma-separated.
 #   - `disks` is space-separated mount points/devices for --disk, e.g. "/ /home" - only
-#     takes effect if `metrics` includes disk-used/disk-available.
+#     takes effect if `metrics` includes a disk-* metric. The special value "all"
+#     means --all-disks (every real, non-virtual disk, discovered at service start).
 #   - See `default_metrics`/`default_disks` below for the full list of valid metrics values.
 
 user := `whoami`
@@ -19,9 +20,9 @@ build_all:
     cargo clippy
     cargo test
 
-# Prints detected CPU, memory, disks, network interfaces and GPUs (with one live sample per GPU),
-# reusing the same discovery/monitoring code the collector uses. Handy for verifying GPU detection
-# (e.g. AMD) on a machine without re-running the full collector.
+# Prints detected CPU, memory, disks (with a live busy%/throughput sample), network interfaces and
+# GPUs (with one live sample per GPU), reusing the same discovery/monitoring code the collector uses.
+# Handy for verifying GPU detection (e.g. AMD) on a machine without re-running the full collector.
 system-check:
     cargo run -p system_info_collector_core --example system_check
 
@@ -86,16 +87,21 @@ x86_64_send ip_address:
 # Defaults for the `metrics`/`disks` arguments on full_send_arm/full_send/full_install below.
 default_metrics := "cpu-usage-total memory-used memory-free memory-available network-rx network-tx"
 # Space-separated mount points/device names to pass as repeated --disk flags, e.g. "/ /home".
-# Only takes effect if `metrics` includes disk-used/disk-available - empty means no disk tracked.
+# Only takes effect if `metrics` includes a disk-* metric - empty means no disk tracked,
+# "all" means --all-disks.
 default_disks := ""
 
-# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available
-# disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes disk-used/disk-available
+# full_install tracks every real disk out of the box, so it also needs the disk metrics enabled.
+install_metrics := default_metrics + " disk-used disk-available disk-busy disk-read disk-write"
+
+# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
+# disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
 full_send_arm ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
     ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
     just stop_remote {{ ip_address }}
     just arm_send {{ ip_address }}
-    disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; \
+    if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
+    else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     sed -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
     scp -O /tmp/system-info-collector.service root@{{ ip_address }}:/etc/systemd/system/system-info-collector.service
     ssh root@{{ ip_address }} 'systemctl daemon-reload'
@@ -107,10 +113,11 @@ full_send_arm ip_address metrics=default_metrics disks=default_disks service_fil
 # Unlike full_send_arm (root, perimeter device), this targets a normal x86_64 machine reachable as the local $USER account,
 # so the service file's __USER__ placeholder is filled in with that username instead of root before it's shipped over.
 # All sudo steps are bundled into a single `ssh -t` call so the remote password is only asked once.
-# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available
-# disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes disk-used/disk-available
+# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
+# disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
 full_send ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
-    disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; \
+    if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
+    else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
     just x86_64_send {{ ip_address }}
     scp -O /tmp/system-info-collector.service {{ user }}@{{ ip_address }}:/tmp/system-info-collector.service
@@ -144,7 +151,7 @@ all:
            swap-used swap-free \
            network-rx network-tx network-total \
            gpu-utilization gpu-memory-used gpu-temperature \
-           disk-used disk-available \
+           disk-used disk-available disk-busy disk-read disk-write \
            cpu-usage-per-core \
         --all-networks --all-disks -e "NEMO|nemo" \
         -c 0.5 -s --top-n-processes 5
@@ -158,7 +165,7 @@ normal:
            memory-used memory-free memory-available \
            network-rx network-tx network-total \
            gpu-utilization gpu-memory-used gpu-temperature \
-           disk-used disk-available \
+           disk-used disk-available disk-busy disk-read disk-write \
         --all-networks --all-disks -e "GNOME SHELL|gnome-shell" \
         -c 0.5 -s
 
@@ -176,7 +183,7 @@ samplyrd:
              swap-used swap-free \
              network-rx network-tx network-total \
              gpu-utilization gpu-memory-used gpu-temperature \
-             disk-used disk-available \
+             disk-used disk-available disk-busy disk-read disk-write \
         --all-networks --all-disks \
         -c 0.5 -s --top-n-processes 5
         
@@ -194,16 +201,19 @@ install:
 
 # Local equivalent of full_send: builds, installs, and starts the systemd service on this machine, no ssh involved.
 # Uses cargo zigbuild against the same older glibc target as full_send/x86_64_send, so it's the exact same binary either way ships.
-# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available
-# disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes disk-used/disk-available
-full_install metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
+# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
+# disks: defaults to "all" (--all-disks, every real disk discovered at service start); pass
+# space-separated mount points/devices instead, e.g. disks="/ /home", to pick them by hand
+full_install metrics=install_metrics disks="all" service_file="system-info-collector.service":
     cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
     mkdir -p /home/{{ user }}/data_collector
     # Copying under a temp name and renaming into place atomically (like x86_64_send), since the
     # service may currently be running the old binary and a direct overwrite fails with "Text file busy"
     cp target/x86_64-unknown-linux-gnu/release/system_info_collector /home/{{ user }}/data_collector/system_info_collector.new
     mv -f /home/{{ user }}/data_collector/system_info_collector.new /home/{{ user }}/data_collector/system_info_collector
-    disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; \
+    /home/{{ user }}/data_collector/system_info_collector collect --list-disks
+    if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
+    else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
     sudo cp /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service
     sudo systemctl daemon-reload
