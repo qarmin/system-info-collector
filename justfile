@@ -11,6 +11,8 @@
 #     takes effect if `metrics` includes a disk-* metric. The special value "all"
 #     means --all-disks (every real, non-virtual disk, discovered at service start).
 #   - See `default_metrics`/`default_disks` below for the full list of valid metrics values.
+#   - "all" skips virtual filesystems and boot partitions; add `--exclude-disk <mount>` to the
+#     service ExecStart to drop anything else.
 
 user := `whoami`
 
@@ -85,14 +87,10 @@ x86_64_send ip_address:
     ssh {{ user }}@{{ ip_address }} 'mv -f /home/{{ user }}/data_collector/system_info_collector.new /home/{{ user }}/data_collector/system_info_collector'
 
 # Defaults for the `metrics`/`disks` arguments on full_send_arm/full_send/full_install below.
-default_metrics := "cpu-usage-total memory-used memory-free memory-available network-rx network-tx"
+default_metrics := "cpu-usage-total memory-used memory-free memory-available network-rx network-tx disk-used disk-available disk-busy disk-read disk-write"
 # Space-separated mount points/device names to pass as repeated --disk flags, e.g. "/ /home".
-# Only takes effect if `metrics` includes a disk-* metric - empty means no disk tracked,
-# "all" means --all-disks.
-default_disks := ""
-
-# full_install tracks every real disk out of the box, so it also needs the disk metrics enabled.
-install_metrics := default_metrics + " disk-used disk-available disk-busy disk-read disk-write"
+# "all" means --all-disks (every real disk, discovered at service start); empty means no disk tracked.
+default_disks := "all"
 
 # metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
 # disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
@@ -204,7 +202,7 @@ install:
 # metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
 # disks: defaults to "all" (--all-disks, every real disk discovered at service start); pass
 # space-separated mount points/devices instead, e.g. disks="/ /home", to pick them by hand
-full_install metrics=install_metrics disks="all" service_file="system-info-collector.service":
+full_install metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
     cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
     mkdir -p /home/{{ user }}/data_collector
     # Copying under a temp name and renaming into place atomically (like x86_64_send), since the

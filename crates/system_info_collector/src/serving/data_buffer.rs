@@ -59,7 +59,11 @@ struct TopPayload<'a> {
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemMetadata {
     pub system_info: SystemInfo,
+    /// Canonical CSV column names - the web UI groups columns into charts by these.
     pub column_headers: Vec<String>,
+    /// Readable name per column, parallel to `column_headers`, e.g.
+    /// `/home (nvme1n1 916 GB) busy %` instead of `DISK_1_BUSY_PCT`.
+    pub column_labels: Vec<String>,
     pub max_buffer_size: usize,
     pub check_interval: f32,
 }
@@ -74,6 +78,10 @@ pub struct SystemInfo {
     pub gpu_names: Vec<String>,
     /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 = unknown).
     pub gpu_vram_mb: Vec<u64>,
+    /// What each DISK_N column refers to, e.g. `/home (nvme1n1 916 GB)`.
+    pub disk_labels: Vec<String>,
+    /// What each NET_N column refers to, e.g. `wlan0 (WiFi - Wi-Fi 6 AX201)`.
+    pub net_labels: Vec<String>,
     pub start_time: f64,
     pub app_version: String,
 }
@@ -124,10 +132,13 @@ impl DataBuffer {
                 cpu_model: String::new(),
                 gpu_names: vec![],
                 gpu_vram_mb: vec![],
+                disk_labels: vec![],
+                net_labels: vec![],
                 start_time: 0.0,
                 app_version: String::new(),
             },
             column_headers: vec!["Timestamp".to_string()],
+            column_labels: vec!["Timestamp".to_string()],
             max_buffer_size: self.max_size,
             check_interval: 1.0,
         })

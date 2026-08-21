@@ -89,8 +89,10 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         top_n_processes: args.top_n_processes,
         disk_mount_points: args.disk,
         all_disks: args.all_disks,
+        excluded_disks: args.disk_exclude,
         network_interfaces: args.network,
         all_networks: args.all_networks,
+        excluded_networks: args.network_exclude,
         compact_csv: !args.no_compact,
     }
 }

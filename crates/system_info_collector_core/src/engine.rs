@@ -36,8 +36,8 @@ impl CollectorEngine {
         // metric is being collected. `discover_interfaces`/`discover_disks` already
         // self-gate on the --network/--all-networks/--disk/--all-disks CLI flags.
         let gpus = discover_gpus();
-        let interfaces = discover_interfaces(&settings.network_interfaces, settings.all_networks);
-        let disks = discover_disks(&settings.disk_mount_points, settings.all_disks);
+        let interfaces = discover_interfaces(&settings.network_interfaces, settings.all_networks, &settings.excluded_networks);
+        let disks = discover_disks(&settings.disk_mount_points, settings.all_disks, &settings.excluded_disks);
 
         let state = SharedState {
             latest_processes: vec![None; settings.process_cmd_to_search.len()],

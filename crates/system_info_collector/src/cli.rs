@@ -223,6 +223,13 @@ pub struct CollectArgs {
     #[arg(long, default_value = "false", help = "List available disks and exit.")]
     pub list_disks: bool,
 
+    #[arg(
+        long = "exclude-disk",
+        value_name = "MOUNT_OR_DEVICE",
+        help = "Leave a disk out of --all-disks, by mount point (also covers anything mounted below it) or device name. Repeatable. Boot and EFI partitions are excluded already."
+    )]
+    pub disk_exclude: Vec<String>,
+
     // ── Network interface selection ───────────────────────────────────────────
     #[arg(long, value_name = "INTERFACE", help = "Track a specific network interface (e.g. enp8s0). Repeatable.")]
     pub network: Vec<String>,
@@ -232,6 +239,13 @@ pub struct CollectArgs {
 
     #[arg(long, default_value = "false", help = "List available network interfaces and exit.")]
     pub list_networks: bool,
+
+    #[arg(
+        long = "exclude-network",
+        value_name = "INTERFACE",
+        help = "Leave an interface out of --all-networks. Repeatable. Loopback and container/bridge interfaces are excluded already."
+    )]
+    pub network_exclude: Vec<String>,
 }
 
 #[derive(Parser, Debug, Clone)]

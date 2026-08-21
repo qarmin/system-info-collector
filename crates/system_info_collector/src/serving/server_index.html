@@ -290,6 +290,14 @@
                     <div class="stat-value" id="gpuVram">Loading...</div>
                 </div>
                 <div class="stat-item">
+                    <div class="stat-label">Tracked disks</div>
+                    <div class="stat-value" id="diskLabels">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Tracked networks</div>
+                    <div class="stat-value" id="netLabels">Loading...</div>
+                </div>
+                <div class="stat-item">
                     <div class="stat-label">App Version</div>
                     <div class="stat-value" id="appVersion">Loading...</div>
                 </div>
@@ -498,6 +506,9 @@
 
         // ── Data loading ──────────────────────────────────────────────────────
 
+        const indexedList = labels =>
+            (labels && labels.length > 0) ? labels.map((label, i) => `${i}: ${label}`).join(', ') : 'None';
+
         async function loadMetadata() {
             if (isStatic()) {
                 metadata = window.STATIC_DATA.metadata;
@@ -519,6 +530,10 @@
                 (gpuNames && gpuNames.length > 0)
                     ? gpuNames.map((name, i) => `${name}: ${gpuVramMb[i] ? gpuVramMb[i].toFixed(0) + ' MB' : 'unknown'}`).join(', ')
                     : 'N/A';
+            // DISK_0 / NET_0 in the raw data mean nothing on their own, so the panel
+            // spells out which device each index is.
+            document.getElementById('diskLabels').textContent = indexedList(metadata.system_info.disk_labels);
+            document.getElementById('netLabels').textContent = indexedList(metadata.system_info.net_labels);
             document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
             document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
         }
@@ -685,6 +700,14 @@
             return headers;
         }
 
+        /// Readable name per column ("/home (nvme1n1 916 GB) busy %"), falling back to
+        /// the raw column name when the collector did not send labels.
+        function getLabels() {
+            const headers = getHeaders();
+            const labels = metadata?.column_labels || [];
+            return headers.map((h, i) => labels[i] || h);
+        }
+
         const numericValue = index => point => {
             const raw = point.data[index];
             if (raw === undefined || raw === null || raw === '' || raw === '-1' || raw === -1) return null;
@@ -701,7 +724,8 @@
 
         function buildChartSpecs() {
             const headers = getHeaders();
-            const indexed = headers.map((h, i) => ({ h, i }));
+            const labels = getLabels();
+            const indexed = headers.map((h, i) => ({ h, i, label: labels[i] }));
 
             const isGpuCol = h => h.toUpperCase().startsWith('GPU_');
             const isGpuUtil = h => isGpuCol(h) && (h.toUpperCase() === 'GPU_UTILIZATION' || /^GPU_\d+_UTIL$/.test(h.toUpperCase()));
@@ -721,7 +745,7 @@
             // and is expanded into individual per-core datasets.
             const cpuDatasets = [];
             let cpuIdx = 0;
-            for (const { h, i } of cpuColumns) {
+            for (const { h, i, label } of cpuColumns) {
                 if (h.toUpperCase() === 'CPU_USAGE_PER_CORE') {
                     let coreCount = metadata?.system_info?.cpu_cores || 0;
                     if (coreCount === 0) {
@@ -746,7 +770,7 @@
                 } else {
                     const hue = (cpuIdx * 60) % 360;
                     cpuDatasets.push({
-                        label: h,
+                        label,
                         borderColor: cpuIdx === 0 ? '#1976d2' : `hsl(${hue}, 70%, 50%)`,
                         backgroundColor: cpuIdx === 0 ? 'rgba(25,118,210,0.1)' : `hsla(${hue}, 70%, 50%, 0.1)`,
                         extract: numericValue(i),
@@ -755,10 +779,10 @@
                 }
             }
 
-            const ramDatasets = ramColumns.map(({ h, i }, idx) => {
+            const ramDatasets = ramColumns.map(({ label, i }, idx) => {
                 const hue = (idx * 60 + 180) % 360;
                 return {
-                    label: h,
+                    label,
                     borderColor: idx === 0 ? '#43a047' : `hsl(${hue}, 70%, 50%)`,
                     backgroundColor: idx === 0 ? 'rgba(67,160,71,0.1)' : `hsla(${hue}, 70%, 50%, 0.1)`,
                     extract: numericValue(i),
@@ -779,9 +803,9 @@
                 return { label, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
 
-            const basicDatasets = (predicate, startHue) => indexed.filter(({ h }) => predicate(h)).map(({ h, i }, idx) => {
+            const basicDatasets = (predicate, startHue) => indexed.filter(({ h }) => predicate(h)).map(({ label, i }, idx) => {
                 const color = `hsl(${(startHue + idx * 40) % 360}, 80%, 60%)`;
-                return { label: h, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
+                return { label, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
 
             // Largest VRAM among GPUs, used as the chart ceiling - individual GPUs with less
@@ -992,9 +1016,9 @@
             }
 
             const rows = state.data.slice(-TABLE_MAX_ROWS);
-            const headers = getHeaders();
+            const labels = getLabels();
             container.innerHTML = `<div class="table-scroll"><table>
-                <thead><tr>${headers.map(h => `<th class="sortable">${h}</th>`).join('')}</tr></thead>
+                <thead><tr>${labels.map(label => `<th class="sortable">${label}</th>`).join('')}</tr></thead>
                 <tbody>${rows.map(tableRowHtml).join('')}</tbody>
             </table></div>`;
             updateTableHint(rows.length);

@@ -239,16 +239,43 @@ are included in the CPU ranking. Kernel and userland threads are excluded.
 
 Pass both extra files to `convert` with `-d` to include them as additional charts in the HTML plot.
 
+## Column labels
+
+Per-disk and per-interface columns are named `DISK_N_*` / `NET_N_*` in the CSV, but charts, the live view and the raw
+data table show what the index actually is - `/home (nvme1n1 915 GB)` and `wlan0 (WiFi - Wi-Fi 6 AX201)`. The live
+view also lists every tracked disk and interface in its System Information panel.
+
+The labels are written to the CSV metadata line as `DISK_LABEL_N` / `NET_LABEL_N`, so `convert` reproduces them
+later; files written by older versions fall back to the bare mount point and interface name.
+
 ## Network monitoring
 
 Network RX/TX rates are collected in MB/s. Use `--network <iface>` to track specific interfaces or `--all-networks`
 to track all non-virtual ones. Run with `--list-networks` to see available interfaces.
 
+`--all-networks` already skips loopback and the usual container/virtualisation interfaces by name (`lo`, `docker*`,
+`veth*`, `br-*`, `virbr*`, `tun*`, `tap*`, `dummy*`). Anything else - a VPN, a bond, a bridge under a custom name -
+can be dropped with `--exclude-network <iface>`.
+
+Each interface is labelled with its connection type, adapter model (from the PCI database, falling back to the kernel
+driver name) and negotiated link speed, so charts read `wlan0 (WiFi - Wi-Fi 6 AX201)` rather than `NET_0`. The
+detection of type, model and speed is Linux-only (`/sys/class/net`); elsewhere only the interface name is shown.
+
 ## Disk monitoring
 
 Disk used/available space is collected in GB. Use `--disk <mount>` to track specific mount points (e.g. `/`, `/home`)
 or `--all-disks` to track all non-virtual disks - one entry per device, so bind mounts and subvolumes of the same
-disk are not counted several times. Run with `--list-disks` to see available disks.
+disk are not counted several times. Run with `--list-disks` to see available disks and what `--all-disks` would pick.
+
+`--all-disks` leaves out virtual filesystems (tmpfs, overlay, squashfs, …) and boot partitions (`/boot`, `/boot/efi`,
+`/efi`) - they are tiny, never change and only add noise. Anything else can be dropped with `--exclude-disk`, by mount
+point (which also covers mounts below it) or by device name:
+
+```
+./system_info_collector collect -m disk-used --all-disks --exclude-disk /mnt/backup --exclude-disk /dev/sdb1
+```
+
+Exclusions only apply to `--all-disks`; an explicitly requested `--disk /boot` is always tracked.
 
 Disk activity is read from the same counters `iostat` uses (`/proc/diskstats`, Linux only) and is available as three
 metrics per tracked disk:

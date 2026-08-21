@@ -15,7 +15,7 @@ use std::{env, process};
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
 use sysinfo::System;
-use system_info_collector_core::discovery::{list_real_disks, list_real_interfaces};
+use system_info_collector_core::discovery::{DiscoveredDisk, DiscoveredInterface, list_real_disks, list_real_interfaces};
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
 use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
@@ -48,11 +48,11 @@ async fn main() {
         Commands::Collect(collect_args) => {
             // Handle --list-* flags before doing anything else.
             if collect_args.list_disks {
-                list_real_disks();
+                list_real_disks(&collect_args.disk_exclude);
                 return;
             }
             if collect_args.list_networks {
-                list_real_interfaces();
+                list_real_interfaces(&collect_args.network_exclude);
                 return;
             }
 
@@ -133,39 +133,39 @@ async fn main() {
                         SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
                             if !network_rate_emitted {
                                 network_rate_emitted = true;
-                                let ifaces = interfaces.iter().map(|iface| (iface.iface_index, iface.name.clone()));
+                                let ifaces = interfaces.iter().map(|iface| (iface.iface_index, iface.display_label()));
                                 data_types.extend(network_rate_columns(has_rx, has_tx, ifaces));
                             }
                         }
                         SimpleDataCollectionMode::NETWORK_TOTAL => {
                             for iface in &interfaces {
-                                data_types.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.name.clone())));
-                                data_types.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.name.clone())));
+                                data_types.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.display_label())));
+                                data_types.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_USED => {
                             for disk in &disks {
-                                data_types.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())));
+                                data_types.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_AVAILABLE => {
                             for disk in &disks {
-                                data_types.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())));
+                                data_types.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_BUSY => {
                             for disk in &disks {
-                                data_types.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.mount_point.clone())));
+                                data_types.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_READ => {
                             for disk in &disks {
-                                data_types.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.mount_point.clone())));
+                                data_types.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_WRITE => {
                             for disk in &disks {
-                                data_types.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point.clone())));
+                                data_types.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::CPU_USAGE_TOTAL => data_types.push(DataType::CPU_USAGE_TOTAL),
@@ -182,14 +182,13 @@ async fn main() {
                     data_types.push(DataType::CUSTOM_MEMORY((idx, p.graph_name.clone())));
                 }
 
-                // Display names for the web UI - identical to the CSV column names except
-                // for tracked processes, which get their user-supplied label.
+                // The web UI groups columns into charts by their canonical CSV name, and
+                // shows the readable label next to the data.
                 let mut column_headers = vec!["Timestamp".to_string()];
-                column_headers.extend(data_types.iter().skip(1).map(|dt| match dt {
-                    DataType::CUSTOM_CPU((_, name)) => format!("{name} CPU"),
-                    DataType::CUSTOM_MEMORY((_, name)) => format!("{name} Memory"),
-                    other => other.column_name(),
-                }));
+                column_headers.extend(data_types.iter().skip(1).map(DataType::column_name));
+
+                let mut column_labels = vec!["Timestamp".to_string()];
+                column_labels.extend(data_types.iter().skip(1).map(DataType::pretty_print));
 
                 let metadata = SystemMetadata {
                     system_info: SystemInfo {
@@ -200,10 +199,13 @@ async fn main() {
                         cpu_model: cpu_model.clone(),
                         gpu_names: gpu_names.clone(),
                         gpu_vram_mb: gpu_vram_mb.clone(),
+                        disk_labels: disks.iter().map(DiscoveredDisk::display_label).collect(),
+                        net_labels: interfaces.iter().map(DiscoveredInterface::display_label).collect(),
                         start_time: settings.start_time,
                         app_version: env!("CARGO_PKG_VERSION").to_string(),
                     },
                     column_headers,
+                    column_labels,
                     max_buffer_size: buffer_capacity,
                     check_interval: settings.check_interval,
                 };

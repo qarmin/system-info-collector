@@ -69,7 +69,7 @@ fn print_disk_io() {
     let sample = Duration::from_millis(500);
     println!("== Disk I/O (over a {}ms sample) ==", sample.as_millis());
 
-    let disks = discover_disks(&[], true);
+    let disks = discover_disks(&[], true, &[]);
     let before = read_counters();
     if before.is_empty() {
         println!("no I/O counters available on this platform\n");

@@ -73,10 +73,14 @@ pub struct CollectSettings {
     pub disk_mount_points: Vec<String>,
     /// If true, track all available non-virtual disks.
     pub all_disks: bool,
+    /// Mount points or device names to leave out of `all_disks`.
+    pub excluded_disks: Vec<String>,
     /// Specific network interface names to track (empty + !all_networks = no network collection).
     pub network_interfaces: Vec<String>,
     /// If true, track all available non-virtual network interfaces.
     pub all_networks: bool,
+    /// Interface names to leave out of `all_networks`.
+    pub excluded_networks: Vec<String>,
     /// If true, repeated values are omitted from CSV rows (written as empty strings).
     /// The reader fills them back in from the previous row.  Reduces file size significantly
     /// for slow-changing metrics.  Disable with --no-compact.

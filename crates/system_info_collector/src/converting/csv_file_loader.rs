@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, metadata};
 use std::io::{BufRead, BufReader, Lines};
 
@@ -24,36 +24,18 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
 
     let (swap_total, memory_total, cpu_core_count, check_interval, hashmap_data, start_time) = parse_file_values_data(&mut lines_iter)?;
 
-    // Extract GPU names from metadata map (GPU_0=name, GPU_1=name, …).
-    let mut gpu_name_entries: Vec<(usize, String)> = hashmap_data
-        .iter()
-        .filter_map(|(k, v)| k.strip_prefix("GPU_").and_then(|n| n.parse::<usize>().ok()).map(|idx| (idx, v.clone())))
+    // GPU names (GPU_0=name, …) and VRAM totals (GPU_VRAM_0=MB, …).
+    let gpu_names: Vec<String> = indexed_meta(&hashmap_data, "GPU_").into_values().collect();
+    let gpu_vram_mb: Vec<u64> = indexed_meta(&hashmap_data, "GPU_VRAM_")
+        .into_values()
+        .map(|mb| mb.parse::<u64>().unwrap_or(0))
         .collect();
-    gpu_name_entries.sort_by_key(|(idx, _)| *idx);
-    let gpu_names: Vec<String> = gpu_name_entries.into_iter().map(|(_, name)| name).collect();
-
-    // Extract GPU VRAM totals (GPU_VRAM_0=MB, …).
-    let mut gpu_vram_entries: Vec<(usize, u64)> = hashmap_data
-        .iter()
-        .filter_map(|(k, v)| {
-            k.strip_prefix("GPU_VRAM_")
-                .and_then(|n| n.parse::<usize>().ok())
-                .and_then(|idx| v.parse::<u64>().ok().map(|mb| (idx, mb)))
-        })
-        .collect();
-    gpu_vram_entries.sort_by_key(|(idx, _)| *idx);
-    let gpu_vram_mb: Vec<u64> = gpu_vram_entries.into_iter().map(|(_, mb)| mb).collect();
 
     // CPU model string (absent in old CSV files).
     let cpu_model = hashmap_data.get("CPU_MODEL").cloned().unwrap_or_default();
 
-    // Extract disk mount points (DISK_0=path, DISK_1=path, …).
-    let mut disk_name_entries: Vec<(usize, String)> = hashmap_data
-        .iter()
-        .filter_map(|(k, v)| k.strip_prefix("DISK_").and_then(|n| n.parse::<usize>().ok()).map(|idx| (idx, v.clone())))
-        .collect();
-    disk_name_entries.sort_by_key(|(idx, _)| *idx);
-    let disk_names: Vec<String> = disk_name_entries.into_iter().map(|(_, name)| name).collect();
+    let disk_labels: Vec<String> = labeled_meta(&hashmap_data, "DISK_", "DISK_LABEL_").into_values().collect();
+    let net_labels: Vec<String> = labeled_meta(&hashmap_data, "NET_", "NET_LABEL_").into_values().collect();
 
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
@@ -89,10 +71,29 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         cpu_model,
         gpu_names,
         gpu_vram_mb,
-        disk_names,
+        disk_labels,
+        net_labels,
         top_cpu_processes,
         top_ram_processes,
     })
+}
+
+/// Values of metadata keys shaped `<prefix>N`, ordered by N.
+fn indexed_meta(meta: &HashMap<String, String>, prefix: &str) -> BTreeMap<usize, String> {
+    meta.iter()
+        .filter_map(|(key, value)| {
+            let index = key.strip_prefix(prefix)?.parse::<usize>().ok()?;
+            Some((index, value.clone()))
+        })
+        .collect()
+}
+
+/// Same, except `<label_prefix>N` (the readable form, e.g. `DISK_LABEL_0`) wins over
+/// `<prefix>N`, which is all that files written by older versions carry.
+fn labeled_meta(meta: &HashMap<String, String>, prefix: &str, label_prefix: &str) -> BTreeMap<usize, String> {
+    let mut entries = indexed_meta(meta, prefix);
+    entries.extend(indexed_meta(meta, label_prefix));
+    entries
 }
 
 /// Read only the timestamp column of a data file, returning `(start_time, relative timestamps)`.
@@ -244,32 +245,12 @@ fn parse_header(
         .context("Failed to read second line of data file")?
         .context("Failed to read second line of data file")?;
 
-    // Build name lookup maps from the metadata line.
-    // GPU_N=<name>, NET_N=<iface>, CUSTOM_N=<name>
-    let mut gpu_names: HashMap<usize, String> = HashMap::new();
-    let mut iface_names: HashMap<usize, String> = HashMap::new();
-    let mut custom_names: HashMap<usize, String> = HashMap::new();
-    let mut disk_names: HashMap<usize, String> = HashMap::new();
-
-    for (key, val) in hashmap_data {
-        if let Some(rest) = key.strip_prefix("GPU_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                gpu_names.insert(idx, val.clone());
-            }
-        } else if let Some(rest) = key.strip_prefix("NET_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                iface_names.insert(idx, val.clone());
-            }
-        } else if let Some(rest) = key.strip_prefix("CUSTOM_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                custom_names.insert(idx, val.clone());
-            }
-        } else if let Some(rest) = key.strip_prefix("DISK_")
-            && let Ok(idx) = rest.parse::<usize>()
-        {
-            disk_names.insert(idx, val.clone());
-        }
-    }
+    // Name lookup maps for the dynamic columns, so GPU_0_UTIL and friends can be
+    // labelled with what they actually measure.
+    let gpu_names: HashMap<usize, String> = indexed_meta(hashmap_data, "GPU_").into_iter().collect();
+    let custom_names: HashMap<usize, String> = indexed_meta(hashmap_data, "CUSTOM_").into_iter().collect();
+    let iface_names: HashMap<usize, String> = labeled_meta(hashmap_data, "NET_", "NET_LABEL_").into_iter().collect();
+    let disk_names: HashMap<usize, String> = labeled_meta(hashmap_data, "DISK_", "DISK_LABEL_").into_iter().collect();
 
     let collected_data_names: Vec<DataType> = header_line
         .split(',')

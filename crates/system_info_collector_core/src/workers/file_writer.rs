@@ -382,14 +382,27 @@ pub fn write_csv_header(
         .unwrap_or_default();
 
     // Network interface metadata entries: NET_0=eth0, NET_1=wlan0, …
+    // NET_LABEL_N carries the readable form ("wlan0 (WiFi - Wi-Fi 6 AX201)") used in charts.
     let net_meta: String = discovery
         .interfaces
         .iter()
-        .map(|i| format!(",NET_{}={}", i.iface_index, i.name))
+        .map(|i| format!(",NET_{}={},NET_LABEL_{}={}", i.iface_index, i.name, i.iface_index, i.display_label()))
         .collect();
 
-    // Disk metadata entries: DISK_0=/,DISK_1=/home,…
-    let disk_meta: String = disks.iter().map(|d| format!(",DISK_{}={}", d.disk_index, d.mount_point)).collect();
+    // Disk metadata entries: DISK_0=/,DISK_1=/home,… plus the readable
+    // DISK_LABEL_N ("/home (nvme1n1 916 GB)") used in charts.
+    let disk_meta: String = disks
+        .iter()
+        .map(|d| {
+            format!(
+                ",DISK_{}={},DISK_LABEL_{}={}",
+                d.disk_index,
+                d.mount_point,
+                d.disk_index,
+                d.display_label()
+            )
+        })
+        .collect();
 
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());

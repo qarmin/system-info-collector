@@ -107,7 +107,8 @@ fn slice_model_by_indices(model: &CollectedItemModels, indices: &[usize]) -> Col
         cpu_model: model.cpu_model.clone(),
         gpu_names: model.gpu_names.clone(),
         gpu_vram_mb: model.gpu_vram_mb.clone(),
-        disk_names: model.disk_names.clone(),
+        disk_labels: model.disk_labels.clone(),
+        net_labels: model.net_labels.clone(),
         top_cpu_processes: None,
         top_ram_processes: None,
     }
@@ -435,6 +436,12 @@ fn notes_html(loaded_results: &CollectedItemModels) -> String {
             .map(|&mb| format!(" ({} VRAM)", humansize::format_size(mb * 1024 * 1024, humansize::BINARY)))
             .unwrap_or_default();
         notes_vec.push(format!("GPU {idx}: {name}{vram_str}"));
+    }
+    for (idx, label) in loaded_results.disk_labels.iter().enumerate() {
+        notes_vec.push(format!("Disk {idx}: {label}"));
+    }
+    for (idx, label) in loaded_results.net_labels.iter().enumerate() {
+        notes_vec.push(format!("Network {idx}: {label}"));
     }
 
     #[expect(clippy::format_collect)]
