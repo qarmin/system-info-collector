@@ -100,13 +100,26 @@ const VIRTUAL_FS_TYPES: &[&str] = &[
     "configfs",
 ];
 
-/// Mount points left out of `--all-disks`: boot and EFI partitions are tiny, never
-/// change and are not what anyone watches disk usage for.  `--disk /boot` still works.
-const AUTO_SKIPPED_MOUNTS: &[&str] = &["/boot", "/efi"];
+/// Mount points left out of `--all-disks`: boot, EFI and recovery partitions are tiny,
+/// never change and are not what anyone watches disk usage for.  `--disk /boot` still works.
+/// Patterns are lowercase, matched case-insensitively - recovery volumes are spelled
+/// `Recovery` on macOS and Windows.
+const AUTO_SKIPPED_MOUNTS: &[&str] =
+    &["/boot", "/efi", "/recovery", "/volumes/recovery", "/system/volumes/recovery"];
 
 /// True when `mount_point` is `pattern` itself or sits below it.
 fn mount_matches(mount_point: &str, pattern: &str) -> bool {
     mount_point == pattern || mount_point.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
+}
+
+/// The `AUTO_SKIPPED_MOUNTS` entry covering this mount point, if any.
+/// Windows mount points (`D:\Recovery`) are folded into the unix shape first.
+fn auto_skipped_by(mount_point: &str) -> Option<&'static str> {
+    let mut normalized = mount_point.replace('\\', "/").to_lowercase();
+    if normalized.chars().nth(1) == Some(':') {
+        normalized.drain(..2);
+    }
+    AUTO_SKIPPED_MOUNTS.iter().copied().find(|pattern| mount_matches(&normalized, pattern))
 }
 
 /// A single disk mount point the user wants to track.
@@ -451,13 +464,11 @@ fn real_disks(disks: &Disks) -> Vec<MountedDisk> {
         .collect()
 }
 
-/// Whether `--all-disks` should track this filesystem, i.e. it is neither a boot/EFI
+/// Whether `--all-disks` should track this filesystem, i.e. it is neither a boot/EFI/recovery
 /// partition nor excluded by `--exclude-disk`.
 fn is_auto_tracked(mount: &MountedDisk, excluded: &[String]) -> bool {
-    let skipped_by = AUTO_SKIPPED_MOUNTS
-        .iter()
-        .find(|pattern| mount_matches(&mount.mount_point, pattern))
-        .map(|pattern| (*pattern).to_string())
+    let skipped_by = auto_skipped_by(&mount.mount_point)
+        .map(ToString::to_string)
         .or_else(|| {
             excluded
                 .iter()
@@ -513,7 +524,7 @@ pub fn list_real_disks(excluded: &[String]) {
 /// Discover disks to track.
 ///
 /// If `all_disks` is true, tracks every real (non-virtual) disk once per device,
-/// minus boot/EFI partitions and anything listed in `excluded`.
+/// minus boot/EFI/recovery partitions and anything listed in `excluded`.
 /// Otherwise each entry in `requested` is matched against either the device
 /// name (e.g. `/dev/sda1`) or the mount point (e.g. `/home`) - an explicitly
 /// requested disk is always tracked, exclusions only apply to `all_disks`.
@@ -737,6 +748,14 @@ mod tests {
         assert!(is_auto_tracked(&mounted("/", "/dev/nvme0n1p3"), &[]));
         // A path that merely starts with the same letters is a different mount.
         assert!(is_auto_tracked(&mounted("/bootcamp", "/dev/sda1"), &[]));
+    }
+
+    #[test]
+    fn keeps_recovery_partitions_out_of_all_disks() {
+        assert!(!is_auto_tracked(&mounted("/recovery", "/dev/sda3"), &[]));
+        assert!(!is_auto_tracked(&mounted("/Volumes/Recovery", "/dev/disk1s3"), &[]));
+        assert!(!is_auto_tracked(&mounted("D:\\Recovery", "\\\\?\\Volume{1}"), &[]));
+        assert!(is_auto_tracked(&mounted("/mnt/recovery-images", "/dev/sdb1"), &[]));
     }
 
     #[test]

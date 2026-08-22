@@ -226,7 +226,7 @@ pub struct CollectArgs {
     #[arg(
         long = "exclude-disk",
         value_name = "MOUNT_OR_DEVICE",
-        help = "Leave a disk out of --all-disks, by mount point (also covers anything mounted below it) or device name. Repeatable. Boot and EFI partitions are excluded already."
+        help = "Leave a disk out of --all-disks, by mount point (also covers anything mounted below it) or device name. Repeatable. Boot, EFI and recovery partitions are excluded already."
     )]
     pub disk_exclude: Vec<String>,
 
