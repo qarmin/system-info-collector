@@ -177,18 +177,32 @@ def attribution(d, c, coverage_ok=True):
     print("\nAttribution")
     meta, procs = d["meta"], d["procs"]
     device_w = meta["device_written_bytes"]
-    proc_w = meta["proc_wchar_bytes"]
-    unclaimed = device_w - proc_w
+    # The device total must be reconciled against the per-process *device* figure.
+    # Comparing it against wchar reports a huge shortfall for any writer that uses
+    # mmap - systemd-journald being the obvious one - because those never call
+    # write() at all.
+    charged = meta["proc_written_bytes"]
+    syscall = meta["proc_wchar_bytes"]
+    unclaimed = device_w - charged
 
-    c.note(f"device wrote {fmt(device_w)}, processes claimed {fmt(proc_w)} through write()")
+    c.note(f"device wrote {fmt(device_w)}; processes were charged {fmt(charged)} of it at device level")
     if device_w > 0:
-        share = unclaimed / device_w * 100
-        cause = (
-            "unreadable counters - fix coverage before reading anything into this"
-            if not coverage_ok
-            else "write amplification, swap, metadata, or a process too short-lived to sample"
+        c.check(
+            unclaimed <= max(device_w * 0.1, 4 * MB) or not coverage_ok,
+            "device writes are accounted for by processes",
+            f"{fmt(unclaimed)} unaccounted ({unclaimed / device_w * 100:+.0f}%)"
+            + ("" if coverage_ok else " - but coverage is incomplete, so this means nothing"),
         )
-        c.note(f"unclaimed {fmt(unclaimed)} ({share:+.0f}%) - {cause}")
+        c.note(
+            f"through write() syscalls: {fmt(syscall)}"
+            + (
+                " - far below the device figure, so the writers are using mmap or the data was dirtied earlier"
+                if syscall < charged * 0.5
+                else " - above the device figure, so the page cache is holding writes back"
+                if syscall > charged * 1.5
+                else ""
+            )
+        )
 
     recorder = next((p for p in procs if p["pid"] == meta.get("recorder_pid")), None)
     if recorder is None:

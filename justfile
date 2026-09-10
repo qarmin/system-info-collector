@@ -13,6 +13,9 @@
 #   - See `default_metrics`/`default_disks` below for the full list of valid metrics values.
 #   - "all" skips virtual filesystems and boot partitions; add `--exclude-disk <mount>` to the
 #     service ExecStart to drop anything else.
+#   - The send/install recipes grant the binary the capabilities the `session` command needs to
+#     read every process's I/O. See `session_caps` below; `just grant_caps <ip>` reapplies them
+#     on their own if a binary was copied over some other way.
 
 user := `whoami`
 
@@ -60,6 +63,32 @@ cross_x86_64:
     # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
     RUSTFLAGS="" cargo zigbuild --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
 
+# Capabilities the session recorder needs to read every process's /proc/<pid>/io.
+#
+# Without them a recording made as an ordinary user gets I/O counters for that
+# user's own processes only - no system daemons, no kernel threads, so none of the
+# writeback that buffered writes are charged to. Those rows come back as zero,
+# which is indistinguishable from "wrote nothing", so attribution silently covers
+# a couple of percent of the machine.
+#
+# cap_dac_read_search opens the 0400 file, cap_sys_ptrace satisfies the ptrace
+# access check the kernel additionally applies to it - both are required, either
+# alone still fails.
+#
+# These are xattrs on the binary, so they do not survive scp and the send recipes
+# reapply them after every deploy. They are also ignored on a filesystem mounted
+# nosuid and cannot be stored at all on one without xattr support.
+session_caps := "cap_dac_read_search,cap_sys_ptrace+ep"
+
+# Reapply the session capabilities on a remote machine, e.g. after a hand-copied binary.
+grant_caps ip_address:
+    ssh -t {{ user }}@{{ ip_address }} 'sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector && getcap /home/{{ user }}/data_collector/system_info_collector'
+
+# Same, for a binary installed by full_install on this machine.
+grant_caps_local:
+    sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector
+    getcap /home/{{ user }}/data_collector/system_info_collector
+
 stop_remote ip_address:
     ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
     ssh root@{{ ip_address }} 'pkill -f /home/root/data_collector/system_info_collector' || true
@@ -102,6 +131,10 @@ full_send_arm ip_address metrics=default_metrics disks=default_disks service_fil
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     sed -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
     scp -O /tmp/system-info-collector.service root@{{ ip_address }}:/etc/systemd/system/system-info-collector.service
+    # That service runs as root, so it can already read every process; this is only
+    # for running `session` by hand as a non-root user there, and squashfs/jffs2 roots
+    # have no xattrs to store capabilities in, hence the tolerated failure.
+    ssh root@{{ ip_address }} 'setcap {{ session_caps }} /home/root/data_collector/system_info_collector && getcap /home/root/data_collector/system_info_collector' || echo "setcap unavailable on this target - the service runs as root anyway"
     ssh root@{{ ip_address }} 'systemctl daemon-reload'
     ssh root@{{ ip_address }} 'systemctl enable system-info-collector'
     ssh root@{{ ip_address }} 'systemctl restart system-info-collector'
@@ -119,7 +152,7 @@ full_send ip_address metrics=default_metrics disks=default_disks service_file="s
     sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
     just x86_64_send {{ ip_address }}
     scp -O /tmp/system-info-collector.service {{ user }}@{{ ip_address }}:/tmp/system-info-collector.service
-    ssh -t {{ user }}@{{ ip_address }} 'sudo mv /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service && sudo systemctl daemon-reload && sudo systemctl enable system-info-collector && sudo systemctl restart system-info-collector && sudo systemctl status --no-pager system-info-collector'
+    ssh -t {{ user }}@{{ ip_address }} 'sudo mv /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service && sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector && getcap /home/{{ user }}/data_collector/system_info_collector && sudo systemctl daemon-reload && sudo systemctl enable system-info-collector && sudo systemctl restart system-info-collector && sudo systemctl status --no-pager system-info-collector'
     ssh {{ user }}@{{ ip_address }} 'cat /home/{{ user }}/data_collector/data.csv' || true
 
 show_data ip_address:
@@ -210,6 +243,8 @@ full_install metrics=default_metrics disks=default_disks service_file="system-in
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
     sudo cp /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service
+    sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector
+    getcap /home/{{ user }}/data_collector/system_info_collector
     sudo systemctl daemon-reload
     sudo systemctl enable system-info-collector
     sudo systemctl restart system-info-collector

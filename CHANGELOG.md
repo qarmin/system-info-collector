@@ -18,6 +18,8 @@
 - Software RAID (`md*`) and NVMe multipath aliases (`nvme0c0n1`) are now recognised as duplicates of the devices they sit on; previously their traffic was added on top
 - A process whose `/proc/<pid>/io` cannot be read is now recorded as unknown rather than as zero, tagged in the table, counted in the metadata and announced at the top of the viewer - an unprivileged recording sees I/O for its own processes only, which previously looked like every daemon and kernel thread writing nothing
 - Recordings carry each process's owning uid and the recorder's own uid, so incomplete coverage is self-evident
+- The device write total is now reconciled against per-process *device* bytes rather than syscall bytes: a writer that uses `mmap` (systemd-journald being the common one) has `wchar` of zero while its pages still reach the disk, which previously showed up as a large phantom shortfall
+- The systemd unit asks for `CAP_DAC_READ_SEARCH` and `CAP_SYS_PTRACE` via `AmbientCapabilities`, so recordings started from the web UI of a deployed service see every process; the `just` deploy recipes also reapply the equivalent file capabilities, which `scp` strips
 - A finished recording is no longer discarded when the record panel is closed
 - Added a `verify-session` skill in `.claude/skills/` with a `verify_session.py` script that checks a recording's invariants, reconciles rates against totals, reports peaks in context and summarises attribution
 - Split the Disk Space chart into separate used and available charts

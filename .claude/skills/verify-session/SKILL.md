@@ -169,9 +169,19 @@ report it as unattributed traffic. Re-record with privilege:
 
 ```bash
 sudo ./system_info_collector session --duration 60
-# or, once:
+# or grant the binary both capabilities once - either one alone still fails:
 sudo setcap cap_dac_read_search,cap_sys_ptrace+ep ./system_info_collector
+# or, for a deployed service, let systemd do it (already in the shipped unit):
+#   AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
 ```
+
+`setcap` reports `Invalid argument` for a misspelt capability and `Operation not
+permitted` when it merely lacks privilege - useful for telling a typo from a
+sandbox. The capabilities are xattrs, so they are lost on every `scp`; `just
+grant_caps <ip>` reapplies them and the send recipes already do.
+
+After re-recording, confirm the fix rather than assuming it: coverage should read
+close to 100%, and kernel threads should stop being uniformly zero.
 
 ## 4. The recorder must not look like a culprit
 

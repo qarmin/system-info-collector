@@ -332,14 +332,25 @@ buffered writes are charged to. Those rows are tagged `no I/O data` and a notice
 because a zero there means *unknown*, not *idle*, and the gap between what the disk did and what processes claim is
 then meaningless.
 
-```
-sudo ./system_info_collector session --duration 60
-```
+Two capabilities fix it: `cap_dac_read_search` opens the 0400 file and `cap_sys_ptrace` passes the access check the
+kernel additionally applies. Either alone still fails.
 
-or grant the capability once and record as yourself:
+For a recording started from the terminal, grant them to the binary once:
 
 ```
 sudo setcap cap_dac_read_search,cap_sys_ptrace+ep ./system_info_collector
+```
+
+For recordings started from the web UI - which run inside the `collect --serve` process - the shipped systemd unit
+already asks for them via `AmbientCapabilities`, so a deployed service has full coverage without any `setcap` at all.
+That matters because file capabilities are extended attributes and do not survive `scp`; the `just full_send`,
+`full_send_arm` and `full_install` recipes reapply them after every deploy anyway, and `just grant_caps <ip>` does it
+on its own for a binary copied over by hand.
+
+Or simply run the whole thing as root:
+
+```
+sudo ./system_info_collector session --duration 60
 ```
 
 ### Where recordings are written
