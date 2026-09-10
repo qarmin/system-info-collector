@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Info Collector - Process Session</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #181a1b; color: #e0e0e0; }
+        .container { max-width: 95vw; margin: 0 auto; }
+        h1 { color: #fff; font-size: 1.5em; }
+        h3 { color: #90caf9; margin: 0 0 10px 0; }
+        .panel { background-color: #23272a; padding: 14px 16px; border-radius: 8px; margin-bottom: 14px; border: 1px solid #333; }
+        .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        button { background-color: #1976d2; color: #fff; border: none; padding: 7px 13px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+        button:hover:not(:disabled) { background-color: #1565c0; }
+        button:disabled { background-color: #444; color: #888; cursor: not-allowed; }
+        button.ghost { background-color: #37474f; }
+        button.ghost.on { background-color: #00838f; }
+        button.danger { background-color: #c62828; }
+        select, input[type=text], input[type=number] { background-color: #2c3136; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; padding: 6px; }
+        .hint { color: #9e9e9e; font-size: 0.82em; }
+        .warn { color: #ffb74d; font-size: 0.85em; }
+        .chart-block { margin-bottom: 6px; }
+        .chart-title { font-size: 0.82em; color: #90caf9; margin: 0 0 2px 2px; }
+        /* An explicit height is required: Chart.js with maintainAspectRatio off
+           sizes itself to this box, and without one the canvas has no height to
+           resolve against. */
+        .chart-wrap { position: relative; height: 110px; }
+        .chart-wrap canvas { cursor: crosshair; }
+        .glossary dt { color: #90caf9; margin-top: 10px; font-weight: bold; }
+        .glossary dd { margin: 3px 0 0 0; color: #c8c8c8; font-size: 0.9em; }
+        .glossary code { color: #b0bec5; }
+        .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        th, td { padding: 5px 7px; text-align: right; border-bottom: 1px solid #2f3336; white-space: nowrap; }
+        th { background-color: #2c3136; position: sticky; top: 0; cursor: pointer; user-select: none; z-index: 2; }
+        th.left, td.left { text-align: left; }
+        th:hover { background-color: #37474f; }
+        tr.proc:hover { background-color: #262b2f; }
+        tr.proc { cursor: pointer; }
+        .table-scroll { max-height: 60vh; overflow: auto; border: 1px solid #333; border-radius: 6px; }
+        .pid { color: #78909c; font-size: 0.9em; }
+        .tag { font-size: 0.72em; padding: 1px 5px; border-radius: 3px; margin-left: 5px; }
+        .tag.kernel { background: #4a148c; color: #e1bee7; }
+        .tag.born { background: #1b5e20; color: #a5d6a7; }
+        .tag.died { background: #b71c1c; color: #ffcdd2; }
+        .tag.child { background: #e65100; color: #ffe0b2; }
+        .tag.self { background: #01579b; color: #b3e5fc; }
+        .tag.noio { background: #4e342e; color: #ffccbc; }
+        .banner { background: #3e2723; border-left: 4px solid #ff8a65; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; color: #ffccbc; font-size: 0.9em; }
+        .pos { color: #ff8a65; }
+        .neg { color: #81c784; }
+        .zero { color: #616161; }
+        .detail td { background: #1c2023; text-align: left; white-space: normal; font-size: 0.9em; }
+        .detail code { color: #b0bec5; word-break: break-all; }
+        .detail ul { margin: 6px 0; padding-left: 20px; }
+        .countdown { font-size: 1.6em; color: #4db5ff; font-variant-numeric: tabular-nums; }
+        .empty { color: #9e9e9e; padding: 20px; text-align: center; }
+        canvas.spark { vertical-align: middle; }
+        #ganttWrap { max-height: 60vh; overflow: auto; border: 1px solid #333; border-radius: 6px; }
+    </style>
+    <script src="/static/chart.min.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>Process Session</h1>
+
+    <div class="panel" id="recordPanel" style="display:none;">
+        <h3>Record</h3>
+        <div class="row" id="recordIdle">
+            <label>Duration
+                <select id="recordSeconds">
+                    <option value="15">15 s</option>
+                    <option value="30">30 s</option>
+                    <option value="60" selected>60 s</option>
+                    <option value="120">2 min</option>
+                    <option value="300">5 min</option>
+                    <option value="custom">custom...</option>
+                </select>
+            </label>
+            <input type="number" id="recordSecondsCustom" min="1" max="300" step="1" value="120" style="display:none; width:90px;">
+            <label>Rate
+                <select id="recordHz">
+                    <option value="5" selected>5 Hz (max)</option>
+                    <option value="2">2 Hz</option>
+                    <option value="1">1 Hz</option>
+                </select>
+            </label>
+            <button onclick="startRecording()">Start recording</button>
+            <span class="hint" id="recordHint"></span>
+        </div>
+        <div class="row" id="recordActive" style="display:none;">
+            <span class="countdown" id="countdown">--</span>
+            <span class="hint" id="recordProgress"></span>
+            <button class="danger" onclick="stopRecording()">Stop now and keep data</button>
+        </div>
+    </div>
+
+    <div class="panel" id="listPanel" style="display:none;">
+        <h3>Saved sessions</h3>
+        <div class="row">
+            <select id="sessionSelect" onchange="loadSelectedSession()" style="min-width: 380px;"></select>
+            <button class="ghost" onclick="refreshSessionList()">Refresh</button>
+            <button class="ghost" onclick="downloadStandalone()">Download as single HTML</button>
+            <button class="ghost" onclick="downloadJson()">Download JSON</button>
+        </div>
+        <div class="hint" id="listHint" style="margin-top:8px;"></div>
+    </div>
+
+    <div id="main" style="display:none;">
+        <div id="coverageBanner" class="banner" style="display:none;"></div>
+        <div class="panel">
+            <h3>System load - drag across any chart to select a period</h3>
+            <div class="hint" id="rateHint" style="margin-bottom:8px;"></div>
+            <div id="chartStack"></div>
+            <div class="row" style="margin-top:10px;">
+                <button class="ghost" onclick="selectAll()">Whole session</button>
+                <button class="ghost" id="baselineBtn" onclick="toggleBaseline()">Set selection as baseline</button>
+                <span class="hint" id="selectionInfo"></span>
+            </div>
+            <div class="hint" id="ioHint" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Totals for the whole recording</h3>
+            <div id="sessionTotals"></div>
+        </div>
+
+        <div class="panel">
+            <div class="row" style="margin-bottom:10px;">
+                <button class="ghost on" id="viewTable" onclick="setView('table')">Table</button>
+                <button class="ghost" id="viewTree" onclick="setView('tree')">Tree</button>
+                <button class="ghost" id="viewGantt" onclick="setView('gantt')">Lifetimes</button>
+                <label style="margin-left:10px;"><input type="checkbox" id="groupByExe" onchange="render()"> Group by executable</label>
+                <label><input type="checkbox" id="hideIdle" onchange="render()" checked> Hide idle</label>
+                <label title="Kernel threads are always recorded, because buffered writes are charged to them - this only hides them from the table"><input type="checkbox" id="showKernel" onchange="render()"> Show kernel threads</label>
+                <input type="text" id="filter" placeholder="filter by name / path..." oninput="render()" style="min-width:220px; margin-left:auto;">
+            </div>
+            <div id="viewHost"></div>
+            <div class="hint" id="tableHint" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="panel">
+            <h3>What the numbers mean</h3>
+            <dl class="glossary">
+                <dt><span class="swatch" style="background:hsl(25,100%,65%)"></span>CPU total [%]</dt>
+                <dd>
+                    Whole-machine CPU use, already divided by the core count, so 100% means every core is busy.
+                    Per-process CPU in the table is scaled the same way: a process pinning two cores of twelve reads
+                    about 17%, not 200%.
+                </dd>
+
+                <dt><span class="swatch" style="background:hsl(205,100%,65%)"></span>Disk write, device [MB/s]
+                    &nbsp;<span class="swatch" style="background:hsl(105,100%,65%)"></span>Disk read, device [MB/s]</dt>
+                <dd>
+                    What actually crossed the block device, read from <code>/proc/diskstats</code> - the same counters
+                    <code>iostat</code> uses. This is the ground truth for "the disk is busy". Partitions and
+                    device-mapper targets are excluded so a single write is not counted two or three times.
+                </dd>
+
+                <dt><span class="swatch" style="background:hsl(205,40%,52%)"></span>Process writes, syscall [MB/s]</dt>
+                <dd>
+                    The sum of what every process wrote through <code>write()</code>, from <code>wchar</code> in
+                    <code>/proc/&lt;pid&gt;/io</code>. Charged to the process that made the call, even when the data
+                    only reached the page cache and has not touched the disk yet.
+                </dd>
+
+                <dt>Why the two write lines disagree</dt>
+                <dd>
+                    They measure different moments of the same write. <b>Syscall above device</b> means processes are
+                    filling the page cache faster than the kernel is flushing it - the syscall column names the real
+                    author. <b>Device above syscall</b> means either writeback catching up on data written earlier, or a
+                    writer that never calls <code>write()</code> at all: a process that <code>mmap</code>s its file
+                    and stores into the mapping has <code>wchar</code> of zero while its pages still reach the disk and
+                    are charged to it. <code>systemd-journald</code> works exactly this way, so it can be responsible
+                    for nearly all of a machine's writes while the syscall column shows it as completely idle - sort by
+                    <b>Write device</b> to find it. Both lines being low while the disk is busy points at something
+                    outside process accounting, such as swap or a RAID resync.
+                </dd>
+
+                <dt>Write syscall / Write device / Write by children (table columns)</dt>
+                <dd>
+                    <b>Write syscall</b> is that process's own <code>wchar</code>. <b>Write device</b> is its
+                    <code>write_bytes</code> - bytes it personally handed to the disk, which for ordinary buffered
+                    writes is zero because a kernel flush thread does that part. <b>Write by children</b> is what the
+                    kernel folded in from children that exited during the period: Linux adds a reaped child's I/O to
+                    its parent, so a process too short-lived to sample still shows up here, against whoever started it.
+                    That amount is subtracted from the first two columns, so they stay the process's own work.
+                </dd>
+
+                <dt>I/O wait</dt>
+                <dd>
+                    How many samples caught the process in state <code>D</code> - uninterruptible sleep, which in
+                    practice means blocked waiting for storage. A process high here is a victim of slow I/O rather
+                    than its cause.
+                </dd>
+
+                <dt>RSS max and RSS change</dt>
+                <dd>
+                    Resident memory: the peak within the period, and the difference between its value at the end and
+                    at the start. A consistently positive change across several periods is what a leak looks like.
+                </dd>
+
+                <dt>Shape columns</dt>
+                <dd>
+                    One miniature plot per metric over the selected period, on that row's own scale - they show
+                    <i>when</i> within the period something happened, not how much. A single spike, an even stream and
+                    a regular pulse all produce the same total but very different shapes.
+                </dd>
+
+                <dt>started / exited / kernel / spawned N</dt>
+                <dd>
+                    <b>started</b> - first seen after the recording began, rather than already running.
+                    <b>exited</b> - gone before it ended. <b>kernel</b> - a kernel thread, hidden from the table by
+                    default; they are still recorded because buffered writeback is charged to them.
+                    <b>spawned N</b> - started N children during the period, so its write totals may include children
+                    too short-lived to be sampled.
+                </dd>
+
+                <dt>Write session / Read session (table columns)</dt>
+                <dd>
+                    The whole recording, not the selected period: the process's cumulative counter when it was last
+                    sampled minus when it was first sampled. Select the whole session and this should agree closely
+                    with "Write syscall" - but the two are measured differently and may not match exactly:
+                    <ul>
+                        <li>The very first sample only establishes a baseline, so bytes written before it are in this
+                            column but not in the per-tick sum.</li>
+                        <li>Bytes the kernel folded in from reaped children are counted here, but deliberately taken
+                            out of "Write syscall" and shown under "Write by children" instead.</li>
+                    </ul>
+                    So this column is the more complete figure for "what did this process account for during the
+                    recording", while "Write syscall" is the more precisely attributed one for a chosen slice of it.
+                </dd>
+
+                <dt>Write lifetime / Read lifetime (table columns)</dt>
+                <dd>
+                    The only two columns that are <b>not</b> scoped to the selected period. They are cumulative
+                    <code>wchar</code> and <code>rchar</code> since <i>the process itself</i> started, which for
+                    something launched at boot can be days of activity - the same figures a task manager shows as disk
+                    read/write totals. A process that is quiet during the recording but has written gigabytes over its
+                    life is still worth a look, and only these columns show it; sorting by them finds the long-running
+                    heavy writers. Expand a row to see the same process's lifetime and recorded totals side by side.
+                </dd>
+
+                <dt>Totals for the whole recording</dt>
+                <dd>
+                    The panel above the table compares what the device actually did against what processes admitted to.
+                    A large unclaimed remainder means the write did not come from a <code>write()</code> call this
+                    recording saw: a process too short-lived to sample, or traffic outside process accounting such as
+                    swap, filesystem journalling or a copy-on-write filesystem amplifying the writes.
+                </dd>
+
+                <dt>Idle samples are not stored</dt>
+                <dd>
+                    A sample is only kept when the process used CPU, moved bytes, or changed memory. Gaps therefore
+                    mean "idle, unchanged", which is why average CPU divides by the length of the period rather than
+                    by the number of samples present.
+                </dd>
+            </dl>
+        </div>
+    </div>
+
+    <div class="panel" id="loading">Loading...</div>
+</div>
+
+<script>
+'use strict';
+
+// ── state ─────────────────────────────────────────────────────────────────────
+
+const STANDALONE = typeof window.SESSION_DATA !== 'undefined';
+const state = {
+    data: null,
+    /// Inclusive tick range currently selected on the system chart.
+    sel: { a: 0, b: 0 },
+    /// Second range to compare against, or null when not diffing.
+    baseline: null,
+    sortKey: 'wchar',
+    sortDir: -1,
+    view: 'table',
+    expanded: new Set(),
+    /// One Chart.js instance per entry in SYSTEM_CHARTS.
+    charts: {},
+    /// pid -> process id, for resolving ppid into the tree.
+    pidIndex: new Map(),
+    /// parent pid -> child processes, for spotting repeated spawning.
+    childIndex: new Map(),
+};
+
+const MB = 1048576;
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+const fmtMb = v => v >= 1024 ? (v / 1024).toFixed(2) + ' GB' : v >= 0.05 ? v.toFixed(1) + ' MB' : v > 0 ? '<0.1' : '-';
+const fmtRate = v => Math.abs(v) >= 0.01 ? v.toFixed(2) : v !== 0 ? '~0' : '-';
+const fmtPct = v => v >= 0.05 ? v.toFixed(1) : v > 0 ? '<0.1' : '-';
+const fmtSecs = v => v.toFixed(1) + ' s';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/// First index of `arr` whose value is >= `value`.  Sample tick arrays are
+/// ascending, so range queries do not need a scan.
+function lowerBound(arr, value) {
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid] < value) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
+
+function tickToMs(tick) {
+    const t = state.data.system.t_ms;
+    return t[Math.max(0, Math.min(t.length - 1, tick))] ?? 0;
+}
+
+function msToTick(ms) {
+    const t = state.data.system.t_ms;
+    const idx = lowerBound(t, ms);
+    if (idx === 0) return 0;
+    if (idx >= t.length) return t.length - 1;
+    return (ms - t[idx - 1]) < (t[idx] - ms) ? idx - 1 : idx;
+}
+
+function tickSeconds(a, b) {
+    return Math.max((tickToMs(b) - tickToMs(a)) / 1000, 1 / state.data.meta.hz);
+}
+
+// ── aggregation ───────────────────────────────────────────────────────────────
+
+/// Totals for one process over an inclusive tick range.
+///
+/// Ticks missing from the sparse sample arrays mean "idle, unchanged", so CPU is
+/// averaged over the window length rather than over the samples present, and RSS
+/// is carried forward from the last recorded value.
+function aggregate(procId, a, b) {
+    const out = emptyAgg();
+    const s = state.data.samples[procId];
+    if (!s) return out;
+
+    const windowTicks = b - a + 1;
+    const from = lowerBound(s.t, a);
+    const to = lowerBound(s.t, b + 1);
+
+    // RSS at the window start is the newest value recorded at or before it; if
+    // the process appeared later, its first sample stands in.
+    out.rssStart = from > 0 ? s.rss_mb[from - 1] : (s.rss_mb[from] ?? 0);
+
+    let cpuSum = 0;
+    let firstCtx = null, lastCtx = null;
+    for (let i = from; i < to; i++) {
+        cpuSum += s.cpu[i];
+        if (s.cpu[i] > out.cpuMax) out.cpuMax = s.cpu[i];
+        out.rchar += s.rchar[i];
+        out.wchar += s.wchar[i];
+        out.readBytes += s.read_bytes[i];
+        out.writtenBytes += s.written_bytes[i];
+        out.inheritedWchar += s.inherited_wchar[i];
+        out.inheritedWritten += s.inherited_written[i];
+        if (s.rss_mb[i] > out.rssMax) out.rssMax = s.rss_mb[i];
+        out.rssEnd = s.rss_mb[i];
+        if (s.threads[i] > out.threads) out.threads = s.threads[i];
+        if (s.status[i] === 'D') out.dTicks++;
+        // Context switches are cumulative counters, so only their span counts.
+        const ctx = s.vol_ctx[i] + s.nonvol_ctx[i];
+        if (firstCtx === null) firstCtx = ctx;
+        lastCtx = ctx;
+        out.samples++;
+    }
+
+    out.cpuAvg = cpuSum / windowTicks;
+    if (out.rssMax === 0) out.rssMax = out.rssStart;
+    if (out.samples === 0) out.rssEnd = out.rssStart;
+    out.rssDelta = out.rssEnd - out.rssStart;
+    out.ctx = lastCtx !== null ? lastCtx - firstCtx : 0;
+    return out;
+}
+
+/// Per-second rates, so two windows of different lengths stay comparable in
+/// diff mode.
+function toRates(agg, seconds) {
+    return {
+        cpuAvg: agg.cpuAvg,
+        cpuMax: agg.cpuMax,
+        wcharMbs: agg.wchar / MB / seconds,
+        writtenMbs: agg.writtenBytes / MB / seconds,
+        rcharMbs: agg.rchar / MB / seconds,
+        readMbs: agg.readBytes / MB / seconds,
+        childMbs: agg.inheritedWchar / MB / seconds,
+        rssMax: agg.rssMax,
+        rssDelta: agg.rssDelta,
+    };
+}
+
+function addAgg(target, extra) {
+    target.cpuAvg += extra.cpuAvg;
+    target.cpuMax = Math.max(target.cpuMax, extra.cpuMax);
+    target.rchar += extra.rchar;
+    target.wchar += extra.wchar;
+    target.readBytes += extra.readBytes;
+    target.writtenBytes += extra.writtenBytes;
+    target.inheritedWchar += extra.inheritedWchar;
+    target.inheritedWritten += extra.inheritedWritten;
+    target.rssMax += extra.rssMax;
+    target.rssDelta += extra.rssDelta;
+    target.threads = Math.max(target.threads, extra.threads);
+    target.dTicks += extra.dTicks;
+    target.ctx += extra.ctx;
+    target.samples += extra.samples;
+    return target;
+}
+
+function emptyAgg() {
+    return {
+        cpuAvg: 0, cpuMax: 0, rchar: 0, wchar: 0, readBytes: 0, writtenBytes: 0,
+        inheritedWchar: 0, inheritedWritten: 0,
+        rssStart: 0, rssMax: 0, rssEnd: 0, rssDelta: 0, threads: 0, dTicks: 0, ctx: 0, samples: 0,
+    };
+}
+
+function displayName(proc) {
+    if (proc.exe) {
+        const base = proc.exe.split('/').pop();
+        if (base) return base;
+    }
+    return proc.name || ('pid ' + proc.pid);
+}
+
+function groupKey(proc) {
+    return proc.exe || proc.name || ('pid ' + proc.pid);
+}
+
+/// Children of `proc` first seen inside the window.
+///
+/// This is the tell for a process whose write figures are inflated by children
+/// too short-lived to sample: their bytes are folded into the parent's counters
+/// by the kernel and cannot be separated out, but the spawning itself is visible.
+function childrenStartedIn(proc, a, b) {
+    const children = state.childIndex.get(proc.pid);
+    if (!children) return 0;
+    let count = 0;
+    for (const child of children) if (child.first_tick >= a && child.first_tick <= b && child.id !== proc.id) count++;
+    return count;
+}
+
+/// Rows for the current selection: one per process, or one per executable when
+/// grouping is on.  Grouped rows keep their members so a row can be expanded.
+function buildRows() {
+    const { a, b } = state.sel;
+    const grouped = document.getElementById('groupByExe').checked;
+    const hideIdle = document.getElementById('hideIdle').checked;
+    const showKernel = document.getElementById('showKernel').checked;
+    const filter = document.getElementById('filter').value.trim().toLowerCase();
+    const seconds = tickSeconds(a, b);
+    const baseSeconds = state.baseline ? tickSeconds(state.baseline.a, state.baseline.b) : 0;
+
+    const byKey = new Map();
+    for (const proc of state.data.procs) {
+        // Kernel threads are recorded because writeback is charged to them, but
+        // they are noise in the table unless that is what you came looking for.
+        if (proc.kernel && !showKernel) continue;
+        if (filter && !groupKey(proc).toLowerCase().includes(filter) && !(proc.cmd || '').toLowerCase().includes(filter)) continue;
+        // A process outside the selected window contributes nothing to it.
+        if (proc.last_tick < a || proc.first_tick > b) continue;
+
+        const agg = aggregate(proc.id, a, b);
+        const base = state.baseline ? aggregate(proc.id, state.baseline.a, state.baseline.b) : null;
+        const key = grouped ? groupKey(proc) : 'p' + proc.id;
+        let row = byKey.get(key);
+        if (!row) {
+            row = {
+                key,
+                label: grouped ? displayName(proc) : displayName(proc),
+                members: [],
+                agg: emptyAgg(),
+                baseAgg: state.baseline ? emptyAgg() : null,
+                kernel: true,
+                isRecorder: false,
+                ioUnreadable: false,
+                born: false,
+                died: false,
+                spawned: 0,
+                lifeWchar: 0,
+                lifeRchar: 0,
+                sessWchar: 0,
+                sessRchar: 0,
+            };
+            byKey.set(key, row);
+        }
+        row.members.push(proc);
+        addAgg(row.agg, agg);
+        if (base) addAgg(row.baseAgg, base);
+        row.kernel = row.kernel && proc.kernel;
+        row.isRecorder = row.isRecorder || proc.pid === state.data.meta.recorder_pid;
+        // A row with no readable counters shows zeros that mean "unknown".
+        row.ioUnreadable = row.ioUnreadable || proc.io_readable === false;
+        row.born = row.born || proc.first_tick > 0;
+        row.died = row.died || !proc.alive_at_end;
+        row.spawned += childrenStartedIn(proc, a, b);
+        // Lifetime counters are a property of the process, not of the selected
+        // period, so they are summed straight from the process table.
+        row.lifeWchar += (proc.io_total?.wchar || 0);
+        row.lifeRchar += (proc.io_total?.rchar || 0);
+        // The recording's own share, straight from the cumulative counters rather
+        // than by adding up per-tick deltas.
+        row.sessWchar += Math.max((proc.io_total?.wchar || 0) - (proc.io_at_start?.wchar || 0), 0);
+        row.sessRchar += Math.max((proc.io_total?.rchar || 0) - (proc.io_at_start?.rchar || 0), 0);
+    }
+
+    const rows = [...byKey.values()];
+    for (const row of rows) {
+        row.rates = toRates(row.agg, seconds);
+        row.baseRates = row.baseAgg ? toRates(row.baseAgg, baseSeconds) : null;
+        row.diff = row.baseRates ? {
+            cpuAvg: row.rates.cpuAvg - row.baseRates.cpuAvg,
+            cpuMax: row.rates.cpuMax - row.baseRates.cpuMax,
+            wcharMbs: row.rates.wcharMbs - row.baseRates.wcharMbs,
+            writtenMbs: row.rates.writtenMbs - row.baseRates.writtenMbs,
+            rcharMbs: row.rates.rcharMbs - row.baseRates.rcharMbs,
+            childMbs: row.rates.childMbs - row.baseRates.childMbs,
+            rssMax: row.rates.rssMax - row.baseRates.rssMax,
+            rssDelta: row.rates.rssDelta - row.baseRates.rssDelta,
+        } : null;
+    }
+
+    const active = row => row.agg.samples > 0
+        && (row.agg.cpuAvg > 0 || row.agg.wchar > 0 || row.agg.readBytes > 0 || row.agg.rchar > 0 || row.agg.inheritedWchar > 0);
+    const visible = hideIdle && !state.baseline ? rows.filter(active) : rows;
+
+    const pick = row => {
+        const source = state.baseline ? row.diff : row.rates;
+        switch (state.sortKey) {
+            case 'name': return row.label.toLowerCase();
+            case 'cpu': return source.cpuAvg;
+            case 'cpuMax': return source.cpuMax;
+            case 'wchar': return source.wcharMbs;
+            case 'written': return source.writtenMbs;
+            case 'read': return source.rcharMbs;
+            case 'child': return source.childMbs;
+            case 'rss': return source.rssMax;
+            case 'rssDelta': return source.rssDelta;
+            case 'd': return row.agg.dTicks;
+            case 'sessWrite': return row.sessWchar;
+            case 'sessRead': return row.sessRchar;
+            case 'lifeWrite': return row.lifeWchar;
+            case 'lifeRead': return row.lifeRchar;
+            default: return source.wcharMbs;
+        }
+    };
+    visible.sort((x, y) => {
+        const vx = pick(x), vy = pick(y);
+        if (typeof vx === 'string') return state.sortDir * vx.localeCompare(vy);
+        return state.sortDir * (vx - vy);
+    });
+    return visible;
+}
+
+// ── system charts and shared selection ───────────────────────────────────────
+
+/// Three stacked charts rather than one: overlaying CPU% and two different MB/s
+/// meanings on shared axes made all of them hard to read.  They share the x
+/// range and the selection, so dragging on any one of them moves all three.
+const SYSTEM_CHARTS = [
+    {
+        key: 'cpu',
+        title: 'CPU total [%]',
+        unit: '%',
+        max: 100,
+        series: [{ field: 'cpu_pct', label: 'CPU total', color: 'hsl(25, 100%, 65%)' }],
+    },
+    {
+        key: 'disk',
+        title: 'Disk, device level [MB/s]',
+        unit: 'MB/s',
+        series: [
+            { field: 'disk_write_mbs', label: 'write to device', color: 'hsl(205, 100%, 65%)' },
+            { field: 'disk_read_mbs', label: 'read from device', color: 'hsl(105, 100%, 65%)' },
+        ],
+    },
+    {
+        key: 'procw',
+        title: 'Process writes, syscall level [MB/s]',
+        unit: 'MB/s',
+        series: [
+            { field: 'proc_wchar_mbs', label: 'written by processes', color: 'hsl(205, 40%, 52%)' },
+            { field: 'proc_written_mbs', label: 'handed to disk by processes', color: 'hsl(280, 45%, 60%)' },
+        ],
+    },
+];
+
+function buildSystemCharts() {
+    const host = document.getElementById('chartStack');
+    host.innerHTML = SYSTEM_CHARTS.map(spec => `
+        <div class="chart-block">
+            <div class="chart-title">${esc(spec.title)}</div>
+            <div class="chart-wrap"><canvas id="canvas_${spec.key}"></canvas></div>
+        </div>`).join('');
+
+    for (const chart of Object.values(state.charts)) chart.destroy();
+    state.charts = {};
+
+    const sys = state.data.system;
+    const lastSecond = (sys.t_ms[sys.t_ms.length - 1] ?? 0) / 1000;
+
+    for (const spec of SYSTEM_CHARTS) {
+        const datasets = spec.series.map(series => ({
+            label: series.label,
+            data: sys.t_ms.map((ms, i) => ({ x: ms / 1000, y: sys[series.field][i] })),
+            borderColor: series.color,
+            backgroundColor: series.color.replace('hsl(', 'hsla(').replace(')', ', 0.12)'),
+            borderWidth: 1.5,
+            pointRadius: 0,
+            tension: 0.1,
+            fill: spec.series.length === 1,
+        }));
+
+        state.charts[spec.key] = new Chart(document.getElementById(`canvas_${spec.key}`).getContext('2d'), {
+            type: 'line',
+            data: { datasets },
+            plugins: [selectionPlugin],
+            options: {
+                responsive: true,
+                animation: false,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#e0e0e0', boxWidth: 10, font: { size: 10 }, padding: 6 } },
+                    tooltip: {
+                        callbacks: {
+                            title: items => 't = ' + Number(items[0].parsed.x).toFixed(2) + ' s',
+                            // A rate alone invites the question "over how long?".
+                            // Each point covers one sampling interval, so the bytes
+                            // that actually moved are shown next to it.
+                            label: item => {
+                                const rate = `${item.dataset.label}: ${item.parsed.y.toFixed(2)} ${spec.unit}`;
+                                if (spec.unit !== 'MB/s') return rate;
+                                const tick = 1 / state.data.meta.hz;
+                                return `${rate}  (${fmtMb(item.parsed.y * tick)} in this ${(tick * 1000).toFixed(0)} ms sample)`;
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    // A fixed, identical x range on every chart is what lets one
+                    // selection line up across all three.
+                    x: { type: 'linear', min: 0, max: lastSecond, ticks: { color: '#9e9e9e', maxTicksLimit: 10 }, grid: { color: '#2f3336' } },
+                    y: { beginAtZero: true, max: spec.max, ticks: { color: '#9e9e9e', maxTicksLimit: 4 }, grid: { color: '#2f3336' } },
+                },
+            },
+        });
+
+        attachBrush(spec.key);
+    }
+}
+
+function attachBrush(key) {
+    const canvas = document.getElementById(`canvas_${key}`);
+    let dragFrom = null;
+
+    const secondsAt = event => {
+        const rect = canvas.getBoundingClientRect();
+        return state.charts[key].scales.x.getValueForPixel(event.clientX - rect.left);
+    };
+
+    canvas.onmousedown = event => {
+        dragFrom = secondsAt(event);
+        event.preventDefault();
+    };
+    canvas.onmousemove = event => {
+        if (dragFrom === null) return;
+        drawBrush(dragFrom, secondsAt(event));
+    };
+    const finish = event => {
+        if (dragFrom === null) return;
+        const from = dragFrom;
+        const to = secondsAt(event);
+        dragFrom = null;
+        // A click rather than a drag leaves the selection alone.
+        if (Math.abs(to - from) < 0.02) {
+            updateBrushOverlay();
+            return;
+        }
+        const a = msToTick(Math.min(from, to) * 1000);
+        const b = msToTick(Math.max(from, to) * 1000);
+        state.sel = { a: Math.min(a, b), b: Math.max(a, b) };
+        render();
+    };
+    canvas.onmouseup = finish;
+    canvas.onmouseleave = finish;
+}
+
+/// Draws the selected range inside the chart, as a Chart.js plugin.
+///
+/// An absolutely positioned overlay had to guess the plot area and depended on
+/// the wrapper resolving to a real height; drawing on the canvas uses the chart's
+/// own geometry, so the band cannot drift or vanish.
+const selectionPlugin = {
+    id: 'selectionBand',
+    afterDatasetsDraw(chart) {
+        const range = chart.$selection;
+        if (!range) return;
+        const { ctx, chartArea, scales } = chart;
+        const left = Math.max(scales.x.getPixelForValue(range.from), chartArea.left);
+        const right = Math.min(scales.x.getPixelForValue(range.to), chartArea.right);
+        if (right <= chartArea.left || left >= chartArea.right) return;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(77, 181, 255, 0.16)';
+        ctx.fillRect(left, chartArea.top, Math.max(right - left, 1), chartArea.bottom - chartArea.top);
+
+        ctx.strokeStyle = '#4db5ff';
+        ctx.lineWidth = 2;
+        for (const x of [left, right]) {
+            ctx.beginPath();
+            ctx.moveTo(x, chartArea.top);
+            ctx.lineTo(x, chartArea.bottom);
+            ctx.stroke();
+        }
+
+        // Times go on the band itself, so the range is readable at a glance
+        // instead of having to be looked up in a summary line elsewhere.
+        ctx.font = '11px Arial';
+        ctx.textBaseline = 'top';
+        const wide = right - left > 96;
+        drawEdgeLabel(ctx, `${range.from.toFixed(2)} s`, left, chartArea.top + 2, wide ? 'right' : 'left');
+        drawEdgeLabel(ctx, `${range.to.toFixed(2)} s`, right, chartArea.top + 2, wide ? 'left' : 'right');
+        ctx.restore();
+    },
+};
+
+/// A time label pinned to one edge of the band. `side` says which side of `x`
+/// the text goes on, so labels stay inside a wide band and outside a narrow one.
+function drawEdgeLabel(ctx, text, x, y, side) {
+    const padding = 3;
+    const width = ctx.measureText(text).width + padding * 2;
+    const boxX = side === 'right' ? x + 1 : x - width - 1;
+    ctx.fillStyle = '#4db5ff';
+    ctx.fillRect(boxX, y, width, 14);
+    ctx.fillStyle = '#0b1d2a';
+    ctx.fillText(text, boxX + padding, y + 2);
+}
+
+/// Sets the band on every chart at once, so one drag moves all of them.
+function drawBrush(fromSeconds, toSeconds) {
+    const range = { from: Math.min(fromSeconds, toSeconds), to: Math.max(fromSeconds, toSeconds) };
+    for (const spec of SYSTEM_CHARTS) {
+        const chart = state.charts[spec.key];
+        if (!chart) continue;
+        chart.$selection = range;
+        chart.draw();
+    }
+}
+
+function hideBrush() {
+    for (const spec of SYSTEM_CHARTS) {
+        const chart = state.charts[spec.key];
+        if (!chart) continue;
+        chart.$selection = null;
+        chart.draw();
+    }
+}
+
+function updateBrushOverlay() {
+    if (!state.data || Object.keys(state.charts).length === 0) return;
+    const lastTick = state.data.system.t_ms.length - 1;
+    if (state.sel.a === 0 && state.sel.b === lastTick) {
+        hideBrush();
+        return;
+    }
+    drawBrush(tickToMs(state.sel.a) / 1000, tickToMs(state.sel.b) / 1000);
+}
+
+function selectAll() {
+    state.sel = { a: 0, b: state.data.system.t_ms.length - 1 };
+    render();
+}
+
+function toggleBaseline() {
+    state.baseline = state.baseline ? null : { ...state.sel };
+    render();
+}
+
+// ── rendering ─────────────────────────────────────────────────────────────────
+
+function setView(view) {
+    state.view = view;
+    for (const [name, id] of [['table', 'viewTable'], ['tree', 'viewTree'], ['gantt', 'viewGantt']]) {
+        document.getElementById(id).classList.toggle('on', name === view);
+    }
+    render();
+}
+
+function sortBy(key) {
+    if (state.sortKey === key) state.sortDir = -state.sortDir;
+    else { state.sortKey = key; state.sortDir = key === 'name' ? 1 : -1; }
+    render();
+}
+
+/// Reconciles what the disk did against what processes admitted to, for the
+/// whole recording.  This is the panel that answers "the disk is busy and no
+/// process in the table accounts for it".
+/// States the sampling interval next to the charts, because a rate is
+/// meaningless without knowing the window it was averaged over.
+/// Says outright when per-process I/O could not be read, because the table
+/// otherwise shows zeros that look like "wrote nothing".
+function renderCoverageBanner() {
+    const meta = state.data.meta;
+    const missing = meta.processes_without_io || 0;
+    const banner = document.getElementById('coverageBanner');
+    if (missing === 0) {
+        banner.style.display = 'none';
+        return;
+    }
+    const total = state.data.procs.length;
+    const uid = meta.recorder_uid;
+    banner.style.display = '';
+    banner.innerHTML =
+        `<b>I/O could not be read for ${missing} of ${total} processes.</b> `
+        + '<code>/proc/&lt;pid&gt;/io</code> is mode 0400 and needs permission over the target, so a recorder running '
+        + `as an ordinary user${uid === null || uid === undefined ? '' : ` (uid ${uid})`} sees nothing for processes it `
+        + 'does not own - which is every system daemon and every kernel thread. Their I/O columns are '
+        + '<b>unknown, not zero</b>, they are tagged <span class="tag noio">no I/O data</span>, and any gap between '
+        + 'the device total and what processes claim tells you nothing until this is fixed. '
+        + 'Re-record as root, or grant the binary the capability:<br>'
+        + '<code>sudo setcap cap_dac_read_search,cap_sys_ptrace+ep ./system_info_collector</code>';
+}
+
+function renderRateHint() {
+    const tickMs = 1000 / state.data.meta.hz;
+    document.getElementById('rateHint').textContent =
+        `Each point is one ${tickMs.toFixed(0)} ms sample: the bytes that moved during it, divided by its length. `
+        + `So 3 MB/s here means ${(3 * tickMs / 1000).toFixed(2)} MB moved in that sample, not 3 MB. `
+        + 'Hover a point to see both. For totals rather than rates, use the panel below.';
+}
+
+function renderSessionTotals() {
+    const meta = state.data.meta;
+    const seconds = Math.max(meta.recorded_duration_secs, 1 / meta.hz);
+    const rate = bytes => `${(bytes / MB / seconds).toFixed(2)} MB/s`;
+    const tick = 1 / meta.hz;
+    // A peak next to the average is what stops the two looking contradictory: a
+    // chart touching 10 MB/s for one 200 ms sample only contributes 2 MB.
+    const peakOf = field => {
+        const series = state.data.system[field] || [];
+        return series.length > 0 ? Math.max(...series) : 0;
+    };
+    const line = (label, bytes, peakField, note) => {
+        const peak = peakField ? peakOf(peakField) : null;
+        const peakCell = peak === null
+            ? '<td class="hint">-</td>'
+            : `<td>${peak.toFixed(2)} MB/s<span class="hint"> = ${fmtMb(peak * tick)}</span></td>`;
+        return `<tr><td class="left">${label}</td><td><b>${fmtMb(bytes / MB)}</b></td><td>${rate(bytes)}</td>`
+            + `${peakCell}<td class="left hint">${note}</td></tr>`;
+    };
+
+    // Buffered writes reach the device through a kernel flush thread, so the
+    // per-process device figure is expected to be far below the device total.
+    // The syscall figure is the one that should account for it.
+    // Reconcile the device total against the per-process *device* figure. Comparing
+    // it against syscall writes reports a huge phantom shortfall for any writer
+    // that uses mmap - systemd-journald being the common one - since those never
+    // call write() at all.
+    const unclaimed = meta.device_written_bytes - meta.proc_written_bytes;
+    const incompleteCoverage = (meta.processes_without_io || 0) > state.data.procs.length * 0.1;
+    const unclaimedNote = incompleteCoverage
+        ? `<div class="warn" style="margin-top:10px;">${fmtMb(unclaimed / MB)} reached the disk that no process claimed - `
+          + 'but I/O was unreadable for most processes in this recording, so that number is not evidence of anything. '
+          + 'See the notice at the top of the page.</div>'
+        : unclaimed > meta.device_written_bytes * 0.25 && unclaimed > 8 * MB
+        ? `<div class="warn" style="margin-top:10px;">${fmtMb(unclaimed / MB)} reached the disk that is not charged to any `
+          + `process (${rate(unclaimed)}). That is either a process too short-lived to sample - check the Lifetimes view `
+          + 'and the "spawned" tags - or traffic outside process accounting such as swap or a RAID resync. '
+          + 'Turn on "Show kernel threads" as well, since writeback is charged to them.</div>'
+        : `<div class="hint" style="margin-top:10px;">Processes account for ${
+            (meta.proc_written_bytes / Math.max(meta.device_written_bytes, 1) * 100).toFixed(0)
+          }% of what the device wrote, so the answer is in the table above.`
+          + (meta.proc_wchar_bytes < meta.proc_written_bytes * 0.5
+            ? ' Note that syscall writes are far below that: the writers are using mmap rather than write(), so sort by '
+              + '"Write device" - "Write syscall" will show them as idle.'
+            : '')
+          + '</div>';
+
+    // The recorder reads several /proc files per process per sample, and all of it
+    // lands on the syscall read total.  Stating it here stops the total from
+    // looking like unexplained disk activity.
+    const recorder = state.data.procs.find(proc => proc.pid === meta.recorder_pid);
+    const recorderRead = recorder ? Math.max((recorder.io_total?.rchar || 0) - (recorder.io_at_start?.rchar || 0), 0) : 0;
+    const share = meta.proc_rchar_bytes > 0 ? (recorderRead / meta.proc_rchar_bytes) * 100 : 0;
+    const recorderNote = recorderRead > 0
+        ? `<div class="hint" style="margin-top:6px;">Of the syscall reads, <b>${fmtMb(recorderRead / MB)}</b> `
+          + `(${share.toFixed(0)}%) is this recorder reading /proc to measure every other process - none of it is disk `
+          + `traffic. Everything else read by processes: <b>${fmtMb(Math.max(meta.proc_rchar_bytes - recorderRead, 0) / MB)}</b>.</div>`
+        : '';
+
+    document.getElementById('sessionTotals').innerHTML = `
+        <table style="max-width:900px;">
+            <thead><tr>
+                <th class="left">Over ${fmtSecs(seconds)}</th><th>Total</th><th>Average</th>
+                <th title="Highest single sample, and the bytes that moved during it">Peak sample</th>
+                <th class="left">Meaning</th>
+            </tr></thead>
+            <tbody>
+                ${line('Written to disk (device)', meta.device_written_bytes, 'disk_write_mbs', 'crossed the block device, from /proc/diskstats')}
+                ${line('Read from disk (device)', meta.device_read_bytes, 'disk_read_mbs', 'physical reads; anything served by the page cache is not here')}
+                ${line('Written by processes (syscall)', meta.proc_wchar_bytes, 'proc_wchar_mbs', 'sum of write() across every process, cache or not')}
+                ${line('Read by processes (syscall)', meta.proc_rchar_bytes, null, 'sum of read(), including reads served from cache')}
+                ${line('Handed to disk by processes', meta.proc_written_bytes, 'proc_written_mbs', 'usually far below the device total - flush threads do that part')}
+            </tbody>
+        </table>
+        <div class="hint" style="margin-top:8px;">
+            A tall spike on the chart and a small total are not in conflict: the peak above lasts one
+            ${(tick * 1000).toFixed(0)} ms sample, so it contributes only the bytes shown next to it. Summing every
+            sample this way reproduces the totals exactly.
+        </div>
+        ${devicesHtml(meta)}
+        ${unclaimedNote}${recorderNote}`;
+}
+
+/// Per-device breakdown, so a suspicious machine total can be traced to a name.
+///
+/// Devices left out of the total are listed too: the same write appearing under a
+/// disk and its partition, RAID set or multipath alias is the usual reason a total
+/// looks impossibly large, and it is only visible if the skipped rows are shown.
+function devicesHtml(meta) {
+    const devices = meta.devices || [];
+    if (devices.length === 0) return '';
+    const sorted = [...devices].sort((a, b) => (b.written_bytes + b.read_bytes) - (a.written_bytes + a.read_bytes));
+    const rows = sorted.map(dev => `<tr${dev.counted ? '' : ' class="zero"'}>
+        <td class="left">${esc(dev.name)}</td>
+        <td>${fmtMb(dev.written_bytes / MB)}</td>
+        <td>${fmtMb(dev.read_bytes / MB)}</td>
+        <td class="left hint">${dev.counted ? 'counted' : esc(dev.skipped_because || 'not counted')}</td>
+    </tr>`).join('');
+
+    return `<div style="margin-top:14px;">
+        <div class="hint" style="margin-bottom:4px;">Which devices that traffic was on:</div>
+        <table style="max-width:900px;">
+            <thead><tr>
+                <th class="left" style="position:static; cursor:default;">Device</th>
+                <th style="position:static; cursor:default;">Written</th>
+                <th style="position:static; cursor:default;">Read</th>
+                <th class="left" style="position:static; cursor:default;">In the total?</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+    </div>`;
+}
+
+function render() {
+    if (!state.data) return;
+    renderCoverageBanner();
+    renderRateHint();
+    renderSessionTotals();
+    renderSelectionInfo();
+    updateBrushOverlay();
+    const host = document.getElementById('viewHost');
+    if (state.view === 'gantt') renderGantt(host);
+    else renderTable(host, state.view === 'tree');
+    drawSparklines();
+}
+
+function renderSelectionInfo() {
+    const { a, b } = state.sel;
+    const meta = state.data.meta;
+    const seconds = tickSeconds(a, b);
+    let text = `Selection: ${(tickToMs(a) / 1000).toFixed(1)} - ${(tickToMs(b) / 1000).toFixed(1)} s `
+        + `(${fmtSecs(seconds)}, ${b - a + 1} of ${meta.ticks} samples)`;
+    if (state.baseline) {
+        const bs = tickSeconds(state.baseline.a, state.baseline.b);
+        text += ` | baseline ${(tickToMs(state.baseline.a) / 1000).toFixed(1)} - ${(tickToMs(state.baseline.b) / 1000).toFixed(1)} s (${fmtSecs(bs)})`;
+    }
+    document.getElementById('selectionInfo').textContent = text;
+    document.getElementById('baselineBtn').classList.toggle('on', !!state.baseline);
+    document.getElementById('baselineBtn').textContent = state.baseline ? 'Clear baseline (showing differences)' : 'Set selection as baseline';
+
+    // The system series are indexed by tick, so the selection indexes them directly.
+    const sys = state.data.system;
+    const last = Math.min(b, sys.t_ms.length - 1);
+    let cpu = 0, device = 0, syscall = 0;
+    for (let i = a; i <= last; i++) {
+        cpu += sys.cpu_pct[i];
+        device += sys.disk_write_mbs[i];
+        syscall += sys.proc_wchar_mbs[i];
+    }
+    const n = Math.max(last - a + 1, 1);
+    let hint = `Averages over the selection: CPU ${(cpu / n).toFixed(1)}%, `
+        + `${(device / n).toFixed(2)} MB/s to the device, ${(syscall / n).toFixed(2)} MB/s written by processes.`;
+    if (syscall > device * 1.3) hint += ' Processes are writing faster than the disk is taking it, so the page cache is absorbing the difference - sort by "Write syscall" to find the author.';
+    else if (device > syscall * 1.3) hint += ' The disk is taking more than processes are writing here, so this is writeback flushing data written earlier - widen the selection to the left to find its source.';
+    if (!state.data.meta.proc_fs) hint = 'This recording was made without /proc, so syscall-level writes, open files and kernel threads are unavailable.';
+    document.getElementById('ioHint').textContent = hint;
+}
+
+/// `hint` becomes the column's tooltip.  Most columns cover the selected period;
+/// the two lifetime ones do not, and saying so on the header is what stops them
+/// being read as part of the selection.
+const COLUMNS = [
+    { key: 'name', label: 'Process', left: true },
+    { key: 'cpu', label: 'CPU avg', hint: 'Average over the selected period, divided by core count' },
+    { key: 'cpuMax', label: 'CPU max', hint: 'Highest single sample in the selected period' },
+    { key: 'wchar', label: 'Write syscall', hint: 'Written during the selected period through write() - includes pipes, sockets and terminals, so this is not necessarily disk traffic' },
+    { key: 'written', label: 'Write device', hint: 'Handed to the disk by this process during the selected period - usually zero, a kernel flush thread does that part' },
+    { key: 'child', label: 'Write by children', hint: 'Folded in by the kernel from children reaped during the selected period' },
+    { key: 'read', label: 'Read syscall', hint: 'Read during the selected period through read() - files, but also pipes, sockets, terminals and /proc, so this is not necessarily disk traffic' },
+    { key: 'rss', label: 'RSS max', hint: 'Peak resident memory in the selected period' },
+    { key: 'rssDelta', label: 'RSS change', hint: 'Resident memory at the end of the period minus at its start' },
+    { key: 'd', label: 'I/O wait', hint: 'Samples that caught the process in state D, blocked on storage' },
+    {
+        key: 'sessWrite',
+        label: 'Write session',
+        hint: 'Written across the WHOLE recording, not the selected period - the lifetime counter at the end minus at the start. Unlike "Write syscall" it also covers the first sample and anything folded in from reaped children.',
+    },
+    {
+        key: 'sessRead',
+        label: 'Read session',
+        hint: 'Read across the WHOLE recording, not the selected period - the lifetime counter at the end minus at the start.',
+    },
+    {
+        key: 'lifeWrite',
+        label: 'Write lifetime',
+        hint: 'Total since THIS PROCESS started - not since the recording started. The figure a task manager shows as disk write total.',
+    },
+    {
+        key: 'lifeRead',
+        label: 'Read lifetime',
+        hint: 'Total since THIS PROCESS started - not since the recording started. The figure a task manager shows as disk read total.',
+    },
+];
+
+/// One miniature plot per metric, each on its own scale.  Totals hide *when*
+/// something happened; a steady stream and a single spike add up the same.
+/// Colours match the corresponding chart above.
+const SHAPE_COLUMNS = [
+    { label: 'CPU', field: 'cpu', color: 'hsl(25, 100%, 65%)' },
+    { label: 'Write', field: 'wchar', color: 'hsl(205, 100%, 65%)' },
+    { label: 'Write dev', field: 'written_bytes', color: 'hsl(205, 40%, 52%)' },
+    { label: 'Read', field: 'rchar', color: 'hsl(105, 100%, 65%)' },
+    { label: 'RSS', field: 'rss_mb', color: 'hsl(280, 45%, 62%)' },
+];
+
+function renderTable(host, asTree) {
+    const rows = buildRows();
+    const diffing = !!state.baseline;
+    const seconds = tickSeconds(state.sel.a, state.sel.b);
+
+    if (rows.length === 0) {
+        host.innerHTML = '<div class="empty">No processes match the current selection and filter.</div>';
+        document.getElementById('tableHint').textContent = '';
+        return;
+    }
+
+    const header = COLUMNS.map(col => {
+        const arrow = state.sortKey === col.key ? (state.sortDir < 0 ? ' ▼' : ' ▲') : '';
+        // All-time totals and counts are absolute, so they carry no delta marker.
+        // Lifetime totals and counts are absolute, so they carry no delta marker.
+        const absolute = ['name', 'd', 'sessWrite', 'sessRead', 'lifeWrite', 'lifeRead'].includes(col.key);
+        const unit = diffing && !absolute ? ' Δ' : '';
+        const title = col.hint ? ` title="${esc(col.hint)}"` : '';
+        return `<th class="${col.left ? 'left' : ''}"${title} onclick="sortBy('${col.key}')">${esc(col.label)}${unit}${arrow}</th>`;
+    }).join('');
+
+    const ordered = asTree ? orderAsTree(rows) : rows.map(row => ({ row, depth: 0 }));
+    const body = ordered.map(({ row, depth }) => rowHtml(row, depth, diffing, seconds)).join('');
+
+    // Re-rendering replaces the scroll container, which would jump the view back
+    // to the top-left and lose the column you just clicked on.
+    const previous = host.querySelector('.table-scroll');
+    const keep = previous ? { left: previous.scrollLeft, top: previous.scrollTop } : null;
+
+    host.innerHTML = `<div class="table-scroll"><table>
+        <thead><tr>${header}${SHAPE_COLUMNS.map(shape => `<th title="Shape of ${esc(shape.label)} over the selected period">${esc(shape.label)}</th>`).join('')}</tr></thead>
+        <tbody>${body}</tbody></table></div>`;
+
+    if (keep) {
+        const scroller = host.querySelector('.table-scroll');
+        scroller.scrollLeft = keep.left;
+        scroller.scrollTop = keep.top;
+    }
+
+    const unitNote = diffing
+        ? 'Showing the change from the baseline. Byte columns are MB/s so periods of different lengths stay comparable; CPU is in percentage points.'
+        : `Totals over ${fmtSecs(seconds)}.`;
+    const kernelNote = document.getElementById('showKernel').checked ? '' : ' Kernel threads hidden.';
+    document.getElementById('tableHint').textContent =
+        `${rows.length} rows. ${unitNote}${kernelNote} Shape columns are each scaled to their own row, so they show when `
+        + 'something happened rather than how much. Click a row for the command line, open files and children. '
+        + 'Full explanations of every column are at the bottom of the page.';
+}
+
+function rowHtml(row, depth, diffing, seconds) {
+    const proc = row.members[0];
+    const single = row.members.length === 1;
+    const pad = depth > 0 ? `padding-left:${8 + depth * 16}px;` : '';
+    const tags = (row.kernel ? '<span class="tag kernel">kernel</span>' : '')
+        + (row.born ? '<span class="tag born">started</span>' : '')
+        + (row.died ? '<span class="tag died">exited</span>' : '')
+        + (row.spawned > 0 ? `<span class="tag child" title="Its write figures may include children too short-lived to sample">spawned ${row.spawned}</span>` : '')
+        + (row.ioUnreadable ? '<span class="tag noio" title="/proc/<pid>/io could not be read for this process, so its I/O columns are unknown rather than zero">no I/O data</span>' : '')
+        + (row.isRecorder ? '<span class="tag self" title="This is the process that made the recording - its read figures are mostly /proc files it read to measure everything else">recorder</span>' : '');
+    const name = single
+        ? `${esc(row.label)} <span class="pid">${proc.pid}</span>`
+        : `${esc(row.label)} <span class="pid">${row.members.length} processes</span>`;
+
+    const source = diffing ? row.diff : row.rates;
+    const cells = diffing
+        ? [
+            signed(source.cpuAvg, v => fmtPct(Math.abs(v)) + ' pp'),
+            signed(source.cpuMax, v => fmtPct(Math.abs(v)) + ' pp'),
+            signed(source.wcharMbs, v => fmtRate(Math.abs(v))),
+            signed(source.writtenMbs, v => fmtRate(Math.abs(v))),
+            signed(source.childMbs, v => fmtRate(Math.abs(v))),
+            signed(source.rcharMbs, v => fmtRate(Math.abs(v))),
+            signed(source.rssMax, v => fmtMb(Math.abs(v))),
+            signed(source.rssDelta, v => fmtMb(Math.abs(v))),
+            `<td>${row.agg.dTicks || '-'}</td>`,
+            `<td>${fmtMb(row.sessWchar / MB)}</td>`,
+            `<td>${fmtMb(row.sessRchar / MB)}</td>`,
+            `<td>${fmtMb(row.lifeWchar / MB)}</td>`,
+            `<td>${fmtMb(row.lifeRchar / MB)}</td>`,
+        ]
+        : [
+            `<td>${fmtPct(source.cpuAvg)}</td>`,
+            `<td>${fmtPct(source.cpuMax)}</td>`,
+            `<td>${fmtMb(row.agg.wchar / MB)}</td>`,
+            `<td>${fmtMb(row.agg.writtenBytes / MB)}</td>`,
+            `<td>${fmtMb(row.agg.inheritedWchar / MB)}</td>`,
+            `<td>${fmtMb(row.agg.rchar / MB)}</td>`,
+            `<td>${fmtMb(source.rssMax)}</td>`,
+            signed(source.rssDelta, v => fmtMb(Math.abs(v))),
+            `<td>${row.agg.dTicks || '-'}</td>`,
+            `<td>${fmtMb(row.sessWchar / MB)}</td>`,
+            `<td>${fmtMb(row.sessRchar / MB)}</td>`,
+            `<td>${fmtMb(row.lifeWchar / MB)}</td>`,
+            `<td>${fmtMb(row.lifeRchar / MB)}</td>`,
+        ];
+
+    const shapes = SHAPE_COLUMNS.map(
+        shape => `<td><canvas class="spark" width="74" height="18" data-key="${esc(row.key)}" data-field="${shape.field}"></canvas></td>`
+    ).join('');
+    const detail = state.expanded.has(row.key) ? detailHtml(row, seconds) : '';
+    return `<tr class="proc" onclick="toggleRow('${jsStr(row.key)}')">
+            <td class="left" style="${pad}">${name}${tags}</td>
+            ${cells.join('')}
+            ${shapes}
+        </tr>${detail}`;
+}
+
+function signed(value, format) {
+    const cls = value > 0.0001 ? 'pos' : value < -0.0001 ? 'neg' : 'zero';
+    const sign = value > 0.0001 ? '+' : value < -0.0001 ? '-' : '';
+    return `<td class="${cls}">${sign}${format(value)}</td>`;
+}
+
+/// The three I/O scopes for one process, side by side.
+///
+/// "Lifetime" and "in the selected period" are easy to confuse when they sit in
+/// separate columns, so the expanded row states both, plus the whole recording in
+/// between - and where lifetime came before the recording, says so outright.
+function ioScopeHtml(proc, agg) {
+    const total = proc.io_total || {};
+    const atStart = proc.io_at_start || {};
+    const recorded = {
+        wchar: (total.wchar || 0) - (atStart.wchar || 0),
+        rchar: (total.rchar || 0) - (atStart.rchar || 0),
+    };
+    const beforeRecording = {
+        wchar: atStart.wchar || 0,
+        rchar: atStart.rchar || 0,
+    };
+
+    return `<table style="width:auto; margin:6px 0; font-size:0.95em;">
+        <thead><tr>
+            <th class="left" style="position:static; background:none; cursor:default;">Scope</th>
+            <th style="position:static; background:none; cursor:default;">Written</th>
+            <th style="position:static; background:none; cursor:default;">Read</th>
+        </tr></thead>
+        <tbody>
+            <tr><td class="left">Selected period</td><td>${fmtMb(agg.wchar / MB)}</td><td>${fmtMb(agg.rchar / MB)}</td></tr>
+            <tr><td class="left">Whole recording</td><td>${fmtMb(recorded.wchar / MB)}</td><td>${fmtMb(recorded.rchar / MB)}</td></tr>
+            <tr><td class="left">Before the recording started</td><td>${fmtMb(beforeRecording.wchar / MB)}</td><td>${fmtMb(beforeRecording.rchar / MB)}</td></tr>
+            <tr><td class="left"><b>Lifetime of this process</b></td><td><b>${fmtMb((total.wchar || 0) / MB)}</b></td><td><b>${fmtMb((total.rchar || 0) / MB)}</b></td></tr>
+        </tbody>
+    </table>`;
+}
+
+function detailHtml(row, seconds) {
+    const parts = [];
+    for (const proc of row.members.slice(0, 12)) {
+        const agg = aggregate(proc.id, state.sel.a, state.sel.b);
+        const life = `ticks ${proc.first_tick}-${proc.last_tick}`
+            + (proc.first_tick > 0 ? `, started ${(tickToMs(proc.first_tick) / 1000).toFixed(1)} s in` : ', already running')
+            + (proc.alive_at_end ? '' : `, exited by ${(tickToMs(proc.last_tick) / 1000).toFixed(1)} s`);
+        const fdList = (state.data.fds[proc.id] || []).flatMap(snap => snap.paths).map(i => state.data.paths[i]);
+        const unique = [...new Set(fdList)].slice(0, 20);
+        parts.push(`<div style="margin-bottom:10px;">
+            <div><b>${esc(displayName(proc))}</b> <span class="pid">pid ${proc.pid}${proc.ppid ? ', parent ' + proc.ppid : ''}</span></div>
+            ${proc.cmd ? `<div><code>${esc(proc.cmd.slice(0, 400))}</code></div>` : ''}
+            ${proc.exe ? `<div class="hint">${esc(proc.exe)}</div>` : ''}
+            <div class="hint">${esc(life)} | threads ${agg.threads || '?'} | context switches ${agg.ctx} | I/O wait ticks ${agg.dTicks}</div>
+            ${proc.pid === state.data.meta.recorder_pid ? '<div class="warn">This is the process that made the recording. Almost all of its reads are the /proc files it had to read to measure every other process - several kilobytes per process per sample, which adds up to hundreds of megabytes on a busy machine. None of it is disk traffic.</div>' : ''}
+            ${ioScopeHtml(proc, agg)}
+            ${agg.inheritedWchar > 0 ? `<div class="warn">Children that were sampled wrote ${fmtMb(agg.inheritedWchar / MB)}, kept out of the figures above.</div>` : ''}
+            ${childrenStartedIn(proc, state.sel.a, state.sel.b) > 0 ? `<div class="warn">Started ${childrenStartedIn(proc, state.sel.a, state.sel.b)} children during the selection. A child that lives less than one sampling interval is never observed, and the kernel folds its bytes into this process when it is reaped - so part of the write total above may belong to those children rather than to this process. The Lifetimes view shows how often they respawn.</div>` : ''}
+            ${childrenHtml(proc)}
+            ${unique.length ? `<div>Files open while writing:<ul>${unique.map(p => `<li><code>${esc(p)}</code></li>`).join('')}</ul></div>`
+            : '<div class="hint">No regular files captured while it was writing.</div>'}
+        </div>`);
+    }
+    if (row.members.length > 12) parts.push(`<div class="hint">... and ${row.members.length - 12} more processes in this group.</div>`);
+    return `<tr class="detail"><td colspan="${COLUMNS.length + SHAPE_COLUMNS.length}">${parts.join('')}</td></tr>`;
+}
+
+/// Children of `proc` that were sampled at all, so a parent credited with
+/// inherited writes can be traced to the actual short-lived writer.
+function childrenHtml(proc) {
+    const children = state.data.procs.filter(other => other.ppid === proc.pid && other.id !== proc.id);
+    if (children.length === 0) return '';
+    const listed = children
+        .map(child => ({ child, agg: aggregate(child.id, state.sel.a, state.sel.b) }))
+        .sort((x, y) => y.agg.wchar - x.agg.wchar)
+        .slice(0, 10)
+        .map(({ child, agg }) => `<li><code>${esc(displayName(child))}</code> <span class="pid">pid ${child.pid}</span>`
+            + ` - wrote ${fmtMb(agg.wchar / MB)}, alive ticks ${child.first_tick}-${child.last_tick}`
+            + `${child.alive_at_end ? '' : ', exited'}</li>`)
+        .join('');
+    return `<div>Children seen during the recording (${children.length}):<ul>${listed}</ul></div>`;
+}
+
+function toggleRow(key) {
+    if (state.expanded.has(key)) state.expanded.delete(key); else state.expanded.add(key);
+    render();
+}
+
+/// Nests rows by parent pid.  Processes whose parent is not part of the
+/// recording become roots, so nothing is hidden when a parent exited first.
+function orderAsTree(rows) {
+    const rowByProcId = new Map();
+    for (const row of rows) for (const proc of row.members) rowByProcId.set(proc.id, row);
+
+    const children = new Map();
+    const roots = [];
+    for (const row of rows) {
+        const proc = row.members[0];
+        const parentId = proc.ppid !== null && proc.ppid !== undefined ? state.pidIndex.get(proc.ppid) : undefined;
+        const parentRow = parentId !== undefined ? rowByProcId.get(parentId) : undefined;
+        if (parentRow && parentRow !== row) {
+            if (!children.has(parentRow.key)) children.set(parentRow.key, []);
+            children.get(parentRow.key).push(row);
+        } else {
+            roots.push(row);
+        }
+    }
+
+    const ordered = [];
+    const seen = new Set();
+    const walk = (row, depth) => {
+        if (seen.has(row.key) || depth > 24) return;
+        seen.add(row.key);
+        ordered.push({ row, depth });
+        for (const child of children.get(row.key) || []) walk(child, depth + 1);
+    };
+    for (const root of roots) walk(root, 0);
+    // Any row left over sat in a parent cycle; show it rather than drop it.
+    for (const row of rows) if (!seen.has(row.key)) ordered.push({ row, depth: 0 });
+    return ordered;
+}
+
+/// Draws every shape cell straight to canvas - hundreds of Chart.js instances
+/// would be far too heavy.
+///
+/// Each cell is scaled to its own maximum, so the shape is readable even for a
+/// process whose absolute numbers are tiny next to the busiest row.  Metrics
+/// that are per-tick deltas are summed across a group's members; RSS is a level,
+/// so it is summed too but never accumulated over time.
+function drawSparklines() {
+    const canvases = document.querySelectorAll('canvas.spark');
+    if (canvases.length === 0) return;
+    // Built once and indexed: recomputing the rows per canvas turned this into a
+    // quadratic scan over every process.
+    const rowsByKey = new Map(buildRows().map(row => [row.key, row]));
+    const colorByField = new Map(SHAPE_COLUMNS.map(shape => [shape.field, shape.color]));
+    const width = state.sel.b - state.sel.a + 1;
+
+    for (const canvas of canvases) {
+        const row = rowsByKey.get(canvas.getAttribute('data-key'));
+        const field = canvas.getAttribute('data-field');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!row || !field) continue;
+
+        const series = new Float64Array(width);
+        // RSS is carried forward between samples, so a gap means "unchanged"
+        // rather than zero and the last known value has to be held.
+        const isLevel = field === 'rss_mb';
+
+        for (const proc of row.members) {
+            const samples = state.data.samples[proc.id];
+            if (!samples) continue;
+            const from = lowerBound(samples.t, state.sel.a);
+            const to = lowerBound(samples.t, state.sel.b + 1);
+            if (isLevel) {
+                let held = from > 0 ? samples[field][from - 1] : (samples[field][from] ?? 0);
+                let next = from;
+                for (let i = 0; i < width; i++) {
+                    while (next < to && samples.t[next] - state.sel.a === i) held = samples[field][next++];
+                    series[i] += held;
+                }
+            } else {
+                for (let i = from; i < to; i++) series[samples.t[i] - state.sel.a] += samples[field][i];
+            }
+        }
+
+        let max = 0;
+        let min = Infinity;
+        for (const value of series) {
+            if (value > max) max = value;
+            if (value < min) min = value;
+        }
+        if (max <= 0 && min >= 0) continue;
+        // A level plotted from zero would be a flat line at the top; a delta must
+        // keep zero as its floor or an idle gap looks like activity.
+        const floor = isLevel ? min : 0;
+        const span = max - floor;
+        if (span <= 0) {
+            // Constant and non-zero: a mid-height line says "steady", not "nothing".
+            ctx.strokeStyle = colorByField.get(field) || '#4db5ff';
+            ctx.globalAlpha = 0.45;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / 2);
+            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            continue;
+        }
+
+        ctx.strokeStyle = colorByField.get(field) || '#4db5ff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const stepX = canvas.width / Math.max(series.length - 1, 1);
+        for (let i = 0; i < series.length; i++) {
+            const x = i * stepX;
+            const y = canvas.height - 1 - ((series[i] - floor) / span) * (canvas.height - 2);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+}
+
+/// One row per executable with a bar for every instance, which is what makes a
+/// process respawning on a timer show up as a regular comb.
+function renderGantt(host) {
+    const rows = buildRows();
+    const ticks = state.data.meta.ticks;
+    const width = 100;
+
+    if (rows.length === 0) {
+        host.innerHTML = '<div class="empty">No processes match the current selection and filter.</div>';
+        return;
+    }
+
+    const grouped = new Map();
+    for (const row of rows) {
+        for (const proc of row.members) {
+            const key = groupKey(proc);
+            if (!grouped.has(key)) grouped.set(key, { label: displayName(proc), procs: [] });
+            grouped.get(key).procs.push(proc);
+        }
+    }
+    // Most instances first: a respawning process is exactly what you are looking for.
+    const ordered = [...grouped.values()].sort((a, b) => b.procs.length - a.procs.length || a.label.localeCompare(b.label));
+
+    const bars = ordered.map(entry => {
+        const segments = entry.procs.map(proc => {
+            const left = (proc.first_tick / Math.max(ticks - 1, 1)) * width;
+            const span = Math.max(((proc.last_tick - proc.first_tick) / Math.max(ticks - 1, 1)) * width, 0.4);
+            const colour = proc.kernel ? 'hsl(280, 45%, 55%)' : proc.first_tick > 0 ? 'hsl(105, 70%, 50%)' : 'hsl(205, 90%, 60%)';
+            return `<div title="pid ${proc.pid}, ticks ${proc.first_tick}-${proc.last_tick}" style="position:absolute; left:${left}%; width:${span}%; top:2px; bottom:2px; background:${colour}; border-radius:1px;"></div>`;
+        }).join('');
+        return `<tr><td class="left" style="width:260px;">${esc(entry.label)} <span class="pid">${entry.procs.length}x</span></td>
+            <td style="position:relative; height:18px; background:#1c2023;">${segments}</td></tr>`;
+    }).join('');
+
+    host.innerHTML = `<div id="ganttWrap"><table>
+        <thead><tr><th class="left">Executable</th><th class="left">0 s &rarr; ${(tickToMs(ticks - 1) / 1000).toFixed(1)} s</th></tr></thead>
+        <tbody>${bars}</tbody></table></div>`;
+    document.getElementById('tableHint').textContent =
+        'Blue: already running when the recording started. Green: started during it. Purple: kernel thread. '
+        + 'Many short bars in one row means the executable is being respawned - the pattern of the spacing is the clue.';
+}
+
+const cssId = key => key.replace(/[^A-Za-z0-9_-]/g, '_');
+const jsStr = key => key.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+// ── loading ───────────────────────────────────────────────────────────────────
+
+/// Fills in per-tick arrays a recording may not carry, so the aggregation loop
+/// can index them unconditionally and a file written by a different build
+/// degrades to zeroes instead of throwing.
+const SAMPLE_ARRAYS = ['cpu', 'rss_mb', 'rchar', 'wchar', 'read_bytes', 'written_bytes', 'inherited_wchar', 'inherited_written', 'threads', 'vol_ctx', 'nonvol_ctx'];
+
+function normalizeSamples(data) {
+    for (const samples of Object.values(data.samples || {})) {
+        const length = (samples.t || []).length;
+        if (!samples.t) samples.t = [];
+        for (const field of SAMPLE_ARRAYS) {
+            if (!Array.isArray(samples[field]) || samples[field].length !== length) {
+                samples[field] = new Array(length).fill(0);
+            }
+        }
+        if (typeof samples.status !== 'string' || samples.status.length !== length) {
+            samples.status = '?'.repeat(length);
+        }
+    }
+    for (const field of ['t_ms', 'cpu_pct', 'mem_used_mb', 'disk_read_mbs', 'disk_write_mbs', 'proc_wchar_mbs', 'proc_written_mbs']) {
+        if (!Array.isArray(data.system[field])) data.system[field] = new Array(data.system.t_ms?.length || 0).fill(0);
+    }
+    data.paths = data.paths || [];
+    data.fds = data.fds || {};
+}
+
+function applyData(data) {
+    if (!data || !data.meta) throw new Error('Not a session recording');
+    if (data.meta.format_version !== 1) throw new Error('Unsupported session format version ' + data.meta.format_version);
+    if (!data.system.t_ms.length) throw new Error('Recording contains no samples');
+
+    normalizeSamples(data);
+    state.data = data;
+    state.pidIndex = new Map();
+    state.childIndex = new Map();
+    for (const proc of data.procs) {
+        state.pidIndex.set(proc.pid, proc.id);
+        if (proc.ppid === null || proc.ppid === undefined) continue;
+        if (!state.childIndex.has(proc.ppid)) state.childIndex.set(proc.ppid, []);
+        state.childIndex.get(proc.ppid).push(proc);
+    }
+    state.sel = { a: 0, b: data.system.t_ms.length - 1 };
+    state.baseline = null;
+    state.expanded.clear();
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('main').style.display = '';
+    document.title = `Session ${new Date(data.meta.start_unix * 1000).toLocaleString()}`;
+
+    buildSystemCharts();
+    render();
+}
+
+function showError(message) {
+    const box = document.getElementById('loading');
+    box.style.display = '';
+    box.innerHTML = `<span class="warn">${esc(message)}</span>`;
+}
+
+async function refreshSessionList() {
+    try {
+        const response = await fetch('/api/session/list');
+        const payload = await response.json();
+        const select = document.getElementById('sessionSelect');
+        const previous = select.value;
+        select.innerHTML = payload.sessions.map(entry => {
+            const meta = entry.meta;
+            const label = meta
+                ? `${entry.name} - ${meta.recorded_duration_secs.toFixed(0)}s at ${meta.hz}Hz, ${meta.process_count} processes${meta.aborted ? ', stopped early' : ''}`
+                : `${entry.name} - unreadable`;
+            return `<option value="${esc(entry.name)}">${esc(label)}</option>`;
+        }).join('');
+        document.getElementById('listHint').textContent = payload.sessions.length
+            ? `${payload.sessions.length} recordings in ${payload.directory}`
+            : `No recordings yet in ${payload.directory} - record one above.`;
+        // ?file= lets the dashboard link straight to the recording it just made.
+        const requested = new URLSearchParams(window.location.search).get('file');
+        const keep = [previous, requested].find(name => name && [...select.options].some(o => o.value === name));
+        if (keep) select.value = keep;
+        return payload.sessions.map(entry => entry.name);
+    } catch (e) {
+        document.getElementById('listHint').textContent = 'Could not list sessions: ' + e.message;
+        return [];
+    }
+}
+
+async function loadSelectedSession() {
+    const name = document.getElementById('sessionSelect').value;
+    if (!name) return;
+    try {
+        const response = await fetch('/api/session/file/' + encodeURIComponent(name));
+        if (!response.ok) throw new Error(await response.text());
+        applyData(await response.json());
+    } catch (e) {
+        showError('Could not load ' + name + ': ' + e.message);
+    }
+}
+
+function downloadStandalone() {
+    const name = document.getElementById('sessionSelect').value;
+    if (name) window.location = '/api/session/export/' + encodeURIComponent(name);
+}
+
+/// The raw recording, for analysing it with something other than this page.
+function downloadJson() {
+    const name = document.getElementById('sessionSelect').value;
+    if (name) window.location = '/api/session/file/' + encodeURIComponent(name) + '?download=1';
+}
+
+// ── recording control ─────────────────────────────────────────────────────────
+
+let statusTimer = null;
+
+/// Longer recordings get unwieldy to work with in the browser, so the presets
+/// stop at five minutes and a custom value is held to the same ceiling.
+const RECORD_MAX_SECONDS = 300;
+
+function chosenSeconds() {
+    const select = document.getElementById('recordSeconds');
+    if (select.value !== 'custom') return Number(select.value);
+    const wanted = Number(document.getElementById('recordSecondsCustom').value) || 1;
+    return Math.min(Math.max(1, wanted), RECORD_MAX_SECONDS);
+}
+
+async function startRecording() {
+    const body = { seconds: chosenSeconds(), hz: Number(document.getElementById('recordHz').value) };
+    try {
+        const response = await fetch('/api/session/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!response.ok) {
+            document.getElementById('recordHint').textContent = await response.text();
+            return;
+        }
+        document.getElementById('recordHint').textContent = '';
+        pollStatus();
+    } catch (e) {
+        document.getElementById('recordHint').textContent = 'Could not start: ' + e.message;
+    }
+}
+
+async function stopRecording() {
+    try { await fetch('/api/session/stop', { method: 'POST' }); } catch (e) { void e; }
+    pollStatus();
+}
+
+async function pollStatus() {
+    let status;
+    try {
+        status = await (await fetch('/api/session/status')).json();
+    } catch (e) {
+        void e;
+        return;
+    }
+
+    document.getElementById('recordIdle').style.display = status.active ? 'none' : '';
+    document.getElementById('recordActive').style.display = status.active ? '' : 'none';
+
+    if (status.active) {
+        document.getElementById('countdown').textContent = status.remaining_secs.toFixed(0) + ' s left';
+        document.getElementById('recordProgress').textContent =
+            `${status.ticks_done} / ${status.ticks_total} samples, ${status.processes_seen} processes seen so far`;
+        if (!statusTimer) statusTimer = setInterval(pollStatus, 500);
+        return;
+    }
+
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (status.finished_file) {
+        const names = await refreshSessionList();
+        if (names.includes(status.finished_file)) {
+            document.getElementById('sessionSelect').value = status.finished_file;
+            await loadSelectedSession();
+        }
+    }
+}
+
+// ── bootstrap ─────────────────────────────────────────────────────────────────
+
+document.getElementById('recordSeconds').addEventListener('change', event => {
+    document.getElementById('recordSecondsCustom').style.display = event.target.value === 'custom' ? '' : 'none';
+});
+
+// Registered once, not per loaded session: Chart.js has already resized itself
+// by the time this fires, so the selection band can be repositioned.
+window.addEventListener('resize', () => setTimeout(updateBrushOverlay, 80));
+
+if (STANDALONE) {
+    try {
+        applyData(window.SESSION_DATA);
+    } catch (e) {
+        showError('Could not read the embedded recording: ' + e.message);
+    }
+} else {
+    document.getElementById('recordPanel').style.display = '';
+    document.getElementById('listPanel').style.display = '';
+    (async () => {
+        await pollStatus();
+        const names = await refreshSessionList();
+        if (names.length) await loadSelectedSession();
+        else document.getElementById('loading').innerHTML = '<span class="hint">No recording loaded. Record one above.</span>';
+    })();
+}
+</script>
+</body>
+</html>

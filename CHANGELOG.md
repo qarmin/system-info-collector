@@ -1,4 +1,7 @@
 ## Unreleased
+- Fixed `session_viewer.html` never being committed: a blanket `*.html` in `.gitignore` excluded it while it is pulled in with `include_str!`, so the build worked only on the machine that wrote the file
+- `.gitignore` now anchors the generated-file patterns to the repository root instead of matching by extension everywhere, so a page or fixture living next to its code cannot be excluded by accident
+- Added a test that every `include_str!` target is tracked by git, so this class of breakage fails locally instead of on someone else's machine
 - Removed `--top-n-processes` and the `_top_cpu.csv` / `_top_ram.csv` files - process sessions cover the same ground with per-PID detail, lifetimes and I/O attribution, and without refreshing every process on every collection tick
 - `convert -d` now takes a single data file, since there are no companion files left to pass
 - Added `session` command and web UI panel - a short recording of every process, for finding out what is loading the machine right now

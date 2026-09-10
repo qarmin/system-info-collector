@@ -25,6 +25,13 @@ build_all:
     cargo clippy
     cargo test
 
+# Verifies that every file pulled in with include_str! is actually in the repository.
+# Embedding a file that .gitignore excludes compiles here and nowhere else, which is
+# how session_viewer.html once shipped broken. Part of `cargo test`, so `build_all`
+# already covers it; this is for running it on its own.
+check_embedded:
+    cargo test --test embedded_files_are_committed -- --nocapture
+
 # Prints detected CPU, memory, disks (with a live busy%/throughput sample), network interfaces and
 # GPUs (with one live sample per GPU), reusing the same discovery/monitoring code the collector uses.
 # Handy for verifying GPU detection (e.g. AMD) on a machine without re-running the full collector.
