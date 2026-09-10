@@ -229,7 +229,7 @@
                         <option value="300">5 minutes</option>
                         <option value="custom">custom...</option>
                     </select>
-                    <input type="number" id="recordSecondsCustom" min="1" step="1" value="90" style="display:none; margin-left:8px; width:90px;">
+                    <input type="number" id="recordSecondsCustom" min="1" max="300" step="1" value="90" onchange="updateRecordPanel()" style="display:none; margin-left:8px; width:90px;">
                 </label>
                 <label style="display:block; margin-bottom:10px;">Samples per second
                     <select id="recordHz" style="margin-left:8px; min-width:140px;">
@@ -239,7 +239,7 @@
                     </select>
                 </label>
                 <label style="display:block; margin-bottom:14px;">
-                    <input type="checkbox" id="recordAutoDownload" checked> Download the result as a single HTML file when it finishes
+                    <input type="checkbox" id="recordAutoDownload"> Download the result as a single HTML file when it finishes
                 </label>
                 <div class="hint" id="recordEstimate" style="margin-bottom:14px;"></div>
                 <div style="text-align:right;">
@@ -262,6 +262,7 @@
                     <button onclick="recordAgain()">Record another</button>
                     <button id="recordOpenBtn" onclick="openRecording()">Open in viewer</button>
                     <button id="recordDownloadBtn" onclick="downloadRecording()">Download HTML</button>
+                    <button id="recordJsonBtn" onclick="downloadRecordingJson()">Download JSON</button>
                     <button onclick="closeRecordPanel()" style="background:#444; color:#e0e0e0;">Close</button>
                 </div>
             </div>
@@ -283,6 +284,7 @@
                 <select id="exportFormat" onchange="updateExportPanel()" style="margin-left:8px; min-width:230px;">
                     <option value="report">Plotly report (whole CSV file)</option>
                     <option value="html">Dashboard snapshot (live buffer only)</option>
+                    <option value="json">Raw data as JSON (live buffer only)</option>
                 </select>
             </label>
             <label style="display:block; margin-bottom:12px;">
@@ -454,6 +456,8 @@
 
     <script>
         const RANGES = [
+            ['Last 30 seconds', 30],
+            ['Last 1 minute', 60],
             ['Last 5 minutes', 300],
             ['Last 15 minutes', 900],
             ['Last 30 minutes', 1800],
@@ -463,7 +467,7 @@
             ['Last 12 hours', 43200],
             ['Last 1 day', 86400],
         ];
-        const DEFAULT_RANGE_SECONDS = 3600;
+        const DEFAULT_RANGE_SECONDS = 300;
         const REDRAW_INTERVALS = [1, 2, 5, 10, 30, 60];
         const DEFAULT_REDRAW_SECONDS = 5;
         const TABLE_MAX_ROWS = 1000;
@@ -1173,10 +1177,13 @@
         /// opens - and download it unasked.
         let awaitingOwnRecording = false;
 
+        const RECORD_MAX_SECONDS = 300;
+
         function chosenRecordSeconds() {
             const select = document.getElementById('recordSeconds');
             if (select.value === 'custom') {
-                return Math.max(1, Number(document.getElementById('recordSecondsCustom').value) || 1);
+                const wanted = Number(document.getElementById('recordSecondsCustom').value) || 1;
+                return Math.min(Math.max(1, wanted), RECORD_MAX_SECONDS);
             }
             return Number(select.value);
         }
@@ -1186,9 +1193,12 @@
             document.getElementById('recordSecondsCustom').style.display = custom ? '' : 'none';
             const seconds = chosenRecordSeconds();
             const hz = Number(document.getElementById('recordHz').value);
+            const capped = document.getElementById('recordSeconds').value === 'custom'
+                && Number(document.getElementById('recordSecondsCustom').value) > RECORD_MAX_SECONDS;
             document.getElementById('recordEstimate').textContent =
-                `${Math.round(seconds * hz)} samples of every process. Nothing is written to disk until it finishes, `
-                + 'and you can stop it at any point without losing what was collected.';
+                `${seconds} s, ${Math.round(seconds * hz)} samples of every process. Nothing is written to disk until `
+                + 'it finishes, and you can stop it at any point without losing what was collected.'
+                + (capped ? ` Capped at ${RECORD_MAX_SECONDS} s - longer recordings get unwieldy in the browser.` : '');
         }
 
         function showRecordPanel() {
@@ -1196,9 +1206,11 @@
             document.getElementById('recordPanel').style.display = '';
             document.getElementById('recordError').style.display = 'none';
             updateRecordPanel();
-            // Always offer to record; the poll below switches to the countdown if
-            // one turns out to be running.
-            setRecordPhase('idle');
+            // A finished recording from this page is kept: closing the panel by
+            // accident must not throw the result away.  The poll below switches to
+            // the countdown if a recording turns out to be running.
+            setRecordPhase(recordedFile ? 'done' : 'idle');
+            if (recordedFile) renderDonePhase();
             pollRecordStatus();
         }
 
@@ -1278,7 +1290,10 @@
                 awaitingOwnRecording = false;
                 recordedFile = status.finished_file;
                 finishRecording();
-            } else if (!recordedFile) {
+            } else if (recordedFile) {
+                // Keep showing the result we already have.
+                renderDonePhase();
+            } else {
                 // Covers watching a recording that was started before a reload:
                 // it is not ours to report, so fall back to the Start form rather
                 // than leaving a countdown frozen at zero.
@@ -1286,12 +1301,18 @@
             }
         }
 
-        function finishRecording() {
+        /// Shows the result without acting on it, so reopening the panel restores
+        /// the buttons rather than re-triggering a download.
+        function renderDonePhase() {
             setRecordPhase('done');
             document.getElementById('recordDoneText').innerHTML =
                 `Recorded <code>${recordedFile}</code>.<br>`
                 + 'The viewer lets you drag across any of the load charts to select a period; the process table below '
-                + 'then recomputes for exactly that range.';
+                + 'then recomputes for exactly that range. This stays here until you record another one.';
+        }
+
+        function finishRecording() {
+            renderDonePhase();
             if (document.getElementById('recordAutoDownload').checked) {
                 downloadRecording();
             }
@@ -1308,6 +1329,12 @@
 
         function downloadRecording() {
             if (recordedFile) window.location = '/api/session/export/' + encodeURIComponent(recordedFile);
+        }
+
+        /// The recording itself rather than a viewer for it, for feeding the
+        /// numbers to something else.
+        function downloadRecordingJson() {
+            if (recordedFile) window.location = '/api/session/file/' + encodeURIComponent(recordedFile) + '?download=1';
         }
 
         function openRecording() {

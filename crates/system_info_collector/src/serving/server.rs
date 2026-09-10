@@ -144,6 +144,7 @@ pub async fn start_server(
         .route("/api/ws", get(ws_handler))
         .route("/api/export/html", get(export_html_handler))
         .route("/api/export/report", get(export_report_handler))
+        .route("/api/export/json", get(export_json_handler))
         .route("/api/export/sources", get(export_sources_handler))
         .route("/session", get(session_viewer_handler))
         .route("/api/session/start", post(session_start_handler))
@@ -295,6 +296,13 @@ fn download_headers(file_name: &str) -> [(axum::http::HeaderName, String); 2] {
     ]
 }
 
+fn json_download_headers(file_name: &str) -> [(axum::http::HeaderName, String); 2] {
+    [
+        (axum::http::header::CONTENT_TYPE, "application/json".to_string()),
+        (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file_name}\"")),
+    ]
+}
+
 fn plain_text(status: StatusCode, body: String) -> axum::response::Response {
     (status, [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], body).into_response()
 }
@@ -328,6 +336,32 @@ async fn export_html_handler(Query(params): Query<ExportQuery>, State(buffer): S
     html = html.replace("</head>", &format!("{static_script}</head>"));
 
     (download_headers(&export_file_name("dashboard", &export_slug(&params), "html")), html)
+}
+
+/// The live buffer as JSON, for feeding the numbers to something else rather
+/// than looking at them.  Same shape as the data baked into a dashboard
+/// snapshot, so one parser handles both.
+async fn export_json_handler(Query(params): Query<ExportQuery>, State(buffer): State<Arc<DataBuffer>>) -> axum::response::Response {
+    let metadata = buffer.get_metadata();
+    let rows = select_buffer_data(&buffer, &params, metadata.system_info.start_time);
+
+    let payload = serde_json::json!({
+        "metadata": metadata,
+        "data": rows
+            .iter()
+            .map(|p| serde_json::json!({ "timestamp": p.timestamp, "data": p.data }))
+            .collect::<Vec<_>>(),
+    });
+
+    let body = match serde_json::to_vec(&payload) {
+        Ok(body) => body,
+        Err(e) => {
+            error!("Failed to serialize live data: {e}");
+            return plain_text(StatusCode::INTERNAL_SERVER_ERROR, "Failed to serialize data".to_string());
+        }
+    };
+
+    (json_download_headers(&export_file_name("data", &export_slug(&params), "json")), body).into_response()
 }
 
 /// Plotly report - the same format the `convert` command produces.
@@ -608,8 +642,21 @@ async fn session_list_handler(State(sessions): State<Arc<SessionService>>) -> ax
     }
 }
 
-async fn session_file_handler(Path(name): Path<String>, State(sessions): State<Arc<SessionService>>) -> axum::response::Response {
+#[derive(Deserialize)]
+struct SessionFileQuery {
+    /// Present when the browser should save the file rather than parse it.
+    download: Option<String>,
+}
+
+async fn session_file_handler(
+    Path(name): Path<String>,
+    Query(params): Query<SessionFileQuery>,
+    State(sessions): State<Arc<SessionService>>,
+) -> axum::response::Response {
+    let as_download = params.download.is_some();
+    let file_name = name.clone();
     match tokio::task::spawn_blocking(move || sessions.store().read_raw(&name)).await {
+        Ok(Ok(bytes)) if as_download => (json_download_headers(&file_name), bytes).into_response(),
         Ok(Ok(bytes)) => ([(axum::http::header::CONTENT_TYPE, "application/json")], bytes).into_response(),
         Ok(Err(e)) => plain_text(StatusCode::NOT_FOUND, format!("{e}")),
         Err(e) => {

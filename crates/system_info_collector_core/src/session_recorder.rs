@@ -49,6 +49,9 @@ const FD_RESCAN_SECS: f64 = 1.0;
 const FD_MAX_PROCESSES_PER_TICK: usize = 10;
 const FD_MAX_PATHS_PER_PROCESS: usize = 64;
 
+/// How often `/proc/<pid>/status` is re-read per process - see `Tracked::extras`.
+const STATUS_RESCAN_SECS: f64 = 1.0;
+
 /// A sample is kept when the process did something; otherwise the tick is
 /// omitted entirely and the viewer treats the gap as "idle, unchanged".
 const ACTIVE_CPU_PCT: f32 = 0.05;
@@ -146,6 +149,31 @@ pub struct SessionMeta {
     pub proc_wchar_bytes: u64,
     pub proc_read_bytes: u64,
     pub proc_written_bytes: u64,
+    /// How many processes had unreadable I/O counters.  When this is most of them,
+    /// per-process attribution is structurally incomplete and the unclaimed
+    /// remainder in the totals says nothing - re-run with enough privilege.
+    pub processes_without_io: usize,
+    /// The uid the recorder ran as, to compare against `SessionProcess::uid`.
+    pub recorder_uid: Option<u32>,
+    /// Per-device breakdown of the figures above, including the devices that were
+    /// deliberately skipped.  Without this a suspicious device total cannot be
+    /// audited - you cannot tell a real busy disk from the same write counted
+    /// twice under two names.
+    pub devices: Vec<DeviceTotals>,
+}
+
+/// One block device's contribution to the recording.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceTotals {
+    pub name: String,
+    pub read_bytes: u64,
+    pub written_bytes: u64,
+    /// False for devices left out of the machine-wide totals because their
+    /// traffic is already counted under another name - partitions, device-mapper
+    /// targets, software RAID and NVMe multipath aliases.
+    pub counted: bool,
+    /// Why it was skipped, for the cases where that is not obvious.
+    pub skipped_because: Option<String>,
 }
 
 /// Cumulative `/proc/<pid>/io` counters: bytes since the process started.
@@ -186,6 +214,18 @@ pub struct SessionProcess {
     /// The same counters when it was first sampled, so the recording's own share
     /// is `io_total` minus this.
     pub io_at_start: IoTotals,
+    /// False when `/proc/<pid>/io` could not be read at all.
+    ///
+    /// That file is mode 0400 and needs permission over the target, so a recorder
+    /// running as an ordinary user gets nothing for processes it does not own -
+    /// every system daemon and every kernel thread.  Reporting zeros for those
+    /// would be indistinguishable from "wrote nothing", which is exactly the wrong
+    /// conclusion, so the difference is recorded.
+    pub io_readable: bool,
+    /// Owner of the process, from the ownership of its `/proc` directory.  The
+    /// readable set is almost always "processes with this uid", so seeing the uids
+    /// makes an incomplete recording obvious.
+    pub uid: Option<u32>,
 }
 
 /// Per-tick values for one process, aligned to `t` (tick indices, ascending).
@@ -315,6 +355,8 @@ struct SessionTotals {
     proc_wchar_bytes: u64,
     proc_read_bytes: u64,
     proc_written_bytes: u64,
+    /// name -> (read, written, why it was not counted)
+    devices: BTreeMap<String, (u64, u64, Option<String>)>,
 }
 
 impl IoCounters {
@@ -362,7 +404,9 @@ struct Observation {
     cpu: f32,
     rss_mb: f32,
     status: char,
-    raw_io: IoCounters,
+    /// `None` when `/proc/<pid>/io` could not be read - see `io_readable`.
+    raw_io: Option<IoCounters>,
+    uid: Option<u32>,
     name: String,
     exe: String,
     cmd: String,
@@ -388,6 +432,11 @@ struct Tracked {
     has_prev_io: bool,
     last_rss_mb: f32,
     last_fd_scan: Option<Instant>,
+    /// `/proc/<pid>/status` is by far the largest file read per process, and the
+    /// three fields taken from it barely move, so it is re-read at this cadence
+    /// and the last values are reused in between.
+    last_status_scan: Option<Instant>,
+    extras: StatusExtras,
 }
 
 /// Identity that survives PID reuse: the kernel start time changes even when a
@@ -406,7 +455,14 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
         interval.as_secs_f64() * 1000.0
     );
 
+    // `ProcessRefreshKind::nothing()` leaves `tasks` enabled, so sysinfo would
+    // read stat and statm for every *thread* of every process - on a desktop that
+    // is several thousand extra files per tick, all of which this module then
+    // discards because userland threads duplicate their parent's figures.  Turning
+    // them off is what keeps the recorder's own /proc read volume in proportion.
+    // Kernel threads are separate PIDs rather than tasks, so they still appear.
     let refresh = ProcessRefreshKind::nothing()
+        .without_tasks()
         .with_cpu()
         .with_memory()
         .with_exe(UpdateKind::OnlyIfNotSet)
@@ -457,7 +513,18 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 
         let disk_current = disk_stats::read_counters();
-        let (device_read, device_written) = whole_device_bytes(&disk_current, &disk_prev);
+        let mut device_read = 0u64;
+        let mut device_written = 0u64;
+        for (name, read, written) in device_deltas(&disk_current, &disk_prev) {
+            let reason = duplicate_reason(&name, &disk_current);
+            if reason.is_none() {
+                device_read += read;
+                device_written += written;
+            }
+            let entry = totals.devices.entry(name).or_insert((0, 0, reason));
+            entry.0 += read;
+            entry.1 += written;
+        }
         disk_prev = disk_current;
         totals.device_read_bytes += device_read;
         totals.device_written_bytes += device_written;
@@ -486,15 +553,8 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
                 cpu: process.cpu_usage() / cpu_cores as f32,
                 rss_mb: process.memory() as f32 / 1_048_576.0,
                 status: status_char(process.status()),
-                raw_io: read_io_counters(pid).unwrap_or_else(|| {
-                    let usage = process.disk_usage();
-                    IoCounters {
-                        rchar: 0,
-                        wchar: 0,
-                        read_bytes: usage.total_read_bytes,
-                        written_bytes: usage.total_written_bytes,
-                    }
-                }),
+                raw_io: read_io_counters(pid),
+                uid: read_owner_uid(pid),
                 name: process.name().to_string_lossy().into_owned(),
                 exe: process.exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                 cmd: process
@@ -545,29 +605,42 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
                     first_tick: tick,
                     last_tick: tick,
                     alive_at_end: false,
-                    io_total: seen.raw_io.into(),
-                    io_at_start: seen.raw_io.into(),
+                    io_total: seen.raw_io.unwrap_or_default().into(),
+                    io_at_start: seen.raw_io.unwrap_or_default().into(),
+                    io_readable: seen.raw_io.is_some(),
+                    uid: seen.uid,
                 });
                 Tracked {
                     id,
-                    prev_io: seen.raw_io,
+                    prev_io: seen.raw_io.unwrap_or_default(),
                     has_prev_io: false,
                     last_rss_mb: f32::MIN,
                     last_fd_scan: None,
+                    last_status_scan: None,
+                    extras: StatusExtras::default(),
                 }
             });
 
             let id = entry.id;
             procs[id].last_tick = tick;
-            procs[id].io_total = seen.raw_io.into();
 
-            let raw_delta = if entry.has_prev_io {
-                seen.raw_io.delta(entry.prev_io)
-            } else {
-                IoCounters::default()
+            // An unreadable counter contributes nothing rather than a zero: the
+            // delta from a fabricated zero would be a lie in both directions.
+            let raw_delta = match seen.raw_io {
+                Some(raw) => {
+                    procs[id].io_total = raw.into();
+                    procs[id].io_readable = true;
+                    let delta = if entry.has_prev_io {
+                        raw.delta(entry.prev_io)
+                    } else {
+                        IoCounters::default()
+                    };
+                    entry.prev_io = raw;
+                    entry.has_prev_io = true;
+                    delta
+                }
+                None => IoCounters::default(),
             };
-            entry.prev_io = seen.raw_io;
-            entry.has_prev_io = true;
 
             // Never let the correction go negative: the fold can land a tick after
             // the child vanished, and the parent may also have written itself.
@@ -589,9 +662,16 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
             }
             entry.last_rss_mb = seen.rss_mb;
 
-            // Context switches and thread count need a second /proc file, so they
-            // are only read for ticks that are being recorded anyway.
-            let extra = read_status_extras(seen.pid).unwrap_or_default();
+            let stale = entry
+                .last_status_scan
+                .is_none_or(|last| refreshed_at.duration_since(last).as_secs_f64() >= STATUS_RESCAN_SECS);
+            if stale {
+                entry.last_status_scan = Some(refreshed_at);
+                if let Some(fresh) = read_status_extras(seen.pid) {
+                    entry.extras = fresh;
+                }
+            }
+            let extra = entry.extras;
             samples.entry(id).or_default().push(
                 tick,
                 &TickSample {
@@ -627,6 +707,15 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
         progress.ticks_done.store(tick + 1, Ordering::Relaxed);
         progress.processes_seen.store(procs.len(), Ordering::Relaxed);
         debug!("session tick {tick} done, {} processes tracked", procs.len());
+    }
+
+    let processes_without_io = procs.iter().filter(|p| !p.io_readable).count();
+    if processes_without_io > 0 {
+        info!(
+            "Could not read /proc/<pid>/io for {processes_without_io} of {} processes - per-process I/O for those is \
+             unknown, not zero. Run with more privilege for full attribution.",
+            procs.len()
+        );
     }
 
     let recorded_ticks = system.t_ms.len();
@@ -666,6 +755,19 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
             proc_wchar_bytes: totals.proc_wchar_bytes,
             proc_read_bytes: totals.proc_read_bytes,
             proc_written_bytes: totals.proc_written_bytes,
+            processes_without_io,
+            recorder_uid: read_owner_uid(std::process::id()),
+            devices: totals
+                .devices
+                .into_iter()
+                .map(|(name, (read_bytes, written_bytes, skipped_because))| DeviceTotals {
+                    name,
+                    read_bytes,
+                    written_bytes,
+                    counted: skipped_because.is_none(),
+                    skipped_because,
+                })
+                .collect(),
         },
         system,
         procs,
@@ -715,7 +817,7 @@ fn status_char(status: ProcessStatus) -> char {
 
 // ── /proc readers ─────────────────────────────────────────────────────────────
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct StatusExtras {
     threads: u32,
     vol_ctx: u64,
@@ -748,6 +850,19 @@ fn read_io_counters(pid: u32) -> Option<IoCounters> {
 
 #[cfg(not(target_os = "linux"))]
 fn read_io_counters(_pid: u32) -> Option<IoCounters> {
+    None
+}
+
+/// Owner of a process, from the ownership of its `/proc` directory - one `stat`,
+/// no file read.
+#[cfg(target_os = "linux")]
+fn read_owner_uid(pid: u32) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(format!("/proc/{pid}")).ok().map(|meta| meta.uid())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_owner_uid(_pid: u32) -> Option<u32> {
     None
 }
 
@@ -853,41 +968,76 @@ fn read_writable_fd_paths(_pid: u32) -> Vec<String> {
     Vec::new()
 }
 
-/// Bytes moved across physical devices since the previous sample.
+/// Bytes moved by every device since the previous sample, keyed by device name.
 ///
-/// `/proc/diskstats` lists partitions and device-mapper targets alongside the
-/// devices they sit on, so summing every line would count the same write two or
-/// three times.
-fn whole_device_bytes(current: &HashMap<String, DiskCounters>, previous: &HashMap<String, DiskCounters>) -> (u64, u64) {
-    let mut read_sectors = 0u64;
-    let mut write_sectors = 0u64;
+/// Every line of `/proc/diskstats` is reported, counted or not, so the machine
+/// total can be audited afterwards.
+fn device_deltas(current: &HashMap<String, DiskCounters>, previous: &HashMap<String, DiskCounters>) -> Vec<(String, u64, u64)> {
+    let mut out = Vec::new();
     for (name, counters) in current {
-        if !is_whole_device(name, current) {
-            continue;
-        }
         let Some(before) = previous.get(name) else { continue };
-        read_sectors += counters.read_sectors.saturating_sub(before.read_sectors);
-        write_sectors += counters.write_sectors.saturating_sub(before.write_sectors);
+        let read = counters.read_sectors.saturating_sub(before.read_sectors) * 512;
+        let written = counters.write_sectors.saturating_sub(before.write_sectors) * 512;
+        if read > 0 || written > 0 {
+            out.push((name.clone(), read, written));
+        }
     }
-    (read_sectors * 512, write_sectors * 512)
+    out
 }
 
-fn is_whole_device(name: &str, all: &HashMap<String, DiskCounters>) -> bool {
-    if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("zram") || name.starts_with("dm-") {
-        return false;
+/// Why a device's traffic is already accounted for under another name, or `None`
+/// when it should be counted.
+///
+/// `/proc/diskstats` lists several views of the same hardware: partitions next to
+/// their disk, device-mapper and software-RAID targets next to their members, and
+/// on kernels with NVMe multipath a `nvme0c0n1` alias next to `nvme0n1`.  Summing
+/// every line counts the same write two or three times.
+fn duplicate_reason(name: &str, all: &HashMap<String, DiskCounters>) -> Option<String> {
+    for (prefix, why) in [
+        ("loop", "loopback device"),
+        ("ram", "ramdisk"),
+        ("zram", "compressed ramdisk"),
+        ("dm-", "device-mapper target, counted on the underlying device"),
+        ("md", "software RAID, counted on the member devices"),
+    ] {
+        if name.starts_with(prefix) {
+            return Some(why.to_string());
+        }
     }
-    // A partition's name is its parent's name plus a number, optionally after a
-    // "p" separator (`nvme0n1` -> `nvme0n1p3`, `sda` -> `sda1`).
-    !all.keys().any(|parent| {
+
+    // NVMe multipath exposes `nvme<ctrl>c<path>n<ns>` beside `nvme<ctrl>n<ns>`.
+    if let Some(alias) = nvme_multipath_target(name)
+        && all.contains_key(&alias)
+    {
+        return Some(format!("NVMe multipath alias of {alias}"));
+    }
+
+    // A partition is its disk's name plus a number, optionally after a "p".
+    for parent in all.keys() {
         if parent == name {
-            return false;
+            continue;
         }
         let Some(suffix) = name.strip_prefix(parent.as_str()) else {
-            return false;
+            continue;
         };
         let digits = suffix.strip_prefix('p').unwrap_or(suffix);
-        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-    })
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Some(format!("partition of {parent}"));
+        }
+    }
+    None
+}
+
+/// `nvme0c1n2` -> `nvme0n2`, or `None` when the name is not a multipath alias.
+fn nvme_multipath_target(name: &str) -> Option<String> {
+    let rest = name.strip_prefix("nvme")?;
+    let (controller, rest) = rest.split_once('c')?;
+    let (_path, namespace) = rest.split_once('n')?;
+    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if numeric(controller) && numeric(namespace) {
+        return Some(format!("nvme{controller}n{namespace}"));
+    }
+    None
 }
 
 /// How much of a session file [`parse_meta_prefix`] needs.  `meta` carries only
@@ -973,37 +1123,86 @@ mod tests {
     }
 
     #[test]
-    fn treats_partitions_and_mappers_as_duplicates() {
-        let all: HashMap<String, DiskCounters> = ["nvme0n1", "nvme0n1p1", "nvme0n1p3", "sda", "sda1", "dm-0", "loop2"]
-            .into_iter()
-            .map(|name| (name.to_string(), DiskCounters::default()))
-            .collect();
+    fn counts_each_write_once_across_the_views_of_one_device() {
+        // A server exposes the same hardware several times over: partitions, a
+        // device-mapper target, a RAID set and an NVMe multipath alias.
+        let all: HashMap<String, DiskCounters> = [
+            "nvme0n1",
+            "nvme0n1p1",
+            "nvme0n1p3",
+            "nvme0c0n1",
+            "nvme1n1",
+            "nvme1c1n1",
+            "sda",
+            "sda1",
+            "dm-0",
+            "md0",
+            "loop2",
+            "zram0",
+        ]
+        .into_iter()
+        .map(|name| (name.to_string(), DiskCounters::default()))
+        .collect();
 
-        assert!(is_whole_device("nvme0n1", &all));
-        assert!(is_whole_device("sda", &all));
-        assert!(!is_whole_device("nvme0n1p3", &all));
-        assert!(!is_whole_device("sda1", &all));
-        assert!(!is_whole_device("dm-0", &all));
-        assert!(!is_whole_device("loop2", &all));
+        for counted in ["nvme0n1", "nvme1n1", "sda"] {
+            assert!(duplicate_reason(counted, &all).is_none(), "{counted} is real hardware");
+        }
+        for duplicate in [
+            "nvme0n1p1",
+            "nvme0n1p3",
+            "sda1",
+            "dm-0",
+            "md0",
+            "loop2",
+            "zram0",
+            "nvme0c0n1",
+            "nvme1c1n1",
+        ] {
+            assert!(duplicate_reason(duplicate, &all).is_some(), "{duplicate} is already counted elsewhere");
+        }
     }
 
     #[test]
-    fn sums_only_physical_devices() {
-        let previous: HashMap<String, DiskCounters> = ["nvme0n1", "nvme0n1p3"]
-            .into_iter()
-            .map(|name| (name.to_string(), DiskCounters::default()))
-            .collect();
-        let counters = DiskCounters {
+    fn resolves_nvme_multipath_aliases() {
+        assert_eq!(nvme_multipath_target("nvme0c0n1").as_deref(), Some("nvme0n1"));
+        assert_eq!(nvme_multipath_target("nvme3c17n2").as_deref(), Some("nvme3n2"));
+        // Not aliases: a plain namespace, and a partition of one.
+        assert_eq!(nvme_multipath_target("nvme0n1"), None);
+        assert_eq!(nvme_multipath_target("nvme0n1p2"), None);
+        assert_eq!(nvme_multipath_target("sda"), None);
+    }
+
+    #[test]
+    fn keeps_a_multipath_alias_when_its_target_is_absent() {
+        // If only the alias is listed, its traffic is the only record of it.
+        let all: HashMap<String, DiskCounters> = [("nvme0c0n1".to_string(), DiskCounters::default())].into_iter().collect();
+        assert!(duplicate_reason("nvme0c0n1", &all).is_none());
+    }
+
+    #[test]
+    fn reports_every_device_that_moved_bytes() {
+        let names = ["nvme0n1", "nvme0n1p3", "quiet0"];
+        let previous: HashMap<String, DiskCounters> = names.into_iter().map(|name| (name.to_string(), DiskCounters::default())).collect();
+        let busy = DiskCounters {
             read_sectors: 2048,
             write_sectors: 4096,
             busy_ms: 0,
         };
-        let current: HashMap<String, DiskCounters> = ["nvme0n1", "nvme0n1p3"].into_iter().map(|name| (name.to_string(), counters)).collect();
+        let mut current: HashMap<String, DiskCounters> = ["nvme0n1", "nvme0n1p3"].into_iter().map(|name| (name.to_string(), busy)).collect();
+        current.insert("quiet0".to_string(), DiskCounters::default());
 
-        let (read_bytes, written_bytes) = whole_device_bytes(&current, &previous);
-        // Both lines carry the same write; only the parent device is counted.
-        assert_eq!(read_bytes, 2048 * 512);
-        assert_eq!(written_bytes, 4096 * 512);
+        let deltas = device_deltas(&current, &previous);
+        // Idle devices are left out; both views of the busy one are reported so the
+        // duplicate stays visible rather than being silently dropped.
+        assert_eq!(deltas.len(), 2);
+        assert!(deltas.iter().all(|(_, read, written)| *read == 2048 * 512 && *written == 4096 * 512));
+
+        let counted: u64 = deltas
+            .iter()
+            .filter(|(name, _, _)| duplicate_reason(name, &current).is_none())
+            .map(|(_, _, written)| written)
+            .sum();
+        assert_eq!(counted, 4096 * 512, "the partition must not be added to its disk");
     }
 
     #[test]
@@ -1030,6 +1229,9 @@ mod tests {
                 proc_wchar_bytes: 1 << 31,
                 proc_read_bytes: 1 << 28,
                 proc_written_bytes: 1 << 20,
+                processes_without_io: 0,
+                recorder_uid: Some(1000),
+                devices: vec![],
             },
             system: SessionSystem::default(),
             procs: vec![],

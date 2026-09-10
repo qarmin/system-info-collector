@@ -7,7 +7,19 @@
 - Kernel threads are hidden from the session table by default, with a checkbox to show them
 - Session recordings now carry whole-recording byte totals (device vs syscall) and per-process cumulative read/write counters, so writes the device did that no process claimed are called out explicitly
 - Per-process I/O is reported at three scopes - selected period, whole recording, and process lifetime - as separate table columns and as a breakdown in the expanded row
-- The recording's own process is tagged in the session table: its syscall reads are the /proc files it read to measure everything else, not disk traffic
+- The recording's own process is tagged in the session table, and its share of the syscall read total is stated separately: those reads are the /proc files it read to measure everything else, not disk traffic
+- Cut the recorder's own /proc read volume about fourfold by not refreshing threads it discards anyway (`ProcessRefreshKind::nothing()` leaves `tasks` enabled) and by re-reading `/proc/<pid>/status` once a second instead of every sample
+- Live view gains 30 second and 1 minute ranges, and defaults to 5 minutes
+- Recording duration is capped at 5 minutes, and the result is no longer downloaded unless asked for
+- Sorting the session table no longer scrolls it back to the first column
+- Recordings and live buffer data can be downloaded as JSON (`/api/export/json`, and `?download=1` on a session file)
+- The totals panel shows the peak sample next to the average, with the bytes that peak represents, since a tall spike and a small total are routinely mistaken for a contradiction
+- Recordings carry a per-device byte breakdown, including the devices left out of the machine total and why - `/proc/diskstats` shows the same hardware under several names and a total that looks impossible is usually one write counted twice
+- Software RAID (`md*`) and NVMe multipath aliases (`nvme0c0n1`) are now recognised as duplicates of the devices they sit on; previously their traffic was added on top
+- A process whose `/proc/<pid>/io` cannot be read is now recorded as unknown rather than as zero, tagged in the table, counted in the metadata and announced at the top of the viewer - an unprivileged recording sees I/O for its own processes only, which previously looked like every daemon and kernel thread writing nothing
+- Recordings carry each process's owning uid and the recorder's own uid, so incomplete coverage is self-evident
+- A finished recording is no longer discarded when the record panel is closed
+- Added a `verify-session` skill in `.claude/skills/` with a `verify_session.py` script that checks a recording's invariants, reconciles rates against totals, reports peaks in context and summarises attribution
 - Split the Disk Space chart into separate used and available charts
 - Disks, GPUs and network interfaces now keep one colour across every chart; paired series (read/write, RX/TX) share a hue at two intensities
 

@@ -324,6 +324,24 @@ many children it started so the ambiguity is visible rather than hidden.
 Syscall-level I/O, open files and kernel threads come from `/proc`, so on Windows and macOS a recording falls back to
 what `sysinfo` reports (device-level bytes only) and says so in the viewer.
 
+### Run it with privilege, or most of the I/O is invisible
+
+`/proc/<pid>/io` is mode 0400 and needs permission over the target process. Recorded as an ordinary user you get
+counters for your own processes and nothing else - no system daemons, no kernel threads, so none of the writeback that
+buffered writes are charged to. Those rows are tagged `no I/O data` and a notice appears at the top of the viewer,
+because a zero there means *unknown*, not *idle*, and the gap between what the disk did and what processes claim is
+then meaningless.
+
+```
+sudo ./system_info_collector session --duration 60
+```
+
+or grant the capability once and record as yourself:
+
+```
+sudo setcap cap_dac_read_search,cap_sys_ptrace+ep ./system_info_collector
+```
+
 ### Where recordings are written
 
 `--session-dir` (default `sessions/`) for both the command and the web UI, or `--output` for one explicit path. Files are
@@ -442,7 +460,8 @@ covers the whole period instead of just its tail. The reduction is logged.
 | `POST /api/session/stop` | stops the running recording and keeps what it collected; `404` when none is running |
 | `GET /api/session/status` | whether a recording is active, elapsed and remaining seconds, samples taken, and the file name once it finishes |
 | `GET /api/session/list` | saved recordings, newest first, each with its metadata |
-| `GET /api/session/file/<name>` | one recording as JSON |
+| `GET /api/export/json?mode=…` | live buffer as JSON, downloaded as a file |
+| `GET /api/session/file/<name>` | one recording as JSON, inline; add `?download=1` to save it as a file |
 | `GET /api/session/export/<name>` | one recording as a self-contained HTML viewer |
 
 ### Live update protocol
