@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use system_info_collector_core::enums::SimpleDataCollectionMode;
 
+use crate::session_store::DEFAULT_SESSION_DIR;
+
 /// Plot-related settings shared between Collect and Convert commands.
 #[derive(Debug, clap::Args, Clone)]
 pub struct PlotArgs {
@@ -52,6 +54,46 @@ pub struct Args {
 pub enum Commands {
     Collect(CollectArgs),
     Convert(ConvertArgs),
+    Session(SessionArgs),
+}
+
+/// Record every process for a short period, to find out what is loading the
+/// machine right now.
+#[derive(Parser, Debug, Clone)]
+pub struct SessionArgs {
+    #[arg(
+        short,
+        long,
+        default_value = "60",
+        value_name = "SECONDS",
+        help = "How long to record. Ctrl-C stops early and keeps what was collected."
+    )]
+    pub duration: f64,
+
+    #[arg(
+        long,
+        default_value = "5.0",
+        value_name = "HZ",
+        help = "Samples per second. 5 Hz is the maximum: sysinfo cannot report correct per-process CPU% any faster, so a higher rate is rejected rather than silently reporting deflated values."
+    )]
+    pub hz: f32,
+
+    #[arg(
+        long,
+        default_value = DEFAULT_SESSION_DIR,
+        value_name = "DIR",
+        help = "Directory recordings are written to and listed from."
+    )]
+    pub session_dir: String,
+
+    #[arg(short, long, value_name = "FILE", help = "Write the recording here instead of into --session-dir.")]
+    pub output: Option<String>,
+
+    #[arg(
+        long,
+        help = "Also write a self-contained HTML viewer next to the recording and open it - one file, no server needed."
+    )]
+    pub open: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -200,14 +242,13 @@ pub struct CollectArgs {
     #[arg(short = 'C', long, help = "Convert to HTML plot after collection finishes.")]
     pub convert_after: bool,
 
-    // ── Top-N processes ───────────────────────────────────────────────────────
     #[arg(
         long,
-        default_value = "0",
-        value_name = "N",
-        help = "Track the top N most CPU-hungry and RAM-hungry processes, writing them to separate files (0 = disabled) VERY RESOURCE-INTENSIVE, because it needs to refresh all processes"
+        default_value = DEFAULT_SESSION_DIR,
+        value_name = "DIR",
+        help = "Directory for process recordings started from the web UI (requires --serve)."
     )]
-    pub top_n_processes: usize,
+    pub session_dir: String,
 
     // ── Disk monitoring ───────────────────────────────────────────────────────
     #[arg(
@@ -250,11 +291,8 @@ pub struct CollectArgs {
 
 #[derive(Parser, Debug, Clone)]
 pub struct ConvertArgs {
-    /// One or more data files: first is the main CSV, the rest are top-N process files
-    /// (auto-detected from their header).
-    /// Usage: -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv
-    #[arg(short, long, num_args = 1.., default_values = &["system_data.csv"], value_name = "DATA_PATH")]
-    pub data_paths: Vec<String>,
+    #[arg(short, long, default_value = "system_data.csv", value_name = "DATA_PATH")]
+    pub data_path: String,
 
     #[command(flatten)]
     pub plot: PlotArgs,

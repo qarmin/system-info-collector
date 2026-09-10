@@ -1,7 +1,7 @@
 use axum::extract::ws::Utf8Bytes;
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 
 /// How many frames a slow websocket client may fall behind before it is told to
@@ -24,21 +24,6 @@ impl DataPoint {
     }
 }
 
-/// One entry in a top-N snapshot: a process name and its metric value.
-#[derive(Clone, Debug, Serialize)]
-pub struct TopEntry {
-    pub name: String,
-    pub value: f64,
-}
-
-/// A top-N snapshot for one tick: top processes by CPU and by RAM.
-#[derive(Clone, Debug, Serialize)]
-pub struct TopDataPoint {
-    pub timestamp: f64,
-    pub cpu: Vec<TopEntry>,
-    pub ram: Vec<TopEntry>,
-}
-
 /// One websocket frame: everything collected in a single tick.  Serialized once
 /// in the collector thread and shared by reference with every client, so the
 /// per-tick cost does not grow with the number of open browsers.
@@ -46,14 +31,6 @@ pub struct TopDataPoint {
 struct LiveTick<'a> {
     timestamp: f64,
     data: &'a [String],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    top: Option<TopPayload<'a>>,
-}
-
-#[derive(Serialize)]
-struct TopPayload<'a> {
-    cpu: &'a [TopEntry],
-    ram: &'a [TopEntry],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -93,13 +70,9 @@ pub struct SystemInfo {
 #[derive(Clone)]
 pub struct DataBuffer {
     buffer: Arc<RwLock<VecDeque<DataPoint>>>,
-    top_buffer: Arc<RwLock<VecDeque<TopDataPoint>>>,
     max_size: usize,
     metadata: Arc<RwLock<Option<SystemMetadata>>>,
     updates: broadcast::Sender<Utf8Bytes>,
-    /// Top-N snapshot for the tick currently being assembled.  `file_writer`
-    /// reports it just before the CSV row, so it rides along in the same frame.
-    pending_top: Arc<Mutex<Option<TopDataPoint>>>,
 }
 
 impl DataBuffer {
@@ -108,11 +81,9 @@ impl DataBuffer {
             // Grown on demand rather than preallocated - a 24 h buffer would
             // otherwise reserve its full size before a single sample arrives.
             buffer: Arc::new(RwLock::new(VecDeque::new())),
-            top_buffer: Arc::new(RwLock::new(VecDeque::new())),
             max_size,
             metadata: Arc::new(RwLock::new(None)),
             updates: broadcast::Sender::new(LIVE_CHANNEL_CAPACITY),
-            pending_top: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -161,13 +132,10 @@ impl DataBuffer {
     }
 
     pub fn add_data_point(&self, data_point: DataPoint) {
-        let pending_top = self.pending_top.lock().expect("pending_top lock poisoned").take();
-
         if self.has_listeners() {
             let tick = LiveTick {
                 timestamp: data_point.timestamp,
                 data: &data_point.data,
-                top: pending_top.as_ref().map(|t| TopPayload { cpu: &t.cpu, ram: &t.ram }),
             };
             match serde_json::to_string(&tick) {
                 Ok(json) => {
@@ -184,33 +152,10 @@ impl DataBuffer {
         buffer.push_back(data_point);
     }
 
-    pub fn add_top_point(&self, timestamp: f64, cpu: Vec<(String, f32)>, ram: Vec<(String, f64)>) {
-        let point = TopDataPoint {
-            timestamp,
-            cpu: cpu.into_iter().map(|(name, value)| TopEntry { name, value: value as f64 }).collect(),
-            ram: ram.into_iter().map(|(name, value)| TopEntry { name, value }).collect(),
-        };
-
-        if self.has_listeners() {
-            *self.pending_top.lock().expect("pending_top lock poisoned") = Some(point.clone());
-        }
-
-        let mut buffer = self.top_buffer.write().expect("top_buffer lock poisoned");
-        if buffer.len() >= self.max_size {
-            buffer.pop_front();
-        }
-        buffer.push_back(point);
-    }
-
     /// Newest points covering the last `seconds` (relative to the newest point),
     /// capped at `limit` entries.  `None` means unbounded.
     pub fn get_range(&self, seconds: Option<f64>, limit: Option<usize>) -> Vec<DataPoint> {
         let buffer = self.buffer.read().expect("buffer lock poisoned");
-        collect_range(buffer.iter().rev(), |p| p.timestamp, buffer.back().map(|p| p.timestamp), seconds, limit)
-    }
-
-    pub fn get_range_top(&self, seconds: Option<f64>, limit: Option<usize>) -> Vec<TopDataPoint> {
-        let buffer = self.top_buffer.read().expect("top_buffer lock poisoned");
         collect_range(buffer.iter().rev(), |p| p.timestamp, buffer.back().map(|p| p.timestamp), seconds, limit)
     }
 

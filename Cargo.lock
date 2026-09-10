@@ -1861,6 +1861,7 @@ dependencies = [
  "log",
  "nvml-wrapper",
  "serde",
+ "serde_json",
  "strum",
  "sysinfo",
  "tokio",

@@ -6,11 +6,8 @@ use system_info_collector_core::settings::{CollectSettings, ConvertSettings, Fin
 use crate::cli::{CollectArgs, ConvertArgs};
 
 pub fn build_convert_settings(args: ConvertArgs) -> ConvertSettings {
-    let mut paths = args.data_paths;
-    let main_path = paths.remove(0);
     ConvertSettings {
-        data_path: main_path,
-        extra_data_paths: paths,
+        data_path: args.data_path,
         plot_path: args.plot.plot_path,
         plot_width: args.plot.plot_width,
         plot_height: args.plot.plot_height,
@@ -47,7 +44,6 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
 
     let convert_settings = ConvertSettings {
         data_path: args.data_path,
-        extra_data_paths: vec![],
         plot_path: args.plot.plot_path,
         plot_width: args.plot.plot_width,
         plot_height: args.plot.plot_height,
@@ -86,7 +82,7 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         serve: args.serve,
         port: args.port,
         buffer_seconds: args.buffer_seconds.max(1.0),
-        top_n_processes: args.top_n_processes,
+        session_dir: args.session_dir,
         disk_mount_points: args.disk,
         all_disks: args.all_disks,
         excluded_disks: args.disk_exclude,

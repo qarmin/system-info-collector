@@ -11,7 +11,7 @@ use plotly::layout::{Axis, AxisRange, GridPattern, Layout, LayoutGrid};
 use plotly::{Plot, Scatter};
 use regex::Regex;
 use system_info_collector_core::enums::{DataType, GeneralInfoGroup};
-use system_info_collector_core::model::{CollectedItemModels, TopProcessData};
+use system_info_collector_core::model::CollectedItemModels;
 use system_info_collector_core::settings::{ConvertSettings, SplitMode};
 use time::UtcOffset;
 
@@ -29,22 +29,6 @@ pub fn load_results_and_save_plot(settings: &ConvertSettings) -> Result<(), Erro
     if settings.split_mode == SplitMode::Full {
         save_plot_into_file(&loaded_results, settings, timezone_ms)?;
         info!("Creating plot took {:?}", time_start.elapsed());
-
-        // Generate a separate HTML for each top-N process dataset.
-        for (top, kind, file_suffix) in [
-            (&loaded_results.top_cpu_processes, "CPU", "cpu"),
-            (&loaded_results.top_ram_processes, "RAM", "ram"),
-        ] {
-            let Some(top) = top else { continue };
-            let path = top_process_plot_path(&settings.plot_path, file_suffix);
-            let Some(plot) = build_top_process_plot(top, loaded_results.start_time, timezone_ms, kind, settings) else {
-                info!("No process data — skipping {path}");
-                continue;
-            };
-            info!("Creating top-{kind} process plot: {path}");
-            let html = minify_html(&apply_style(plot.to_html(), settings));
-            fs::write(&path, html.as_bytes()).context(format!("Failed to write top-process plot: {path}"))?;
-        }
 
         if settings.open_plot_file {
             info!("Opening file {}", settings.plot_path);
@@ -109,8 +93,6 @@ fn slice_model_by_indices(model: &CollectedItemModels, indices: &[usize]) -> Col
         gpu_vram_mb: model.gpu_vram_mb.clone(),
         disk_labels: model.disk_labels.clone(),
         net_labels: model.net_labels.clone(),
-        top_cpu_processes: None,
-        top_ram_processes: None,
     }
 }
 
@@ -141,32 +123,7 @@ pub fn subset_by_time(model: &CollectedItemModels, keep: &dyn Fn(f64) -> bool, m
         indices = indices.into_iter().step_by(stride).collect();
     }
 
-    let mut subset = slice_model_by_indices(model, &indices);
-    subset.top_cpu_processes = model.top_cpu_processes.as_ref().map(|t| subset_top(t, keep, model.start_time, stride));
-    subset.top_ram_processes = model.top_ram_processes.as_ref().map(|t| subset_top(t, keep, model.start_time, stride));
-    subset
-}
-
-fn subset_top(top: &TopProcessData, keep: &dyn Fn(f64) -> bool, start_time: f64, stride: usize) -> TopProcessData {
-    let indices: Vec<usize> = top
-        .timestamps
-        .iter()
-        .enumerate()
-        .filter(|(_, ts)| keep(**ts + start_time))
-        .map(|(i, _)| i)
-        .step_by(stride)
-        .collect();
-
-    TopProcessData {
-        n: top.n,
-        start_time: top.start_time,
-        timestamps: indices.iter().filter_map(|&i| top.timestamps.get(i).copied()).collect(),
-        ranks: top
-            .ranks
-            .iter()
-            .map(|rank| indices.iter().map(|&i| rank.get(i).cloned().flatten()).collect())
-            .collect(),
-    }
+    slice_model_by_indices(model, &indices)
 }
 
 fn split_and_save_plots(model: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
@@ -214,16 +171,6 @@ fn local_timezone_ms() -> i64 {
     match UtcOffset::from_whole_seconds(chrono::offset::Local::now().offset().local_minus_utc()) {
         Ok(offset) => offset.whole_seconds() as i64 * 1000,
         Err(_) => 0,
-    }
-}
-
-/// Derive the output path for a top-process plot from the main plot path.
-/// `plot.html` → `plot_top_cpu.html` / `plot_top_ram.html`
-fn top_process_plot_path(plot_path: &str, kind: &str) -> String {
-    if let Some(base) = plot_path.strip_suffix(".html") {
-        format!("{base}_top_{kind}.html")
-    } else {
-        format!("{plot_path}_top_{kind}.html")
     }
 }
 
@@ -298,7 +245,8 @@ enum ChartGroup {
     GpuUtil,
     GpuVram,
     GpuTemp,
-    Disk,
+    DiskUsed,
+    DiskAvailable,
     DiskBusy,
     DiskIo,
 }
@@ -306,48 +254,18 @@ enum ChartGroup {
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
     info!("Trying to create html file...");
 
-    let html = build_main_document(loaded_results, settings, timezone_ms, "")?;
+    let html = build_report_html(loaded_results, settings, timezone_ms)?;
     fs::write(&settings.plot_path, html.as_bytes()).context(format!("Failed to write html plot file - {}", settings.plot_path))?;
 
     Ok(())
 }
 
-/// Build a single self-contained report: the main multi-chart plot plus, when
-/// present, the top-N process charts embedded in the same document.
+/// A single self-contained report holding the whole multi-chart plot.
 pub fn build_report_html(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<String, Error> {
-    let mut extra_body = String::new();
-
-    for (top, kind, div_id) in [
-        (&loaded_results.top_cpu_processes, "CPU", "top-cpu-plot"),
-        (&loaded_results.top_ram_processes, "RAM", "top-ram-plot"),
-    ] {
-        let Some(top) = top else { continue };
-        let Some(plot) = build_top_process_plot(top, loaded_results.start_time, timezone_ms, kind, settings) else {
-            continue;
-        };
-        extra_body.push_str(&format!(
-            "<h2 style=\"text-align: center;\">Top Processes - {kind}</h2>{}",
-            plot.to_inline_html(Some(div_id))
-        ));
-    }
-
-    build_main_document(loaded_results, settings, timezone_ms, &extra_body)
-}
-
-fn build_main_document(
-    loaded_results: &CollectedItemModels,
-    settings: &ConvertSettings,
-    timezone_ms: i64,
-    extra_body: &str,
-) -> Result<String, Error> {
     let plot = build_main_plot(loaded_results, settings, timezone_ms)?;
 
     let html = apply_style(plot.to_html(), settings);
-    let body_suffix = [notes_html(loaded_results), extra_body.to_string(), per_chart_legends_script().to_string()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let body_suffix = format!("{}\n{}", notes_html(loaded_results), per_chart_legends_script());
     let html = html.replace("</body>", &format!("{body_suffix}\n</body>"));
 
     Ok(minify_html(&html))
@@ -383,28 +301,31 @@ fn build_main_plot(loaded_results: &CollectedItemModels, settings: &ConvertSetti
         create_swap_plot(&mut plot, &dates, loaded_results, i);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::Network) {
-        create_network_plot(&mut plot, &dates, loaded_results, i);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_network, settings);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::NetworkTotal) {
-        create_network_total_plot(&mut plot, &dates, loaded_results, i);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_network_total, settings);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::GpuUtil) {
-        create_gpu_util_plot(&mut plot, &dates, loaded_results, i);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_gpu_util, settings);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::GpuVram) {
-        create_gpu_vram_plot(&mut plot, &dates, loaded_results, i);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_gpu_vram, settings);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::GpuTemp) {
-        create_gpu_temp_plot(&mut plot, &dates, loaded_results, i);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_gpu_temp, settings);
     }
-    if let Some(&i) = layout_info.get(&ChartGroup::Disk) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_space);
+    if let Some(&i) = layout_info.get(&ChartGroup::DiskUsed) {
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_used, settings);
+    }
+    if let Some(&i) = layout_info.get(&ChartGroup::DiskAvailable) {
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_available, settings);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::DiskBusy) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_busy);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_busy, settings);
     }
     if let Some(&i) = layout_info.get(&ChartGroup::DiskIo) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_io);
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_io, settings);
     }
 
     Ok(plot)
@@ -461,19 +382,12 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     let has_network_total = groups.contains(&GeneralInfoGroup::NETWORK_TOTAL);
 
     // GPU split into three independent sub-charts based on what data is present.
-    let has_gpu_util = loaded_results
-        .collected_data
-        .keys()
-        .any(|dt| matches!(dt, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)));
-    let has_gpu_vram = loaded_results
-        .collected_data
-        .keys()
-        .any(|dt| matches!(dt, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)));
-    let has_gpu_temp = loaded_results
-        .collected_data
-        .keys()
-        .any(|dt| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)));
+    let has_gpu_util = loaded_results.collected_data.keys().any(DataType::is_gpu_util);
+    let has_gpu_vram = loaded_results.collected_data.keys().any(DataType::is_gpu_vram);
+    let has_gpu_temp = loaded_results.collected_data.keys().any(DataType::is_gpu_temp);
     let has_disk = groups.contains(&GeneralInfoGroup::DISK);
+    let has_disk_used = has_disk && loaded_results.collected_data.keys().any(DataType::is_disk_used);
+    let has_disk_available = has_disk && loaded_results.collected_data.keys().any(DataType::is_disk_available);
     let has_disk_busy = groups.contains(&GeneralInfoGroup::DISK_BUSY);
     let has_disk_io = groups.contains(&GeneralInfoGroup::DISK_IO);
 
@@ -485,7 +399,8 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         + has_gpu_util as usize
         + has_gpu_vram as usize
         + has_gpu_temp as usize
-        + has_disk as usize
+        + has_disk_used as usize
+        + has_disk_available as usize
         + has_disk_busy as usize
         + has_disk_io as usize;
 
@@ -560,8 +475,14 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     if has_gpu_temp {
         add_chart!(ChartGroup::GpuTemp, Axis::new().title(Title::with_text("GPU Temperature [°C]")));
     }
-    if has_disk {
-        add_chart!(ChartGroup::Disk, Axis::new().title(Title::with_text("Disk Space [GB]")));
+    if has_disk_used {
+        add_chart!(ChartGroup::DiskUsed, Axis::new().title(Title::with_text("Disk Space Used [GB]")));
+    }
+    if has_disk_available {
+        add_chart!(
+            ChartGroup::DiskAvailable,
+            Axis::new().title(Title::with_text("Disk Space Available [GB]"))
+        );
     }
     if has_disk_busy {
         add_chart!(
@@ -575,160 +496,6 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
 
     let _ = current;
     (layout, idx_info)
-}
-
-// ── top-N process standalone plot ────────────────────────────────────────────
-
-/// For each unique process name that ever appeared in the top-N ranking,
-/// build a value vector aligned to `top.timestamps`.  Slots where the process
-/// was not in the ranking hold `None` (rendered as gaps in the chart).
-/// Returns entries sorted by activity (most ticks in top-N first), then name.
-fn build_process_traces(top: &TopProcessData) -> Vec<(String, Vec<Option<f64>>)> {
-    let n_ts = top.timestamps.len();
-    let mut map: HashMap<String, Vec<Option<f64>>> = HashMap::new();
-
-    // ranks[rank_idx][ts_idx]
-    for ts_idx in 0..n_ts {
-        for rank_vec in &top.ranks {
-            if let Some(Some((name, val))) = rank_vec.get(ts_idx) {
-                map.entry(name.clone()).or_insert_with(|| vec![None; n_ts])[ts_idx] = Some(*val);
-            }
-        }
-    }
-
-    // Sort: most active (most non-None ticks) first, then alphabetically.
-    let mut traces: Vec<(String, Vec<Option<f64>>)> = map.into_iter().collect();
-    traces.sort_by(|(na, va), (nb, vb)| {
-        let count_a = va.iter().filter(|v| v.is_some()).count();
-        let count_b = vb.iter().filter(|v| v.is_some()).count();
-        count_b.cmp(&count_a).then_with(|| na.cmp(nb))
-    });
-
-    traces
-}
-
-/// Convert a per-timestamp optional-value trace into (xs, ys) with -1 sentinels.
-///
-/// For each contiguous block where the process is present:
-///   - emits a -1.0 point at the timestamp just BEFORE the block (if it exists)
-///   - emits all actual values in the block
-///   - emits a -1.0 point at the timestamp just AFTER the block (if it exists)
-///
-/// Between separate blocks a `None` y-value is inserted so plotly draws a gap
-/// instead of a diagonal line spanning the absence.
-fn build_sentinel_trace(values: &[Option<f64>], dates: &[Option<DateTime<Utc>>]) -> (Vec<DateTime<Utc>>, Vec<Option<f64>>) {
-    let n = values.len();
-    let mut xs: Vec<DateTime<Utc>> = Vec::new();
-    let mut ys: Vec<Option<f64>> = Vec::new();
-
-    let mut i = 0;
-    while i < n {
-        if values[i].is_none() {
-            i += 1;
-            continue;
-        }
-
-        // Found the start of a contiguous present block.
-        let block_start = i;
-        while i < n && values[i].is_some() {
-            i += 1;
-        }
-        let block_end = i - 1; // inclusive
-
-        // Gap separator between consecutive blocks so plotly doesn't draw a line.
-        if !xs.is_empty()
-            && let Some(Some(dt)) = dates.get(block_start)
-        {
-            xs.push(*dt);
-            ys.push(None);
-        }
-
-        // -1 sentinel one tick before the block.
-        if block_start > 0
-            && let Some(Some(dt)) = dates.get(block_start - 1)
-        {
-            xs.push(*dt);
-            ys.push(Some(-1.0));
-        }
-
-        // Actual block values.
-        for j in block_start..=block_end {
-            if let Some(Some(dt)) = dates.get(j) {
-                xs.push(*dt);
-                ys.push(values[j]); // Option<f64>
-            }
-        }
-
-        // -1 sentinel one tick after the block.
-        if block_end + 1 < n
-            && let Some(Some(dt)) = dates.get(block_end + 1)
-        {
-            xs.push(*dt);
-            ys.push(Some(-1.0));
-        }
-    }
-
-    (xs, ys)
-}
-
-/// Build a standalone process plot.  `kind` is "CPU" or "RAM" and drives the
-/// Y-axis label.  Returns `None` when there is no process data to render.
-fn build_top_process_plot(top: &TopProcessData, start_time: f64, timezone_ms: i64, kind: &str, settings: &ConvertSettings) -> Option<Plot> {
-    let traces = build_process_traces(top);
-    if traces.is_empty() {
-        return None;
-    }
-
-    let y_title = if kind == "CPU" { "CPU Usage [%]" } else { "RAM [MB]" };
-    let n_traces = traces.len();
-
-    // Build timestamp X-axis values once (aligned to absolute time).
-    let dates: Vec<Option<DateTime<Utc>>> = top
-        .timestamps
-        .iter()
-        .map(|&ts| DateTime::from_timestamp_millis(((ts + start_time) * 1000.0) as i64 + timezone_ms))
-        .collect();
-
-    let mut plot = Plot::new();
-
-    // Single-chart layout; height grows slightly with many traces for the legend.
-    let height = settings.plot_height.max(600 + (n_traces as u32).saturating_sub(10) * 20);
-    let y_axis = if kind == "CPU" {
-        Axis::new().range(vec![-2.0_f64, 100.0]).title(Title::with_text(y_title))
-    } else {
-        Axis::new().title(Title::with_text(y_title))
-    };
-    let mut layout = Layout::new()
-        .width(settings.plot_width as usize)
-        .height(height as usize)
-        .x_axis(Axis::new().title(Title::with_text("Time")))
-        .y_axis(y_axis);
-
-    if !settings.white_plot_mode {
-        layout = layout.template(&*PLOTLY_DARK);
-    }
-    plot.set_layout(layout);
-
-    // One trace per unique process; color spread evenly around the hue wheel.
-    for (trace_idx, (name, values)) in traces.iter().enumerate() {
-        let (xs, ys) = build_sentinel_trace(values, &dates);
-
-        if xs.is_empty() {
-            continue;
-        }
-
-        let hue = (trace_idx * 360) / n_traces.max(1);
-        let color = format!("hsl({hue}, 75%, 60%)");
-
-        let trace = Scatter::new(xs, ys)
-            .name(name.clone())
-            .web_gl_mode(false)
-            .connect_gaps(false)
-            .line(plotly::common::Line::new().color(color));
-        plot.add_trace(trace);
-    }
-
-    Some(plot)
 }
 
 // ── per-metric trace builders ─────────────────────────────────────────────────
@@ -784,87 +551,69 @@ fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &Co
     }
 }
 
-fn create_network_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_network()).collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-}
+/// Hue assigned per device index, so disk 0 / GPU 0 / interface 0 keep one colour
+/// across every chart they appear in.  Each device category starts from its own
+/// base hue so the charts do not all end up in the same part of the wheel.
+///
+/// Paired series that share a chart (read/write, RX/TX) share the device hue and
+/// differ only in intensity - the strong variant is read/RX, the muted one is
+/// write/TX.
+fn device_color(data_type: &DataType, white_mode: bool) -> Option<String> {
+    const DISK_BASE: usize = 205;
+    const GPU_BASE: usize = 25;
+    const NET_BASE: usize = 105;
+    const HUE_STEP: usize = 137;
 
-fn create_network_total_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_network_total()).collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-}
+    let (base, idx, strong) = match data_type {
+        DataType::DISK_N_USED_GB((i, _))
+        | DataType::DISK_N_AVAIL_GB((i, _))
+        | DataType::DISK_N_BUSY_PCT((i, _))
+        | DataType::DISK_N_READ_MBPS((i, _)) => (DISK_BASE, *i, true),
+        DataType::DISK_N_WRITE_MBPS((i, _)) => (DISK_BASE, *i, false),
+        DataType::GPU_N_UTIL((i, _)) | DataType::GPU_N_VRAM_MB((i, _)) | DataType::GPU_N_TEMP_C((i, _)) => (GPU_BASE, *i, true),
+        DataType::GPU_UTILIZATION | DataType::GPU_MEMORY_USED | DataType::GPU_TEMPERATURE => (GPU_BASE, 0, true),
+        DataType::NET_N_RX_BPS((i, _)) | DataType::NET_N_RX_TOTAL_MB((i, _)) => (NET_BASE, *i, true),
+        DataType::NET_N_TX_BPS((i, _)) | DataType::NET_N_TX_TOTAL_MB((i, _)) => (NET_BASE, *i, false),
+        DataType::NETWORK_RX_BYTES_PER_SEC => (NET_BASE, 0, true),
+        DataType::NETWORK_TX_BYTES_PER_SEC => (NET_BASE, 0, false),
+        _ => return None,
+    };
 
-fn create_gpu_util_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results
-        .collected_data
-        .iter()
-        .filter(|(dt, _)| matches!(dt, DataType::GPU_UTILIZATION | DataType::GPU_N_UTIL(_)))
-        .collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-}
-
-fn create_gpu_vram_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results
-        .collected_data
-        .iter()
-        .filter(|(dt, _)| matches!(dt, DataType::GPU_MEMORY_USED | DataType::GPU_N_VRAM_MB(_)))
-        .collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-}
-
-fn create_gpu_temp_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results
-        .collected_data
-        .iter()
-        .filter(|(dt, _)| matches!(dt, DataType::GPU_TEMPERATURE | DataType::GPU_N_TEMP_C(_)))
-        .collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
+    // Strong and muted differ mainly in saturation - vivid vs washed-out reads as
+    // the same colour at two intensities for every hue, whereas a lightness-only
+    // split inverts on hues that are intrinsically dark (blues) or bright (yellows).
+    //
+    // The muted saturation floor is what keeps two devices apart on a shared chart:
+    // pushed much below this it turns grey, and disk 0 write stops being tellable
+    // from disk 1 write.
+    let hue = (base + idx * HUE_STEP) % 360;
+    Some(match (strong, white_mode) {
+        (true, false) => format!("hsl({hue}, 100%, 65%)"),
+        (false, false) => format!("hsl({hue}, 20%, 46%)"),
+        (true, true) => format!("hsl({hue}, 95%, 38%)"),
+        (false, true) => format!("hsl({hue}, 26%, 66%)"),
+    })
 }
 
 /// One trace per column accepted by `belongs_to_chart`, sorted by label.
-fn create_traces(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32, belongs_to_chart: fn(&DataType) -> bool) {
+fn create_traces(
+    plot: &mut Plot,
+    dates: &[DateTime<Utc>],
+    loaded_results: &CollectedItemModels,
+    i: u32,
+    belongs_to_chart: fn(&DataType) -> bool,
+    settings: &ConvertSettings,
+) {
     let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| belongs_to_chart(dt)).collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
+        let mut trace = Scatter::new(dates.to_owned(), data.clone())
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
             .x_axis(format!("x{i}"));
+        if let Some(color) = device_color(data_type, settings.white_plot_mode) {
+            trace = trace.line(plotly::common::Line::new().color(color));
+        }
         plot.add_trace(trace);
     }
 }

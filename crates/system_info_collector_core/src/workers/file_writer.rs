@@ -34,11 +34,6 @@ use crate::workers::sysinfo_worker::bytes_to_mb;
 /// latest snapshots out of `SharedState` (brief read-lock), formats a CSV row,
 /// writes it to disk and calls `on_row` so the HTTP server can update its
 /// in-memory buffer.
-///
-/// When `--top-n-processes` is active, `on_top_row` (if supplied) is also
-/// called each tick with `(seconds_since_start, top_cpu, top_ram)` so the
-/// HTTP server can maintain a live top-process history.
-#[expect(clippy::type_complexity)]
 pub async fn run<F>(
     settings: Arc<CollectSettings>,
     state: Arc<RwLock<SharedState>>,
@@ -47,7 +42,6 @@ pub async fn run<F>(
     on_row: Arc<F>,
     discovery: Arc<RuntimeDiscovery>,
     csv_header: String,
-    on_top_row: Option<Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>>,
 ) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
@@ -76,23 +70,6 @@ pub async fn run<F>(
     let mut last_disk_refresh: Option<Instant> = None;
     let disk_interval_ms = (settings.disk_interval_secs * 1000.0) as u128;
 
-    // Open optional top-N process files.
-    let mut top_cpu_file: Option<BufWriter<File>> = None;
-    let mut top_ram_file: Option<BufWriter<File>> = None;
-    if settings.top_n_processes > 0 {
-        let n = settings.top_n_processes;
-        let cpu_path = top_n_path(&settings.convert.data_path, "cpu");
-        let ram_path = top_n_path(&settings.convert.data_path, "ram");
-        match open_top_n_file(&cpu_path, "CPU", n, settings.start_time) {
-            Ok(f) => top_cpu_file = Some(f),
-            Err(e) => error!("Failed to open top-CPU file {cpu_path}: {e}"),
-        }
-        match open_top_n_file(&ram_path, "RAM", n, settings.start_time) {
-            Ok(f) => top_ram_file = Some(f),
-            Err(e) => error!("Failed to open top-RAM file {ram_path}: {e}"),
-        }
-    }
-
     loop {
         interval.tick().await;
 
@@ -107,7 +84,7 @@ pub async fn run<F>(
             - settings.start_time;
 
         // Brief read-lock to clone the latest snapshots.
-        let (sysinfo_snap, network_snaps, gpu_snaps, disk_io_snaps, process_snaps, top_cpu_snap, top_ram_snap) = {
+        let (sysinfo_snap, network_snaps, gpu_snaps, disk_io_snaps, process_snaps) = {
             let guard = state.read().expect("SharedState RwLock poisoned");
             (
                 guard.latest_sysinfo.clone(),
@@ -115,8 +92,6 @@ pub async fn run<F>(
                 guard.latest_gpus.clone(),
                 guard.latest_disk_io.clone(),
                 guard.latest_processes.clone(),
-                guard.latest_top_cpu.clone(),
-                guard.latest_top_ram.clone(),
             )
         };
 
@@ -317,21 +292,6 @@ pub async fn run<F>(
             error!("{e}");
             shutdown.store(true, Ordering::Relaxed);
             break;
-        }
-
-        // Write top-N rows (best-effort: errors are logged but don't stop collection).
-        if settings.top_n_processes > 0 {
-            let n = settings.top_n_processes;
-            if let Some(ref mut f) = top_cpu_file {
-                write_top_n_row(f, seconds_since_start, &top_cpu_snap, n, !settings.disable_instant_flushing);
-            }
-            if let Some(ref mut f) = top_ram_file {
-                let ram_as_f32: Vec<(String, f32)> = top_ram_snap.iter().map(|(name, v)| (name.clone(), *v as f32)).collect();
-                write_top_n_row(f, seconds_since_start, &ram_as_f32, n, !settings.disable_instant_flushing);
-            }
-            if let Some(ref cb) = on_top_row {
-                cb(seconds_since_start, top_cpu_snap.clone(), top_ram_snap.clone());
-            }
         }
 
         on_row(row);
@@ -634,57 +594,4 @@ fn open_data_file_at(path: &str) -> Result<BufWriter<File>, Error> {
         .open(path)
         .context(format!("Failed to open data file {path}"))?;
     Ok(BufWriter::new(file))
-}
-
-// ── Top-N process file helpers ────────────────────────────────────────────────
-
-/// Derive the path for a top-N file from the main data path.
-/// e.g. `system_data.csv` → `system_data_top_cpu.csv`
-pub fn top_n_path(data_path: &str, kind: &str) -> String {
-    insert_before_extension(data_path, &format!("_top_{kind}"))
-}
-
-/// Open and write the two-line header for a top-N process file.
-/// Format:
-///   Line 1: `START_TIME=xxx,TOP_N=5,TYPE=CPU`
-///   Line 2: `TIMESTAMP,1,2,3,4,5`
-fn open_top_n_file(path: &str, type_tag: &str, n: usize, start_time: f64) -> Result<BufWriter<File>, Error> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .context(format!("Failed to open top-N file {path}"))?;
-    let mut writer = BufWriter::new(file);
-
-    // Metadata line
-    writeln!(writer, "START_TIME={start_time},TOP_N={n},TYPE={type_tag}").context(format!("Failed to write header to {path}"))?;
-
-    // Column header: TIMESTAMP,1,2,...,N
-    let cols: Vec<String> = std::iter::once("TIMESTAMP".to_string()).chain((1..=n).map(|i| i.to_string())).collect();
-    writeln!(writer, "{}", cols.join(",")).context(format!("Failed to write column header to {path}"))?;
-
-    writer.flush().context(format!("Failed to flush {path}"))?;
-    Ok(writer)
-}
-
-/// Write one data row to a top-N file.
-/// Pads with empty entries if fewer than `n` processes are present.
-fn write_top_n_row(file: &mut BufWriter<File>, timestamp: f64, entries: &[(String, f32)], n: usize, flush: bool) {
-    let mut cols: Vec<String> = Vec::with_capacity(n + 1);
-    cols.push(fmt_f64(timestamp));
-    for i in 0..n {
-        if let Some((name, val)) = entries.get(i) {
-            cols.push(format!("{name}|{}", fmt_f64(*val as f64)));
-        } else {
-            cols.push(String::new());
-        }
-    }
-    if let Err(e) = writeln!(file, "{}", cols.join(",")) {
-        error!("Failed to write top-N row: {e}");
-        return;
-    }
-    if flush && let Err(e) = file.flush() {
-        error!("Failed to flush top-N file: {e}");
-    }
 }

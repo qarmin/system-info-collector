@@ -75,16 +75,7 @@ impl CollectorEngine {
     ///
     /// `on_row` is called with the raw CSV column values after each successful
     /// write.  The CLI uses this to push data into the HTTP server buffer.
-    ///
-    /// `on_top_row`, when provided, is called each tick when `--top-n-processes`
-    /// is active: `(seconds_since_start, top_cpu_vec, top_ram_vec)`.
-    #[expect(clippy::type_complexity)]
-    pub async fn run<F>(
-        self,
-        app_version: &str,
-        on_row: F,
-        on_top_row: Option<Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>>,
-    ) -> Result<(), Error>
+    pub async fn run<F>(self, app_version: &str, on_row: F) -> Result<(), Error>
     where
         F: Fn(Vec<String>) + Send + Sync + 'static,
     {
@@ -185,7 +176,6 @@ impl CollectorEngine {
             on_row,
             Arc::clone(&discovery),
             csv_header,
-            on_top_row,
         ));
 
         info!("All workers started, collecting data…");

@@ -205,7 +205,68 @@
     <div class="container" id="mainContainer">
         <div style="text-align:right; margin-bottom:10px;">
             <button id="toggleWidthBtn" onclick="toggleFullWidth()">Full Width</button>
+            <button id="recordBtn" onclick="showRecordPanel()" style="margin-left:8px;">Record processes</button>
             <button id="exportBtn" onclick="showExportPanel()" style="margin-left:8px;">Export</button>
+        </div>
+
+        <!-- Process recording modal -->
+        <div id="recordOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:999;" onclick="closeRecordPanel()"></div>
+        <div id="recordPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3136; padding:24px; border-radius:10px; z-index:1000; box-shadow:0 6px 24px rgba(0,0,0,0.8); min-width:420px; max-width:min(640px, 92vw);">
+            <h3 style="margin-top:0; color:#90caf9;">Record every process</h3>
+            <div class="hint" style="margin-bottom:14px;">
+                The charts above track a fixed set of metrics over hours. This records <b>every process</b> for a short
+                period instead - CPU, memory, who is reading and writing, which files they have open, and when processes
+                start and exit. Use it to find out what is loading the machine right now.
+            </div>
+
+            <div id="recordIdle">
+                <label style="display:block; margin-bottom:10px;">Record for
+                    <select id="recordSeconds" onchange="updateRecordPanel()" style="margin-left:8px; min-width:140px;">
+                        <option value="15">15 seconds</option>
+                        <option value="30">30 seconds</option>
+                        <option value="60" selected>60 seconds</option>
+                        <option value="120">2 minutes</option>
+                        <option value="300">5 minutes</option>
+                        <option value="custom">custom...</option>
+                    </select>
+                    <input type="number" id="recordSecondsCustom" min="1" step="1" value="90" style="display:none; margin-left:8px; width:90px;">
+                </label>
+                <label style="display:block; margin-bottom:10px;">Samples per second
+                    <select id="recordHz" style="margin-left:8px; min-width:140px;">
+                        <option value="5" selected>5 (finest)</option>
+                        <option value="2">2</option>
+                        <option value="1">1</option>
+                    </select>
+                </label>
+                <label style="display:block; margin-bottom:14px;">
+                    <input type="checkbox" id="recordAutoDownload" checked> Download the result as a single HTML file when it finishes
+                </label>
+                <div class="hint" id="recordEstimate" style="margin-bottom:14px;"></div>
+                <div style="text-align:right;">
+                    <button onclick="startRecording()">Start</button>
+                    <button onclick="closeRecordPanel()" style="background:#444; color:#e0e0e0;">Cancel</button>
+                </div>
+            </div>
+
+            <div id="recordActive" style="display:none;">
+                <div style="font-size:2em; color:#4db5ff; font-variant-numeric:tabular-nums; margin-bottom:6px;" id="recordCountdown">--</div>
+                <div class="hint" id="recordProgress" style="margin-bottom:14px;"></div>
+                <div style="text-align:right;">
+                    <button onclick="stopRecording()" style="background:#c62828;">Stop now and keep data</button>
+                </div>
+            </div>
+
+            <div id="recordDone" style="display:none;">
+                <div id="recordDoneText" style="margin-bottom:14px;"></div>
+                <div style="text-align:right;">
+                    <button onclick="recordAgain()">Record another</button>
+                    <button id="recordOpenBtn" onclick="openRecording()">Open in viewer</button>
+                    <button id="recordDownloadBtn" onclick="downloadRecording()">Download HTML</button>
+                    <button onclick="closeRecordPanel()" style="background:#444; color:#e0e0e0;">Close</button>
+                </div>
+            </div>
+
+            <div class="error" id="recordError" style="display:none; margin-top:12px;"></div>
         </div>
 
         <!-- Export modal -->
@@ -349,14 +410,6 @@
             <h3>GPU Temperature [°C]</h3>
             <canvas id="gpuTempChart" height="120"></canvas>
         </div>
-        <div class="chart-container" id="topCpuChartContainer" style="display:none;">
-            <h3>Top Processes — CPU [%]</h3>
-            <canvas id="topCpuChart" height="150"></canvas>
-        </div>
-        <div class="chart-container" id="topRamChartContainer" style="display:none;">
-            <h3>Top Processes — RAM [MB]</h3>
-            <canvas id="topRamChart" height="150"></canvas>
-        </div>
         <div class="chart-container" id="swapChartContainer" style="display:none;">
             <h3>Swap Usage [MB]</h3>
             <canvas id="swapChart" height="120"></canvas>
@@ -369,9 +422,13 @@
             <h3>Network Total [MB]</h3>
             <canvas id="networkTotalChart" height="120"></canvas>
         </div>
-        <div class="chart-container" id="diskChartContainer" style="display:none;">
-            <h3>Disk Space [GB]</h3>
-            <canvas id="diskChart" height="120"></canvas>
+        <div class="chart-container" id="diskUsedChartContainer" style="display:none;">
+            <h3>Disk Space Used [GB]</h3>
+            <canvas id="diskUsedChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="diskAvailChartContainer" style="display:none;">
+            <h3>Disk Space Available [GB]</h3>
+            <canvas id="diskAvailChart" height="120"></canvas>
         </div>
         <div class="chart-container" id="diskBusyChartContainer" style="display:none;">
             <h3>Disk Busy [%]</h3>
@@ -418,7 +475,6 @@
 
         const state = {
             data: [],
-            top: [],
             rangeSeconds: DEFAULT_RANGE_SECONDS,
             redrawSeconds: DEFAULT_REDRAW_SECONDS,
             totalCount: 0,
@@ -549,7 +605,6 @@
                 errorDiv.style.display = 'none';
 
                 state.data = snapshot.data || [];
-                state.top = snapshot.top_data || [];
                 state.totalCount = snapshot.total_count;
                 state.maxBufferSize = snapshot.max_buffer_size;
                 rebuildAll();
@@ -562,7 +617,6 @@
 
         function loadStaticSnapshot() {
             state.data = window.STATIC_DATA.data || [];
-            state.top = window.STATIC_DATA.top_data || [];
             state.totalCount = state.data.length;
             state.maxBufferSize = state.data.length;
             rebuildAll();
@@ -583,9 +637,6 @@
             socket.onopen = () => setConnectionStatus('live', 'live');
             socket.onmessage = (event) => {
                 const tick = JSON.parse(event.data);
-                if (tick.top) {
-                    onNewTopPoint({ timestamp: tick.timestamp, cpu: tick.top.cpu, ram: tick.top.ram });
-                }
                 onNewDataPoint({ timestamp: tick.timestamp, data: tick.data });
             };
             socket.onclose = () => {
@@ -633,29 +684,6 @@
             }
 
             appendTableRow(point);
-            scheduleRender();
-        }
-
-        function onNewTopPoint(point) {
-            state.top.push(point);
-            const dropped = trimSeries(state.top);
-
-            if (topChartsNeedRebuild(point)) {
-                renderTopCharts();
-                return;
-            }
-
-            const label = pointLabel(point.timestamp);
-            for (const [key, field] of [['topCpu', 'cpu'], ['topRam', 'ram']]) {
-                const chart = charts[key];
-                if (!chart) continue;
-                chart.data.labels.push(label);
-                for (const dataset of chart.data.datasets) {
-                    const entry = point[field].find(e => e.name === dataset.label);
-                    dataset.data.push(entry ? entry.value : null);
-                }
-                dropFront(chart, dropped);
-            }
             scheduleRender();
         }
 
@@ -722,6 +750,37 @@
             return isNaN(value) ? null : value;
         };
 
+        // Hue assigned per device index, so disk 0 / GPU 0 / interface 0 keep one
+        // colour across every chart they appear in. Paired series sharing a chart
+        // (read/write, RX/TX) share the hue: read/RX strong, write/TX muted.
+        // Mirrors device_color() in ploty_creator.rs.
+        function deviceColor(header) {
+            const h = header.toUpperCase();
+            const bases = { DISK: 205, GPU: 25, NET: 105 };
+            let base, idx, strong;
+
+            const disk = h.match(/^DISK_(\d+)_(USED_GB|AVAIL_GB|BUSY_PCT|READ_MBPS|WRITE_MBPS)$/);
+            const gpu = h.match(/^GPU_(\d+)_(UTIL|VRAM_MB|TEMP_C)$/);
+            const net = h.match(/^NET_(\d+)_(RX|TX)_(BPS|TOTAL_MB)$/);
+
+            if (disk) {
+                [base, idx, strong] = [bases.DISK, parseInt(disk[1], 10), disk[2] !== 'WRITE_MBPS'];
+            } else if (gpu) {
+                [base, idx, strong] = [bases.GPU, parseInt(gpu[1], 10), true];
+            } else if (net) {
+                [base, idx, strong] = [bases.NET, parseInt(net[1], 10), net[2] === 'RX'];
+            } else if (h === 'GPU_UTILIZATION' || h === 'GPU_MEMORY_USED' || h === 'GPU_TEMPERATURE') {
+                [base, idx, strong] = [bases.GPU, 0, true];
+            } else if (h === 'NETWORK_RX_BYTES_PER_SEC' || h === 'NETWORK_TX_BYTES_PER_SEC') {
+                [base, idx, strong] = [bases.NET, 0, h === 'NETWORK_RX_BYTES_PER_SEC'];
+            } else {
+                return null;
+            }
+
+            const hue = (base + idx * 137) % 360;
+            return strong ? `hsl(${hue}, 100%, 65%)` : `hsl(${hue}, 20%, 46%)`;
+        }
+
         function buildChartSpecs() {
             const headers = getHeaders();
             const labels = getLabels();
@@ -734,7 +793,8 @@
             const isSwap = h => /^SWAP_(USED|FREE)$/.test(h.toUpperCase());
             const isNet = h => /^NET_\d+_(RX|TX)_BPS$/.test(h.toUpperCase());
             const isNetTotal = h => /^NET_\d+_(RX|TX)_TOTAL_MB$/.test(h.toUpperCase());
-            const isDisk = h => /^DISK_\d+_(USED|AVAIL)_GB$/.test(h.toUpperCase());
+            const isDiskUsed = h => /^DISK_\d+_USED_GB$/.test(h.toUpperCase());
+            const isDiskAvail = h => /^DISK_\d+_AVAIL_GB$/.test(h.toUpperCase());
             const isDiskBusy = h => /^DISK_\d+_BUSY_PCT$/.test(h.toUpperCase());
             const isDiskIo = h => /^DISK_\d+_(READ|WRITE)_MBPS$/.test(h.toUpperCase());
 
@@ -799,12 +859,12 @@
                 } else if (gpuNames.length === 1) {
                     label = gpuNames[0];
                 }
-                const color = `hsl(${(hue + idx * 35) % 360}, 85%, 60%)`;
+                const color = deviceColor(h) || `hsl(${(hue + idx * 35) % 360}, 85%, 60%)`;
                 return { label, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
 
-            const basicDatasets = (predicate, startHue) => indexed.filter(({ h }) => predicate(h)).map(({ label, i }, idx) => {
-                const color = `hsl(${(startHue + idx * 40) % 360}, 80%, 60%)`;
+            const basicDatasets = (predicate, startHue) => indexed.filter(({ h }) => predicate(h)).map(({ label, h, i }, idx) => {
+                const color = deviceColor(h) || `hsl(${(startHue + idx * 40) % 360}, 80%, 60%)`;
                 return { label, borderColor: color, backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.1)'), extract: numericValue(i) };
             });
 
@@ -822,7 +882,8 @@
                 { key: 'swap', container: 'swapChartContainer', canvas: 'swapChart', yTitle: 'Swap [MB]', yMin: 0, yMax: metadata?.system_info?.total_swap_mb || undefined, datasets: basicDatasets(isSwap, 45) },
                 { key: 'network', container: 'networkChartContainer', canvas: 'networkChart', yTitle: 'Network [MB/s]', yMin: 0, datasets: basicDatasets(isNet, 180) },
                 { key: 'networkTotal', container: 'networkTotalChartContainer', canvas: 'networkTotalChart', yTitle: 'Network Total [MB]', yMin: 0, datasets: basicDatasets(isNetTotal, 200) },
-                { key: 'disk', container: 'diskChartContainer', canvas: 'diskChart', yTitle: 'Disk [GB]', yMin: 0, datasets: basicDatasets(isDisk, 270) },
+                { key: 'diskUsed', container: 'diskUsedChartContainer', canvas: 'diskUsedChart', yTitle: 'Used [GB]', yMin: 0, datasets: basicDatasets(isDiskUsed, 270) },
+                { key: 'diskAvail', container: 'diskAvailChartContainer', canvas: 'diskAvailChart', yTitle: 'Available [GB]', yMin: 0, datasets: basicDatasets(isDiskAvail, 190) },
                 { key: 'diskBusy', container: 'diskBusyChartContainer', canvas: 'diskBusyChart', yTitle: 'Disk Busy [%]', yMin: 0, yMax: 100, datasets: basicDatasets(isDiskBusy, 15) },
                 { key: 'diskIo', container: 'diskIoChartContainer', canvas: 'diskIoChart', yTitle: 'Disk I/O [MB/s]', yMin: 0, datasets: basicDatasets(isDiskIo, 320) },
             ];
@@ -897,61 +958,11 @@
             return chartSpecs.some(spec => !charts[spec.key] && spec.datasets.some(d => d.extract(point) !== null));
         }
 
-        // ── Top-N process charts ──────────────────────────────────────────────
-
-        function topProcessNames(snapshots, field) {
-            const names = new Set();
-            for (const snapshot of snapshots) {
-                for (const entry of snapshot[field]) names.add(entry.name);
-            }
-            return [...names];
-        }
-
-        function renderTopCharts() {
-            for (const [key, field, container, canvas, yTitle, yMax] of [
-                ['topCpu', 'cpu', 'topCpuChartContainer', 'topCpuChart', 'CPU [%]', 100],
-                ['topRam', 'ram', 'topRamChartContainer', 'topRamChart', 'RAM [MB]', undefined],
-            ]) {
-                const names = topProcessNames(state.top, field);
-                const datasets = names.map((name, idx) => {
-                    const hue = Math.round((idx * 360) / Math.max(names.length, 1));
-                    const color = `hsl(${hue}, 75%, 60%)`;
-                    return {
-                        label: name,
-                        borderColor: color,
-                        backgroundColor: color.replace('hsl(', 'hsla(').replace(')', ', 0.05)'),
-                        borderWidth: 1.5,
-                        spanGaps: false,
-                        extract: snapshot => {
-                            const entry = snapshot[field].find(e => e.name === name);
-                            return entry ? entry.value : null;
-                        },
-                    };
-                });
-                const spec = { key, container, canvas, yTitle, yMin: 0, yMax, legendPosition: 'right' };
-                renderChart(spec, state.top, datasets);
-            }
-        }
-
-        function topChartsNeedRebuild(point) {
-            for (const [key, field] of [['topCpu', 'cpu'], ['topRam', 'ram']]) {
-                const chart = charts[key];
-                if (!chart) {
-                    if (point[field].length > 0) return true;
-                    continue;
-                }
-                const known = new Set(chart.data.datasets.map(d => d.label));
-                if (point[field].some(e => !known.has(e.name))) return true;
-            }
-            return false;
-        }
-
         // ── Rendering ─────────────────────────────────────────────────────────
 
         function rebuildAll() {
             chartSpecs = buildChartSpecs();
             for (const spec of chartSpecs) renderChart(spec, state.data);
-            renderTopCharts();
             renderTable();
             updateStats();
         }
@@ -1146,6 +1157,163 @@
         /// and rotated files are included, so old data stays exportable after a
         /// restart even though the live buffer only knows this run.
         let exportSources = [];
+
+        // ── Process recording ─────────────────────────────────────────────────
+        //
+        // Recording runs in the collector process, so the browser only starts it,
+        // shows the countdown and collects the result. If the page is reloaded or
+        // closed mid-recording, the recording carries on regardless.
+
+        let recordTimer = null;
+        let recordedFile = null;
+        /// True only between pressing Start and handling that recording's result.
+        ///
+        /// The server keeps `finished_file` set until the next recording begins, so
+        /// without this the panel would treat an old result as fresh every time it
+        /// opens - and download it unasked.
+        let awaitingOwnRecording = false;
+
+        function chosenRecordSeconds() {
+            const select = document.getElementById('recordSeconds');
+            if (select.value === 'custom') {
+                return Math.max(1, Number(document.getElementById('recordSecondsCustom').value) || 1);
+            }
+            return Number(select.value);
+        }
+
+        function updateRecordPanel() {
+            const custom = document.getElementById('recordSeconds').value === 'custom';
+            document.getElementById('recordSecondsCustom').style.display = custom ? '' : 'none';
+            const seconds = chosenRecordSeconds();
+            const hz = Number(document.getElementById('recordHz').value);
+            document.getElementById('recordEstimate').textContent =
+                `${Math.round(seconds * hz)} samples of every process. Nothing is written to disk until it finishes, `
+                + 'and you can stop it at any point without losing what was collected.';
+        }
+
+        function showRecordPanel() {
+            document.getElementById('recordOverlay').style.display = '';
+            document.getElementById('recordPanel').style.display = '';
+            document.getElementById('recordError').style.display = 'none';
+            updateRecordPanel();
+            // Always offer to record; the poll below switches to the countdown if
+            // one turns out to be running.
+            setRecordPhase('idle');
+            pollRecordStatus();
+        }
+
+        function closeRecordPanel() {
+            document.getElementById('recordPanel').style.display = 'none';
+            document.getElementById('recordOverlay').style.display = 'none';
+            if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+        }
+
+        function showRecordError(message) {
+            const box = document.getElementById('recordError');
+            box.textContent = message;
+            box.style.display = '';
+        }
+
+        function setRecordPhase(phase) {
+            for (const [name, id] of [['idle', 'recordIdle'], ['active', 'recordActive'], ['done', 'recordDone']]) {
+                document.getElementById(id).style.display = name === phase ? '' : 'none';
+            }
+        }
+
+        async function startRecording() {
+            document.getElementById('recordError').style.display = 'none';
+            const body = { seconds: chosenRecordSeconds(), hz: Number(document.getElementById('recordHz').value) };
+            try {
+                const response = await fetch('/api/session/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!response.ok) {
+                    showRecordError(await response.text());
+                    return;
+                }
+                recordedFile = null;
+                awaitingOwnRecording = true;
+                setRecordPhase('active');
+                pollRecordStatus();
+            } catch (e) {
+                showRecordError('Could not start the recording: ' + e.message);
+            }
+        }
+
+        async function stopRecording() {
+            try {
+                await fetch('/api/session/stop', { method: 'POST' });
+            } catch (e) {
+                console.error('Error stopping recording:', e);
+            }
+            pollRecordStatus();
+        }
+
+        async function pollRecordStatus() {
+            let status;
+            try {
+                status = await (await fetch('/api/session/status')).json();
+            } catch (e) {
+                console.error('Error reading recording status:', e);
+                return;
+            }
+
+            if (status.active) {
+                setRecordPhase('active');
+                document.getElementById('recordCountdown').textContent = Math.ceil(status.remaining_secs) + ' s left';
+                document.getElementById('recordProgress').textContent =
+                    `${status.ticks_done} of ${status.ticks_total} samples taken, ${status.processes_seen} processes seen so far`;
+                if (!recordTimer) recordTimer = setInterval(pollRecordStatus, 500);
+                return;
+            }
+
+            if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+
+            // Only a recording this panel started is acted on. `finished_file`
+            // stays set on the server afterwards, so anything else here is an old
+            // result that must not trigger a download or replace the Start form.
+            if (awaitingOwnRecording && status.finished_file) {
+                awaitingOwnRecording = false;
+                recordedFile = status.finished_file;
+                finishRecording();
+            } else if (!recordedFile) {
+                // Covers watching a recording that was started before a reload:
+                // it is not ours to report, so fall back to the Start form rather
+                // than leaving a countdown frozen at zero.
+                setRecordPhase('idle');
+            }
+        }
+
+        function finishRecording() {
+            setRecordPhase('done');
+            document.getElementById('recordDoneText').innerHTML =
+                `Recorded <code>${recordedFile}</code>.<br>`
+                + 'The viewer lets you drag across any of the load charts to select a period; the process table below '
+                + 'then recomputes for exactly that range.';
+            if (document.getElementById('recordAutoDownload').checked) {
+                downloadRecording();
+            }
+        }
+
+        /// Back to the Start form, so recordings can be made one after another.
+        function recordAgain() {
+            recordedFile = null;
+            awaitingOwnRecording = false;
+            document.getElementById('recordError').style.display = 'none';
+            updateRecordPanel();
+            setRecordPhase('idle');
+        }
+
+        function downloadRecording() {
+            if (recordedFile) window.location = '/api/session/export/' + encodeURIComponent(recordedFile);
+        }
+
+        function openRecording() {
+            const target = recordedFile ? '/session?file=' + encodeURIComponent(recordedFile) : '/session';
+            window.open(target, '_blank');
+        }
 
         function closeExportPanel() {
             document.getElementById('exportPanel').style.display = 'none';
@@ -1356,6 +1524,8 @@
             if (isStatic()) {
                 document.getElementById('liveControls').style.display = 'none';
                 document.getElementById('exportBtn').style.display = 'none';
+                // A downloaded snapshot has no collector behind it to record with.
+                document.getElementById('recordBtn').style.display = 'none';
                 loadStaticSnapshot();
                 return;
             }

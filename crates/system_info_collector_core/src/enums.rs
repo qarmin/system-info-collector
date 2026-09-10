@@ -322,8 +322,28 @@ impl DataType {
         )
     }
 
+    pub fn is_gpu_util(&self) -> bool {
+        matches!(self, Self::GPU_UTILIZATION | Self::GPU_N_UTIL(_))
+    }
+
+    pub fn is_gpu_vram(&self) -> bool {
+        matches!(self, Self::GPU_MEMORY_USED | Self::GPU_N_VRAM_MB(_))
+    }
+
+    pub fn is_gpu_temp(&self) -> bool {
+        matches!(self, Self::GPU_TEMPERATURE | Self::GPU_N_TEMP_C(_))
+    }
+
     pub fn is_disk_space(&self) -> bool {
         matches!(self, Self::DISK_N_USED_GB(_) | Self::DISK_N_AVAIL_GB(_))
+    }
+
+    pub fn is_disk_used(&self) -> bool {
+        matches!(self, Self::DISK_N_USED_GB(_))
+    }
+
+    pub fn is_disk_available(&self) -> bool {
+        matches!(self, Self::DISK_N_AVAIL_GB(_))
     }
 
     pub fn is_disk_busy(&self) -> bool {

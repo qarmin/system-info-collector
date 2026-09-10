@@ -18,19 +18,22 @@ use sysinfo::System;
 use system_info_collector_core::discovery::{DiscoveredDisk, DiscoveredInterface, list_real_disks, list_real_interfaces};
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
+use system_info_collector_core::session_recorder::{SessionConfig, SessionProgress};
 use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
-use system_info_collector_core::workers::file_writer::top_n_path;
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
 use crate::cli::{Commands, parse_cli};
 use crate::converting::ploty_creator::load_results_and_save_plot;
 use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemInfo, SystemMetadata};
 use crate::serving::server::ExportPaths;
+use crate::serving::session_service::SessionService;
+use crate::session_store::{SessionStore, build_standalone_html, write_session};
 use crate::settings::{build_collect_settings, build_convert_settings};
 
 mod cli;
 mod converting;
 mod serving;
+mod session_store;
 mod settings;
 
 // The collector runs a handful of periodic tasks that spend nearly all their
@@ -213,27 +216,19 @@ async fn main() {
 
                 // Reports are rendered from the CSV on disk, so the server needs to know
                 // where this run writes it.
-                let export_paths = ExportPaths::new(
-                    settings.convert.data_path.clone(),
-                    if settings.top_n_processes > 0 {
-                        vec![
-                            top_n_path(&settings.convert.data_path, "cpu"),
-                            top_n_path(&settings.convert.data_path, "ram"),
-                        ]
-                    } else {
-                        vec![]
-                    },
-                );
+                let export_paths = ExportPaths::new(settings.convert.data_path.clone());
 
                 // Start the HTTP server in its own OS thread with an independent
                 // Tokio runtime so it never blocks data collection.
                 let server_buffer = buffer.clone();
                 let port = settings.port;
+                let session_dir = settings.session_dir.clone();
                 std::thread::spawn(move || {
                     info!("Starting HTTP server thread on port {port}");
+                    let sessions = SessionService::new(SessionStore::new(&session_dir), env!("CARGO_PKG_VERSION"));
                     let runtime = crate::serving::server::build_runtime().expect("Failed to create Tokio runtime for server");
                     runtime.block_on(async move {
-                        if let Err(e) = crate::serving::server::start_server(port, server_buffer, export_paths).await {
+                        if let Err(e) = crate::serving::server::start_server(port, server_buffer, export_paths, sessions).await {
                             error!("Server error: {e}");
                         }
                     });
@@ -243,17 +238,6 @@ async fn main() {
             } else {
                 None
             };
-            // Build top-N live callback (only when serve is enabled).
-            let on_top_row: Option<std::sync::Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>> =
-                if let Some(ref buf) = data_buffer {
-                    let top_buf = buf.clone();
-                    Some(std::sync::Arc::new(move |ts, cpu, ram| {
-                        top_buf.add_top_point(ts, cpu, ram);
-                    }))
-                } else {
-                    None
-                };
-
             let _ = (cpu_model, gpu_names, gpu_vram_mb); // suppress unused warnings when !serve
 
             // Register Ctrl-C handler: first press → graceful stop, second → immediate exit.
@@ -272,15 +256,11 @@ async fn main() {
             .expect("Error setting Ctrl-C handler");
 
             if let Err(e) = engine
-                .run(
-                    env!("CARGO_PKG_VERSION"),
-                    move |row| {
-                        if let Some(ref buf) = data_buffer {
-                            buf.add_data_point(DataPoint::from_row(row));
-                        }
-                    },
-                    on_top_row,
-                )
+                .run(env!("CARGO_PKG_VERSION"), move |row| {
+                    if let Some(ref buf) = data_buffer {
+                        buf.add_data_point(DataPoint::from_row(row));
+                    }
+                })
                 .await
             {
                 error!("{e}");
@@ -300,9 +280,87 @@ async fn main() {
                 process::exit(1);
             }
         }
+
+        Commands::Session(session_args) => {
+            if let Err(e) = run_session_command(session_args).await {
+                error!("{e}");
+                process::exit(1);
+            }
+        }
     }
 
     info!("Closing app successfully");
+}
+
+/// Record a session straight from the terminal, with no server involved.
+async fn run_session_command(args: cli::SessionArgs) -> Result<(), anyhow::Error> {
+    let config = SessionConfig {
+        duration_secs: args.duration,
+        hz: args.hz,
+    };
+    config.validate()?;
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let progress = std::sync::Arc::new(SessionProgress::default());
+
+    let stop_for_ctrlc = std::sync::Arc::clone(&stop);
+    ctrlc::set_handler(move || {
+        info!("Stopping the recording early, keeping what was collected");
+        stop_for_ctrlc.store(true, Ordering::Relaxed);
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    let ticks_total = config.tick_count();
+    let reporter = tokio::spawn({
+        let progress = std::sync::Arc::clone(&progress);
+        let stop = std::sync::Arc::clone(&stop);
+        async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+            ticker.tick().await;
+            while !stop.load(Ordering::Relaxed) {
+                ticker.tick().await;
+                let done = progress.ticks_done.load(Ordering::Relaxed);
+                if done >= ticks_total {
+                    break;
+                }
+                info!(
+                    "Recording... {done}/{ticks_total} samples, {} processes seen (Ctrl-C to stop)",
+                    progress.processes_seen.load(Ordering::Relaxed)
+                );
+            }
+        }
+    });
+
+    // The recorder is fully synchronous and sleeps between ticks, so it must not
+    // occupy one of the two async worker threads.
+    let data = {
+        let progress = std::sync::Arc::clone(&progress);
+        let stop = std::sync::Arc::clone(&stop);
+        tokio::task::spawn_blocking(move || system_info_collector_core::session_recorder::record(config, &stop, &progress, env!("CARGO_PKG_VERSION")))
+            .await?
+    }?;
+    reporter.abort();
+
+    let path = match args.output {
+        Some(output) => {
+            let path = std::path::PathBuf::from(output);
+            write_session(&path, &data)?;
+            path
+        }
+        None => SessionStore::new(&args.session_dir).save(&data)?,
+    };
+
+    if args.open {
+        let json = serde_json::to_string(&data)?;
+        let html_path = path.with_extension("html");
+        std::fs::write(&html_path, build_standalone_html(&json))?;
+        info!("Viewer written to {}", html_path.display());
+        if let Err(e) = open::that(&html_path) {
+            warn!("Could not open {}: {e}", html_path.display());
+        }
+    }
+
+    Ok(())
 }
 
 // This is unused depending on build features

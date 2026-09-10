@@ -132,17 +132,13 @@ show_data_custom ip_address path:
 
 show:
     rm *.html || true
-    # If all data files are present, show them together, otherwise show only the main one
-    if [ -f system_data_top_cpu.csv ] && [ -f system_data_top_ram.csv ]; then \
-    cargo run --release -p system_info_collector -- convert -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv -p plot.html -o; firefox plot.html; firefox plot_top_cpu.html; firefox plot_top_ram.html \
-    ; else \
-    cargo run --release -p system_info_collector -- convert -d system_data.csv -p plot.html -o; firefox plot.html \
-    ; fi
+    cargo run --release -p system_info_collector -- convert -d system_data.csv -p plot.html -o
+    firefox plot.html
 
 
 all:
     rm *.csv || true
-    # Run with all collection modes enabled + HTTP live data server + top-N processes
+    # Run with all collection modes enabled + HTTP live data server
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
@@ -152,12 +148,12 @@ all:
            disk-used disk-available disk-busy disk-read disk-write \
            cpu-usage-per-core \
         --all-networks --all-disks -e "NEMO|nemo" \
-        -c 0.5 -s --top-n-processes 5
+        -c 0.5 -s
     just show
 
 normal:
     rm *.csv || true
-    # All without top-N processes and cpu-usage-per-core and swap, because it is not needed for normal usage and takes more resources to collect and plot
+    # All without cpu-usage-per-core and swap, because it is not needed for normal usage and takes more resources to collect and plot
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total  \
            memory-used memory-free memory-available \
@@ -170,7 +166,7 @@ normal:
 heavy:
     rm *.csv || true
     cargo run --release -p system_info_collector -- collect \
-        -m cpu-usage-total cpu-usage-per-core --top-n-processes 10 -c 2.0 -s
+        -m cpu-usage-total cpu-usage-per-core -c 2.0 -s
         
 samplyrd:
     rm *.csv || true
@@ -183,7 +179,7 @@ samplyrd:
              gpu-utilization gpu-memory-used gpu-temperature \
              disk-used disk-available disk-busy disk-read disk-write \
         --all-networks --all-disks \
-        -c 0.5 -s --top-n-processes 5
+        -c 0.5 -s
         
 cleancsv:
     rm *.csv

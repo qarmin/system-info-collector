@@ -39,7 +39,7 @@ https://github.com/qarmin/system-info-collector/assets/41945903/7ac510b5-babf-4d
 
 ## Performance and memory usage
 
-During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lower than 0.1% - but it may increase when using more resource intensive options like tracking top N processes.
+During testing on i7-4770, app used stable 15-20MB Ram and most of the time, cpu usage was lower than 0.1% - but it may increase when using more resource intensive options like per-process tracking.
 
 Running with `--serve` adds the live buffer on top of that; see [The live buffer](#the-live-buffer).
 
@@ -94,18 +94,10 @@ info about the first will be collected
 ./system_info_collector collect -e "FIREFOX|firefox" -e "Event Handler|/usr/bin/event_handler --timeout"
 ```
 
-Track the top 10 most CPU-hungry and RAM-hungry processes (grouped by executable path, only those using >1% CPU are logged).
-This writes two extra files: `system_data_top_cpu.csv` and `system_data_top_ram.csv`.
-Note: this option is very resource-intensive as it refreshes all processes on every tick.
+Find out what is loading the machine right now, across every process
 
 ```
-./system_info_collector collect --top-n-processes 10
-```
-
-Convert main data file together with top-N process files into a single HTML plot
-
-```
-./system_info_collector convert -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv -o
+./system_info_collector session --duration 60 --open
 ```
 
 Collect network RX/TX for a specific interface
@@ -226,19 +218,6 @@ Memory and swap usage are shown in MiB, with range from 0 to total memory/swap s
 
 When checking for processes -1 is visible both in cpu/memory plot if searched process is not found.
 
-## Top-N processes
-
-When `--top-n-processes N` is used, two extra CSV files are written alongside the main data file:
-
-- `system_data_top_cpu.csv` — top N processes by CPU%, sorted descending
-- `system_data_top_ram.csv` — top N processes by RAM usage, sorted descending
-
-Processes are grouped by their executable path (not the OS process name), so multiple instances of the same binary
-(e.g. Firefox content processes) are aggregated into a single entry. Only processes using more than 1% of total CPU
-are included in the CPU ranking. Kernel and userland threads are excluded.
-
-Pass both extra files to `convert` with `-d` to include them as additional charts in the HTML plot.
-
 ## Column labels
 
 Per-disk and per-interface columns are named `DISK_N_*` / `NET_N_*` in the CSV, but charts, the live view and the raw
@@ -293,6 +272,69 @@ GPU utilization (%), VRAM usage (MB) and temperature (°C) are collected automat
 selected. NVIDIA GPUs are accessed via NVML; AMD and Intel GPUs are accessed via sysfs. Multiple GPUs are supported,
 each appearing as a separate column.
 
+## Process sessions
+
+`collect` answers "how did the machine behave over the last few hours" for a chosen set of metrics. A session answers a
+different question - "what is loading the machine *right now*" - by recording **every** process for a bounded period.
+
+```
+./system_info_collector session --duration 60 --open
+```
+
+That records for 60 s, writes `sessions/session_<timestamp>.json`, and opens a self-contained HTML viewer next to it -
+one file, no server and no network needed. `Ctrl-C` stops early and keeps whatever was collected.
+
+With `--serve` running there is a **Record processes** button on the dashboard at `http://localhost:5998/`, next to
+`Export`. Pick a duration, press Start, and a countdown shows how much is left with a Stop button that keeps whatever
+has been collected so far. When it finishes the result downloads as a single HTML file (or opens in the viewer at
+`/session`, which also lists every earlier recording). Recording happens in the collector process, so closing the page
+or reloading it does not interrupt one that is running.
+
+Recorded per process, per sample: CPU%, RSS, `rchar`/`wchar` (syscall level) and `read_bytes`/`write_bytes` (block device
+level), status, thread count, context switches, PID, parent PID, command line, and the exact ticks it was alive for. Each
+process also carries its cumulative all-time read/write counters - the figures a task manager shows - and the recording
+as a whole carries byte totals for the device and for processes, so writes the disk performed that no process claimed
+are stated outright instead of leaving you to work out that the table does not add up.
+Processes that appear and exit mid-recording are tracked, as are kernel threads. For processes that were writing, the
+regular files they had open are captured too, so you learn *what* is being written and not just by whom.
+
+The viewer stacks three machine-wide charts on top - CPU total, disk read/write at the device, and what processes
+wrote through syscalls. Drag across any of them to select a period: the band is drawn on all three with its start and
+end times on the edges, and the process table below recomputes for exactly that range. Setting a quiet period as the
+**baseline** switches the table to differences, which cancels out steady background load and leaves whatever actually
+changed. Each row also carries a shape column per metric - CPU, write, write-to-device, read and RSS - scaled to that
+row, so a single spike is distinguishable from an even stream that adds up to the same total. There are also a process
+tree (with subtree totals) and a lifetimes view, where a process respawned on a timer shows up as a regular comb of
+short bars. Kernel threads are hidden from the table by default and there is a checkbox to bring them back; every
+column is explained in a glossary at the bottom of the page.
+
+### Sampling rate and what it cannot see
+
+The maximum rate is **5 Hz**, and a higher `--hz` is rejected rather than accepted. `sysinfo` will not re-read
+`/proc/stat` more often than every 200 ms while still refreshing each process's own counters, so a faster rate leaves
+per-process CPU% divided by a stale denominator - the numbers stay plausible while being wrong, which is worse than
+refusing.
+
+A process living less than one sampling interval is never observed directly. It is usually still visible, because Linux
+folds a reaped child's I/O accounting into its parent: the bytes surface against whatever spawned it. Where the child
+*was* sampled, its contribution is measured and reported in a separate "Write by children" column instead of being
+credited to the parent; where it was not, the parent's own total unavoidably includes it, and the row is tagged with how
+many children it started so the ambiguity is visible rather than hidden.
+
+Syscall-level I/O, open files and kernel threads come from `/proc`, so on Windows and macOS a recording falls back to
+what `sysinfo` reports (device-level bytes only) and says so in the viewer.
+
+### Where recordings are written
+
+`--session-dir` (default `sessions/`) for both the command and the web UI, or `--output` for one explicit path. Files are
+listed newest first in the web UI, so two recordings - one while the machine misbehaves, one while it is fine - can be
+compared. Nothing is written until a recording finishes or is stopped: it is held in memory, so a crash mid-recording
+loses it.
+
+> The session endpoints are the only ones in this server that *do* something rather than just read data, and like the
+> rest of the server they are unauthenticated. Anyone who can reach the port can start a recording and read process
+> command lines and file paths, which do sometimes contain secrets. Bind it somewhere you trust.
+
 ## Data file compatibility
 
 Compatibility between different versions of app is not guaranteed, so if you want to collect or create graphs from csv
@@ -326,7 +368,6 @@ After starting, open your browser and go to `http://localhost:5998/`.
 - **RAM chart**
 - **GPU charts** – utilization, VRAM and temperature (one chart each, one line per GPU)
 - **Swap, network and disk charts**
-- **Top-N process charts** – when `--top-n-processes` is used
 - **Time range** – pick how much history to show, from 5 minutes up to 1 day
 - **Live updates over a websocket** – the full history is downloaded once on page load, after that the server
   pushes each new tick over a connection that stays open; the browser appends it to the existing charts, so
@@ -364,7 +405,7 @@ so a full 24 h buffer at 1 s is in the 30-70 MB range. Shorten `--buffer-seconds
 
 The **Export** button generates the file on the server and downloads it. Two formats are available:
 
-- **Plotly report** – the same HTML plot the `convert` command produces (including the top-N process charts,
+- **Plotly report** – the same HTML plot the `convert` command produces (
   embedded in the same document). Built from the **CSV file on disk**, so it covers the whole recorded
   history regardless of `--buffer-seconds`
 - **Dashboard snapshot** – a self-contained copy of the live page with the data baked in and Chart.js
@@ -396,6 +437,13 @@ covers the whole period instead of just its tail. The reduction is logged.
 | `GET /api/export/report?mode=full\|last\|day\|week&seconds=&date=&week=&split=day\|week&source=` | plotly report download, `split` returns a zip of per-period files, `source` selects the data file (`all` for every file, default is the current one) |
 | `GET /api/export/html?mode=…` | dashboard snapshot download |
 | `GET /api/export/sources` | data files available for export, with the period, point count and size of each |
+| `GET /session` | the process session viewer |
+| `POST /api/session/start` | body `{"seconds": 60, "hz": 5}` - starts a recording; `409` when one is already running, `400` when the rate is above the 5 Hz maximum |
+| `POST /api/session/stop` | stops the running recording and keeps what it collected; `404` when none is running |
+| `GET /api/session/status` | whether a recording is active, elapsed and remaining seconds, samples taken, and the file name once it finishes |
+| `GET /api/session/list` | saved recordings, newest first, each with its metadata |
+| `GET /api/session/file/<name>` | one recording as JSON |
+| `GET /api/session/export/<name>` | one recording as a self-contained HTML viewer |
 
 ### Live update protocol
 
@@ -404,10 +452,8 @@ server pushes on its own — the client never asks for anything again. One frame
 containing everything gathered in that tick:
 
 ```json
-{"timestamp":4.1,"data":["4.1","100","15027.1"],"top":{"cpu":[{"name":"firefox","value":31.2}],"ram":[…]}}
+{"timestamp":4.1,"data":["4.1","100","15027.1"]}
 ```
-
-`top` is omitted when `--top-n-processes` is not used.
 
 The frame is built and serialized **once per tick**, not once per client: all connected browsers share the
 same buffer and sending to each is only a socket write. When no browser is connected nothing is serialized

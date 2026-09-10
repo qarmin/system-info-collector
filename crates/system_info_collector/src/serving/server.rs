@@ -1,9 +1,9 @@
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{FromRef, Query, State};
+use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
-use axum::routing::get;
+use axum::routing::{get, post};
 use chrono::{Datelike, Local, NaiveDate};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -17,10 +17,12 @@ use tokio::sync::broadcast::error::RecvError;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use super::data_buffer::{DataBuffer, DataPoint, TopDataPoint};
-use super::data_sources::{self, DataSource, SourceCache, abs_ts_to_naive_date, list_sources, parse_week_str, period_key, resolve};
+use super::data_buffer::{DataBuffer, DataPoint};
+use super::data_sources::{DataSource, SourceCache, abs_ts_to_naive_date, list_sources, parse_week_str, period_key, resolve};
+use super::session_service::{SessionService, StartError, StartRequest};
 use crate::converting::csv_file_loader::load_csv_results;
 use crate::converting::ploty_creator::{build_report_html, subset_by_time};
+use crate::session_store::{SessionListEntry, build_standalone_html};
 
 /// Rows selected for an export are capped so a huge buffer cannot stall the
 /// server while plotly renders.
@@ -61,7 +63,6 @@ struct DataPointResponse {
 #[derive(Serialize)]
 struct SnapshotResponse {
     data: Vec<DataPointResponse>,
-    top_data: Vec<TopDataPoint>,
     total_count: usize,
     max_buffer_size: usize,
     first_timestamp: Option<f64>,
@@ -74,16 +75,13 @@ struct SnapshotResponse {
 /// of reach.
 pub struct ExportPaths {
     pub data_path: String,
-    /// Top-N process files, when `--top-n-processes` is active.
-    pub extra_data_paths: Vec<String>,
     source_cache: SourceCache,
 }
 
 impl ExportPaths {
-    pub fn new(data_path: String, extra_data_paths: Vec<String>) -> Self {
+    pub fn new(data_path: String) -> Self {
         Self {
             data_path,
-            extra_data_paths,
             source_cache: SourceCache::default(),
         }
     }
@@ -93,6 +91,7 @@ impl ExportPaths {
 struct AppState {
     buffer: Arc<DataBuffer>,
     export: Arc<ExportPaths>,
+    sessions: Arc<SessionService>,
 }
 
 impl FromRef<AppState> for Arc<DataBuffer> {
@@ -104,6 +103,12 @@ impl FromRef<AppState> for Arc<DataBuffer> {
 impl FromRef<AppState> for Arc<ExportPaths> {
     fn from_ref(state: &AppState) -> Self {
         Self::clone(&state.export)
+    }
+}
+
+impl FromRef<AppState> for Arc<SessionService> {
+    fn from_ref(state: &AppState) -> Self {
+        Self::clone(&state.sessions)
     }
 }
 
@@ -120,10 +125,16 @@ pub fn build_runtime() -> std::io::Result<tokio::runtime::Runtime> {
         .build()
 }
 
-pub async fn start_server(port: u16, data_buffer: DataBuffer, export_paths: ExportPaths) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_server(
+    port: u16,
+    data_buffer: DataBuffer,
+    export_paths: ExportPaths,
+    sessions: SessionService,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = AppState {
         buffer: Arc::new(data_buffer),
         export: Arc::new(export_paths),
+        sessions: Arc::new(sessions),
     };
 
     let app = Router::new()
@@ -134,6 +145,13 @@ pub async fn start_server(port: u16, data_buffer: DataBuffer, export_paths: Expo
         .route("/api/export/html", get(export_html_handler))
         .route("/api/export/report", get(export_report_handler))
         .route("/api/export/sources", get(export_sources_handler))
+        .route("/session", get(session_viewer_handler))
+        .route("/api/session/start", post(session_start_handler))
+        .route("/api/session/stop", post(session_stop_handler))
+        .route("/api/session/status", get(session_status_handler))
+        .route("/api/session/list", get(session_list_handler))
+        .route("/api/session/file/{name}", get(session_file_handler))
+        .route("/api/session/export/{name}", get(session_export_handler))
         .route("/static/chart.min.js", get(chartjs_handler))
         .with_state(app_state);
 
@@ -158,7 +176,6 @@ async fn metadata_handler(State(buffer): State<Arc<DataBuffer>>) -> impl IntoRes
 /// buffer counters.  After this the browser only receives websocket deltas.
 async fn snapshot_handler(Query(params): Query<RangeQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let data_points = buffer.get_range(params.seconds, params.limit);
-    let top_data = buffer.get_range_top(params.seconds, params.limit);
     let (first, last) = buffer.get_first_and_last();
 
     let response = SnapshotResponse {
@@ -169,7 +186,6 @@ async fn snapshot_handler(Query(params): Query<RangeQuery>, State(buffer): State
                 data: d.data,
             })
             .collect(),
-        top_data,
         total_count: buffer.len(),
         max_buffer_size: buffer.get_max_size(),
         first_timestamp: first.map(|d| d.timestamp),
@@ -221,34 +237,18 @@ async fn export_sources_handler(State(paths): State<Arc<ExportPaths>>) -> impl I
 }
 
 /// Which rows of the *live buffer* to include in a dashboard snapshot.
-fn select_buffer_data(buffer: &DataBuffer, params: &ExportQuery, start_time: f64) -> (Vec<DataPoint>, Vec<TopDataPoint>) {
+fn select_buffer_data(buffer: &DataBuffer, params: &ExportQuery, start_time: f64) -> Vec<DataPoint> {
     match params.mode.as_deref().unwrap_or("full") {
-        "last" => {
-            let seconds = params.seconds.unwrap_or(3600.0);
-            (
-                buffer.get_range(Some(seconds), Some(MAX_EXPORT_POINTS)),
-                buffer.get_range_top(Some(seconds), Some(MAX_EXPORT_POINTS)),
-            )
-        }
+        "last" => buffer.get_range(params.seconds.or(Some(3600.0)), Some(MAX_EXPORT_POINTS)),
         "day" | "week" => {
             let keep = period_filter(params);
-            (
-                buffer
-                    .get_range(None, None)
-                    .into_iter()
-                    .filter(|p| keep(start_time + p.timestamp))
-                    .collect(),
-                buffer
-                    .get_range_top(None, None)
-                    .into_iter()
-                    .filter(|p| keep(start_time + p.timestamp))
-                    .collect(),
-            )
+            buffer
+                .get_range(None, None)
+                .into_iter()
+                .filter(|p| keep(start_time + p.timestamp))
+                .collect()
         }
-        _ => (
-            buffer.get_range(None, Some(MAX_EXPORT_POINTS)),
-            buffer.get_range_top(None, Some(MAX_EXPORT_POINTS)),
-        ),
+        _ => buffer.get_range(None, Some(MAX_EXPORT_POINTS)),
     }
 }
 
@@ -305,28 +305,16 @@ fn plain_text(status: StatusCode, body: String) -> axum::response::Response {
 /// so it is bounded by the live buffer (`--max-results`).
 async fn export_html_handler(Query(params): Query<ExportQuery>, State(buffer): State<Arc<DataBuffer>>) -> impl IntoResponse {
     let metadata = buffer.get_metadata();
-    let (data_to_use, top_data) = select_buffer_data(&buffer, &params, metadata.system_info.start_time);
+    let data_to_use = select_buffer_data(&buffer, &params, metadata.system_info.start_time);
 
     let data_json: Vec<serde_json::Value> = data_to_use
         .iter()
         .map(|p| serde_json::json!({ "timestamp": p.timestamp, "data": p.data }))
         .collect();
 
-    let top_json: Vec<serde_json::Value> = top_data
-        .iter()
-        .map(|p| {
-            serde_json::json!({
-                "timestamp": p.timestamp,
-                "cpu": p.cpu.iter().map(|e| serde_json::json!({"name": e.name, "value": e.value})).collect::<Vec<_>>(),
-                "ram": p.ram.iter().map(|e| serde_json::json!({"name": e.name, "value": e.value})).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-
     let static_data = serde_json::json!({
         "metadata": metadata,
         "data": data_json,
-        "top_data": top_json,
     });
 
     let chart_js = include_str!("./chart.min.js");
@@ -378,8 +366,6 @@ struct ExportFile {
 /// One CSV file an export reads from.
 struct ExportSource {
     path: String,
-    /// Top-N process files only exist for the file of the running collector.
-    extra_paths: Vec<String>,
     slug: String,
 }
 
@@ -388,7 +374,6 @@ struct ExportSource {
 fn resolve_export_sources(paths: &ExportPaths, params: &ExportQuery) -> Result<Vec<ExportSource>, anyhow::Error> {
     let current = || ExportSource {
         path: paths.data_path.clone(),
-        extra_paths: paths.extra_data_paths.clone(),
         slug: source_slug(&paths.data_path),
     };
 
@@ -404,7 +389,6 @@ fn resolve_export_sources(paths: &ExportPaths, params: &ExportQuery) -> Result<V
                 .map(|source| {
                     let path = replace_file_name(&paths.data_path, &source.name);
                     ExportSource {
-                        extra_paths: if source.current { paths.extra_data_paths.clone() } else { vec![] },
                         slug: source_slug(&path),
                         path,
                     }
@@ -412,12 +396,7 @@ fn resolve_export_sources(paths: &ExportPaths, params: &ExportQuery) -> Result<V
                 .collect())
         }
         Some(name) => match resolve(&paths.data_path, name) {
-            Some((path, kind)) => Ok(vec![ExportSource {
-                extra_paths: if kind == data_sources::CURRENT {
-                    paths.extra_data_paths.clone()
-                } else {
-                    vec![]
-                },
+            Some((path, _kind)) => Ok(vec![ExportSource {
                 slug: source_slug(&path),
                 path,
             }]),
@@ -441,7 +420,6 @@ fn replace_file_name(data_path: &str, file_name: &str) -> String {
 fn load_source(source: &ExportSource) -> Result<(CollectedItemModels, ConvertSettings), anyhow::Error> {
     let settings = ConvertSettings {
         data_path: source.path.clone(),
-        extra_data_paths: source.extra_paths.clone(),
         plot_width: 1700,
         plot_height: 800,
         split_mode: SplitMode::Full,
@@ -582,6 +560,84 @@ fn distinct_periods(model: &CollectedItemModels, keep: &dyn Fn(f64) -> bool, spl
 
 fn export_file_name(kind: &str, slug: &str, extension: &str) -> String {
     format!("system_info_{kind}_{slug}_{}.{extension}", Local::now().format("%Y-%m-%d_%H-%M-%S"))
+}
+
+// ── session recording ─────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct SessionListResponse {
+    sessions: Vec<SessionListEntry>,
+    /// Shown in the UI so it is obvious where the files are landing.
+    directory: String,
+}
+
+async fn session_viewer_handler() -> impl IntoResponse {
+    Html(include_str!("session_viewer.html"))
+}
+
+async fn session_start_handler(State(sessions): State<Arc<SessionService>>, Json(request): Json<StartRequest>) -> axum::response::Response {
+    match sessions.start(&request) {
+        Ok(status) => (StatusCode::OK, Json(status)).into_response(),
+        Err(StartError::Busy) => plain_text(StatusCode::CONFLICT, "A recording is already running".to_string()),
+        Err(StartError::Invalid(message)) => plain_text(StatusCode::BAD_REQUEST, message),
+    }
+}
+
+async fn session_stop_handler(State(sessions): State<Arc<SessionService>>) -> axum::response::Response {
+    if sessions.stop() {
+        (StatusCode::OK, Json(sessions.status())).into_response()
+    } else {
+        plain_text(StatusCode::NOT_FOUND, "No recording is running".to_string())
+    }
+}
+
+async fn session_status_handler(State(sessions): State<Arc<SessionService>>) -> impl IntoResponse {
+    (StatusCode::OK, Json(sessions.status()))
+}
+
+async fn session_list_handler(State(sessions): State<Arc<SessionService>>) -> axum::response::Response {
+    // Each entry costs a small prefix read, so the scan goes to the blocking pool.
+    let listed = tokio::task::spawn_blocking(move || (sessions.store().list(), sessions.store().dir().display().to_string())).await;
+
+    match listed {
+        Ok((sessions, directory)) => (StatusCode::OK, Json(SessionListResponse { sessions, directory })).into_response(),
+        Err(e) => {
+            error!("Session listing failed: {e}");
+            plain_text(StatusCode::INTERNAL_SERVER_ERROR, "Failed to list sessions".to_string())
+        }
+    }
+}
+
+async fn session_file_handler(Path(name): Path<String>, State(sessions): State<Arc<SessionService>>) -> axum::response::Response {
+    match tokio::task::spawn_blocking(move || sessions.store().read_raw(&name)).await {
+        Ok(Ok(bytes)) => ([(axum::http::header::CONTENT_TYPE, "application/json")], bytes).into_response(),
+        Ok(Err(e)) => plain_text(StatusCode::NOT_FOUND, format!("{e}")),
+        Err(e) => {
+            error!("Session read task failed: {e}");
+            plain_text(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read session".to_string())
+        }
+    }
+}
+
+/// The viewer with one recording baked in - a single file that works without
+/// this server.
+async fn session_export_handler(Path(name): Path<String>, State(sessions): State<Arc<SessionService>>) -> axum::response::Response {
+    let built = tokio::task::spawn_blocking(move || {
+        let bytes = sessions.store().read_raw(&name)?;
+        let json = String::from_utf8(bytes).map_err(|e| anyhow::Error::msg(format!("Session file is not valid UTF-8: {e}")))?;
+        let file_name = format!("{}.html", name.trim_end_matches(".json"));
+        Ok::<_, anyhow::Error>((file_name, build_standalone_html(&json)))
+    })
+    .await;
+
+    match built {
+        Ok(Ok((file_name, html))) => (download_headers(&file_name), html).into_response(),
+        Ok(Err(e)) => plain_text(StatusCode::NOT_FOUND, format!("{e}")),
+        Err(e) => {
+            error!("Session export task failed: {e}");
+            plain_text(StatusCode::INTERNAL_SERVER_ERROR, "Failed to build session viewer".to_string())
+        }
+    }
 }
 
 async fn chartjs_handler() -> impl IntoResponse {

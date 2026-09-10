@@ -20,10 +20,7 @@ pub enum SplitMode {
 
 #[derive(Default, Clone, Debug)]
 pub struct ConvertSettings {
-    /// Main data CSV (first -d argument).
     pub data_path: String,
-    /// Additional data files (extra -d arguments): top-CPU and/or top-RAM process files.
-    pub extra_data_paths: Vec<String>,
     pub plot_path: String,
     pub plot_width: u32,
     pub plot_height: u32,
@@ -67,8 +64,8 @@ pub struct CollectSettings {
     /// How much history the live web-view buffer should hold, in seconds.
     /// The number of samples is derived from this and `check_interval`.
     pub buffer_seconds: f32,
-    /// Number of top processes to track by CPU% and RAM (0 = disabled).
-    pub top_n_processes: usize,
+    /// Where process recordings started from the web UI are written.
+    pub session_dir: String,
     /// Disk mount points or device names to track (empty + !all_disks = no disk monitoring).
     pub disk_mount_points: Vec<String>,
     /// If true, track all available non-virtual disks.
