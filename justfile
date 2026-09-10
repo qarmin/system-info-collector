@@ -54,11 +54,11 @@ runrs:
     cargo run --release -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s --all-networks; firefox system_data_plot.html
 
 cross_arm_32:
-    cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
 
 cross_x86_64:
     # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
-    cargo zigbuild --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
 
 stop_remote ip_address:
     ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
@@ -71,7 +71,7 @@ stop_remote_x86_64 ip_address:
 
 arm_send ip_address:
     # To avoid glibc version issues, using zigbuild
-    cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28 -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28 -p system_info_collector
     ssh root@{{ ip_address }} 'mkdir -p /home/root/data_collector'
     just stop_remote {{ ip_address }}
     # Removing the old binary, because scp into a still running one fails with "Text file busy"
@@ -80,14 +80,14 @@ arm_send ip_address:
 
 x86_64_send ip_address:
     # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
-    cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
     ssh {{ user }}@{{ ip_address }} 'mkdir -p /home/{{ user }}/data_collector'
     # Uploading under a temp name and renaming into place atomically, instead of stopping the service first, so scp never hits "Text file busy" and no sudo/password is needed here
     scp -O target/x86_64-unknown-linux-gnu/release/system_info_collector {{ user }}@{{ ip_address }}:/home/{{ user }}/data_collector/system_info_collector.new
     ssh {{ user }}@{{ ip_address }} 'mv -f /home/{{ user }}/data_collector/system_info_collector.new /home/{{ user }}/data_collector/system_info_collector'
 
 # Defaults for the `metrics`/`disks` arguments on full_send_arm/full_send/full_install below.
-default_metrics := "cpu-usage-total memory-used memory-free memory-available network-rx network-tx disk-used disk-available disk-busy disk-read disk-write"
+default_metrics := "cpu-usage-total memory-used memory-free memory-available network-rx network-tx gpu-utilization gpu-memory-used disk-used disk-available disk-busy disk-read disk-write"
 # Space-separated mount points/device names to pass as repeated --disk flags, e.g. "/ /home".
 # "all" means --all-disks (every real disk, discovered at service start); empty means no disk tracked.
 default_disks := "all"
@@ -203,7 +203,7 @@ install:
 # disks: defaults to "all" (--all-disks, every real disk discovered at service start); pass
 # space-separated mount points/devices instead, e.g. disks="/ /home", to pick them by hand
 full_install metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
-    cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
     mkdir -p /home/{{ user }}/data_collector
     # Copying under a temp name and renaming into place atomically (like x86_64_send), since the
     # service may currently be running the old binary and a direct overwrite fails with "Text file busy"
