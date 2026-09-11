@@ -812,16 +812,35 @@ function renderCoverageBanner() {
     }
     const total = state.data.procs.length;
     const uid = meta.recorder_uid;
+    const unknownNotZero =
+        'Their I/O columns are <b>unknown, not zero</b>, they are tagged <span class="tag noio">no I/O data</span>, '
+        + 'and any gap between the device total and what processes claim tells you nothing.';
     banner.style.display = '';
-    banner.innerHTML =
-        `<b>I/O could not be read for ${missing} of ${total} processes.</b> `
-        + '<code>/proc/&lt;pid&gt;/io</code> is mode 0400 and needs permission over the target, so a recorder running '
-        + `as an ordinary user${uid === null || uid === undefined ? '' : ` (uid ${uid})`} sees nothing for processes it `
-        + 'does not own - which is every system daemon and every kernel thread. Their I/O columns are '
-        + '<b>unknown, not zero</b>, they are tagged <span class="tag noio">no I/O data</span>, and any gap between '
-        + 'the device total and what processes claim tells you nothing until this is fixed. '
-        + 'Re-record as root, or grant the binary the capability:<br>'
-        + '<code>sudo setcap cap_dac_read_search,cap_sys_ptrace+ep ./system_info_collector</code>';
+    if (meta.io_accounting === false) {
+        banner.innerHTML =
+            `<b>This kernel does not account for per-process I/O, so none is available for any of the ${total} `
+            + 'processes.</b> <code>/proc/&lt;pid&gt;/io</code> does not exist here: the kernel was built without '
+            + '<code>CONFIG_TASK_IO_ACCOUNTING</code>, as embedded kernels routinely are. '
+            + unknownNotZero
+            + ' <b>No privilege changes this</b> - not root, not capabilities; only a kernel rebuild would. '
+            + 'Device-wide I/O from <code>/proc/diskstats</code>, and every non-I/O column (CPU, RSS, threads, '
+            + 'context switches), are unaffected and still real.';
+    } else if (uid === 0) {
+        banner.innerHTML =
+            `<b>I/O could not be read for ${missing} of ${total} processes,</b> even though the recorder ran as root. `
+            + 'Something other than ordinary file permissions blocked it - an LSM policy, a <code>hidepid</code> '
+            + '<code>/proc</code> mount, or processes that exited mid-read. '
+            + unknownNotZero;
+    } else {
+        banner.innerHTML =
+            `<b>I/O could not be read for ${missing} of ${total} processes.</b> `
+            + '<code>/proc/&lt;pid&gt;/io</code> is mode 0400 and needs permission over the target, so a recorder '
+            + `running as an ordinary user${uid === null || uid === undefined ? '' : ` (uid ${uid})`} sees nothing for `
+            + 'processes it does not own - which is every system daemon and every kernel thread. '
+            + unknownNotZero
+            + ' Re-record as root, or grant the binary the capability:<br>'
+            + '<code>sudo setcap cap_dac_read_search,cap_sys_ptrace+ep ./system_info_collector</code>';
+    }
 }
 
 function renderRateHint() {

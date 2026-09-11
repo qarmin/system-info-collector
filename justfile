@@ -11,6 +11,7 @@
 #     takes effect if `metrics` includes a disk-* metric. The special value "all"
 #     means --all-disks (every real, non-virtual disk, discovered at service start).
 #   - See `default_metrics`/`default_disks` below for the full list of valid metrics values.
+#   - `processes` is the repeated `-e NAME|SEARCH_TEXT` flags; see `arm_processes` below.
 #   - "all" skips virtual filesystems and boot partitions; add `--exclude-disk <mount>` to the
 #     service ExecStart to drop anything else.
 #   - The send/install recipes grant the binary the capabilities the `session` command needs to
@@ -127,16 +128,20 @@ default_metrics := "cpu-usage-total memory-used memory-free memory-available net
 # Space-separated mount points/device names to pass as repeated --disk flags, e.g. "/ /home".
 # "all" means --all-disks (every real disk, discovered at service start); empty means no disk tracked.
 default_disks := "all"
+# Repeated `-e NAME|SEARCH_TEXT` flags tracking named processes. Only the perimeter ARM devices
+# run these binaries, so full_send/full_install leave it empty and full_send_arm defaults to it.
+arm_processes := '-e "GUI|./ap600_gui -platform wayland" -e "CORE|5000 --timeout" -e "HAL|5001 --timeout" -e "DBCORE|./dbcore"'
 
 # metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
 # disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
-full_send_arm ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
+full_send_arm ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes=arm_processes:
     ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
     just stop_remote {{ ip_address }}
     just arm_send {{ ip_address }}
     if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
-    sed -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
+    processes='{{ processes }}'; \
+    sed -e 's/__USER__/root/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" -e "s#__PROCESSES__#$processes#g" "{{ service_file }}" > /tmp/system-info-collector.service
     scp -O /tmp/system-info-collector.service root@{{ ip_address }}:/etc/systemd/system/system-info-collector.service
     # That service runs as root, so it can already read every process; this is only
     # for running `session` by hand as a non-root user there, and squashfs/jffs2 roots
@@ -153,10 +158,11 @@ full_send_arm ip_address metrics=default_metrics disks=default_disks service_fil
 # All sudo steps are bundled into a single `ssh -t` call so the remote password is only asked once.
 # metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
 # disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
-full_send ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
+full_send ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes="":
     if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
-    sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
+    processes='{{ processes }}'; \
+    sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" -e "s#__PROCESSES__#$processes#g" "{{ service_file }}" > /tmp/system-info-collector.service
     just x86_64_send {{ ip_address }}
     scp -O /tmp/system-info-collector.service {{ user }}@{{ ip_address }}:/tmp/system-info-collector.service
     ssh -t {{ user }}@{{ ip_address }} 'sudo mv /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service && sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector && getcap /home/{{ user }}/data_collector/system_info_collector && sudo systemctl daemon-reload && sudo systemctl enable system-info-collector && sudo systemctl restart system-info-collector && sudo systemctl status --no-pager system-info-collector'
@@ -238,7 +244,7 @@ install:
 # metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
 # disks: defaults to "all" (--all-disks, every real disk discovered at service start); pass
 # space-separated mount points/devices instead, e.g. disks="/ /home", to pick them by hand
-full_install metrics=default_metrics disks=default_disks service_file="system-info-collector.service":
+full_install metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes="":
     RUSTFLAGS="" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
     mkdir -p /home/{{ user }}/data_collector
     # Copying under a temp name and renaming into place atomically (like x86_64_send), since the
@@ -248,7 +254,8 @@ full_install metrics=default_metrics disks=default_disks service_file="system-in
     /home/{{ user }}/data_collector/system_info_collector collect --list-disks
     if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
-    sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" "{{ service_file }}" > /tmp/system-info-collector.service
+    processes='{{ processes }}'; \
+    sed -e 's/__USER__/{{ user }}/g' -e 's/__METRICS__/{{ metrics }}/g' -e "s#__DISKS__#$disk_flags#g" -e "s#__PROCESSES__#$processes#g" "{{ service_file }}" > /tmp/system-info-collector.service
     sudo cp /tmp/system-info-collector.service /etc/systemd/system/system-info-collector.service
     sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector
     getcap /home/{{ user }}/data_collector/system_info_collector

@@ -17,7 +17,7 @@ User=__USER__
 # Unknown to systemd before v229, which warns and otherwise carries on.
 AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
 WorkingDirectory=/home/__USER__/data_collector
-ExecStart=/home/__USER__/data_collector/system_info_collector collect -d /home/__USER__/data_collector/data.csv -m __METRICS__ --all-networks __DISKS__ -c 1.0 -s
+ExecStart=/home/__USER__/data_collector/system_info_collector collect -d /home/__USER__/data_collector/data.csv -m __METRICS__ --all-networks __DISKS__ __PROCESSES__ -c 1.0 -s
 Restart=on-failure
 RestartSec=5
 

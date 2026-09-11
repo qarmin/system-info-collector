@@ -114,6 +114,10 @@ pub struct SessionProgress {
     pub processes_seen: AtomicUsize,
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub format_version: u32,
@@ -151,10 +155,18 @@ pub struct SessionMeta {
     pub proc_written_bytes: u64,
     /// How many processes had unreadable I/O counters.  When this is most of them,
     /// per-process attribution is structurally incomplete and the unclaimed
-    /// remainder in the totals says nothing - re-run with enough privilege.
+    /// remainder in the totals says nothing - see `io_accounting` for whether more
+    /// privilege would help or the kernel simply does not keep these counters.
     pub processes_without_io: usize,
     /// The uid the recorder ran as, to compare against `SessionProcess::uid`.
     pub recorder_uid: Option<u32>,
+    /// False when the kernel has no `/proc/<pid>/io` at all - built without
+    /// `CONFIG_TASK_IO_ACCOUNTING`, as embedded kernels routinely are.  The
+    /// distinction matters because then no amount of privilege helps, and telling
+    /// the user to re-record as root sends them after a fix that does not exist.
+    /// Defaults to true so sessions recorded before this field stay readable.
+    #[serde(default = "default_true")]
+    pub io_accounting: bool,
     /// Per-device breakdown of the figures above, including the devices that were
     /// deliberately skipped.  Without this a suspicious device total cannot be
     /// audited - you cannot tell a real busy disk from the same write counted
@@ -710,12 +722,21 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
     }
 
     let processes_without_io = procs.iter().filter(|p| !p.io_readable).count();
+    let io_accounting = io_accounting_available();
     if processes_without_io > 0 {
-        info!(
-            "Could not read /proc/<pid>/io for {processes_without_io} of {} processes - per-process I/O for those is \
-             unknown, not zero. Run with more privilege for full attribution.",
-            procs.len()
-        );
+        if io_accounting {
+            info!(
+                "Could not read /proc/<pid>/io for {processes_without_io} of {} processes - per-process I/O for those \
+                 is unknown, not zero. Run with more privilege for full attribution.",
+                procs.len()
+            );
+        } else {
+            info!(
+                "This kernel has no /proc/<pid>/io, so per-process I/O is unavailable for all {} processes - it was \
+                 built without CONFIG_TASK_IO_ACCOUNTING. No privilege changes that; only device-wide I/O is real here.",
+                procs.len()
+            );
+        }
     }
 
     let recorded_ticks = system.t_ms.len();
@@ -757,6 +778,7 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
             proc_written_bytes: totals.proc_written_bytes,
             processes_without_io,
             recorder_uid: read_owner_uid(std::process::id()),
+            io_accounting,
             devices: totals
                 .devices
                 .into_iter()
@@ -851,6 +873,19 @@ fn read_io_counters(pid: u32) -> Option<IoCounters> {
 #[cfg(not(target_os = "linux"))]
 fn read_io_counters(_pid: u32) -> Option<IoCounters> {
     None
+}
+
+/// Whether this kernel keeps per-process I/O counters at all.  The recorder always
+/// has permission over itself, so `/proc/self/io` missing means the file does not
+/// exist anywhere rather than that it was denied.
+#[cfg(target_os = "linux")]
+fn io_accounting_available() -> bool {
+    std::path::Path::new("/proc/self/io").exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn io_accounting_available() -> bool {
+    false
 }
 
 /// Owner of a process, from the ownership of its `/proc` directory - one `stat`,
@@ -1231,6 +1266,7 @@ mod tests {
                 proc_written_bytes: 1 << 20,
                 processes_without_io: 0,
                 recorder_uid: Some(1000),
+                io_accounting: true,
                 devices: vec![],
             },
             system: SessionSystem::default(),
