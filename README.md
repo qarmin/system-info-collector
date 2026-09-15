@@ -222,7 +222,8 @@ When checking for processes -1 is visible both in cpu/memory plot if searched pr
 
 Per-disk and per-interface columns are named `DISK_N_*` / `NET_N_*` in the CSV, but charts, the live view and the raw
 data table show what the index actually is - `/home (nvme1n1 915 GB)` and `wlan0 (WiFi - Wi-Fi 6 AX201)`. The live
-view also lists every tracked disk and interface in its System Information panel.
+view also lists every interface in its System Information panel, and every attached filesystem with its size, type and
+drive model - tracked or not, with the tracked ones marked `DISK_N`.
 
 The labels are written to the CSV metadata line as `DISK_LABEL_N` / `NET_LABEL_N`, so `convert` reproduces them
 later; files written by older versions fall back to the bare mount point and interface name.

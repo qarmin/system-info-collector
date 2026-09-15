@@ -68,6 +68,10 @@
             font-weight: bold;
             color: #90caf9;
         }
+        .stat-value.multiline {
+            font-size: 1em;
+            white-space: pre-line;
+        }
         .controls {
             margin: 20px 0;
             padding: 10px;
@@ -329,6 +333,14 @@
             <h3>System Information</h3>
             <div class="system-stats">
                 <div class="stat-item">
+                    <div class="stat-label">Operating System</div>
+                    <div class="stat-value" id="osName">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Host</div>
+                    <div class="stat-value" id="hostname">Loading...</div>
+                </div>
+                <div class="stat-item">
                     <div class="stat-label">CPU Model</div>
                     <div class="stat-value" id="cpuModel">Loading...</div>
                 </div>
@@ -353,8 +365,8 @@
                     <div class="stat-value" id="gpuVram">Loading...</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-label">Tracked disks</div>
-                    <div class="stat-value" id="diskLabels">Loading...</div>
+                    <div class="stat-label">Disks</div>
+                    <div class="stat-value multiline" id="mountedDisks">Loading...</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">Tracked networks</div>
@@ -569,6 +581,15 @@
         const indexedList = labels =>
             (labels && labels.length > 0) ? labels.map((label, i) => `${i}: ${label}`).join(', ') : 'None';
 
+        function describeDisk(disk) {
+            const device = disk.device.replace(/^.*\//, '');
+            const model = disk.model ? ` ${disk.model}` : '';
+            const tracked = disk.tracked_index === null || disk.tracked_index === undefined
+                ? 'not tracked'
+                : `DISK_${disk.tracked_index}`;
+            return `${disk.mount_point} - ${formatBytes(disk.total_bytes)} ${disk.file_system}, ${device}${model} - ${tracked}`;
+        }
+
         async function loadMetadata() {
             if (isStatic()) {
                 metadata = window.STATIC_DATA.metadata;
@@ -577,6 +598,10 @@
                 metadata = await response.json();
             }
 
+            const kernel = metadata.system_info.kernel_version;
+            document.getElementById('osName').textContent =
+                (metadata.system_info.os_name || 'Unknown') + (kernel ? ` (kernel ${kernel})` : '');
+            document.getElementById('hostname').textContent = metadata.system_info.hostname || 'N/A';
             document.getElementById('cpuModel').textContent = metadata.system_info.cpu_model || 'N/A';
             document.getElementById('cpuCores').textContent =
                 `${metadata.system_info.cpu_physical_cores} / ${metadata.system_info.cpu_cores}`;
@@ -592,7 +617,10 @@
                     : 'N/A';
             // DISK_0 / NET_0 in the raw data mean nothing on their own, so the panel
             // spells out which device each index is.
-            document.getElementById('diskLabels').textContent = indexedList(metadata.system_info.disk_labels);
+            const mountedDisks = metadata.system_info.mounted_disks || [];
+            document.getElementById('mountedDisks').textContent = mountedDisks.length > 0
+                ? mountedDisks.map(describeDisk).join('\n')
+                : 'None';
             document.getElementById('netLabels').textContent = indexedList(metadata.system_info.net_labels);
             document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
             document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
@@ -1091,7 +1119,7 @@
 
         function formatBytes(bytes) {
             if (!bytes) return '0 B';
-            const units = ['B', 'KiB', 'MiB', 'GiB'];
+            const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
             let value = bytes;
             let unit = 0;
             while (value >= 1024 && unit < units.length - 1) {

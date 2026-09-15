@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use log::{info, warn};
+use serde::Serialize;
 use sysinfo::{Disks, Networks};
 
 use crate::disk_stats::device_stat_name;
@@ -445,7 +446,39 @@ const VIRTUAL_PREFIXES: &[&str] = &["docker", "veth", "br-", "virbr", "tun", "ta
 struct MountedDisk {
     device: String,
     mount_point: String,
+    file_system: String,
+    total_bytes: u64,
     total_gb: u64,
+}
+
+/// A mounted filesystem as shown in the live view, regardless of whether its
+/// usage is tracked.
+#[derive(Debug, Clone, Serialize)]
+pub struct MountedFilesystem {
+    pub mount_point: String,
+    pub device: String,
+    /// Filesystem type as reported by the OS, e.g. `ext4`, `btrfs`, `ntfs`.
+    pub file_system: String,
+    pub total_bytes: u64,
+    /// Hardware model of the drive the filesystem sits on, e.g.
+    /// `Samsung SSD 980 1TB` - Linux only, and absent for LVM/RAID mappings.
+    pub model: Option<String>,
+    /// `DISK_N` index when this filesystem is tracked, `None` when it is only listed.
+    pub tracked_index: Option<usize>,
+}
+
+impl MountedFilesystem {
+    /// One-line summary, e.g. `/home - 915.8 GiB ext4, nvme1n1 (Samsung SSD 980 1TB)`.
+    pub fn describe(&self) -> String {
+        let size = humansize::format_size(self.total_bytes, humansize::BINARY);
+        let model = self.model.as_ref().map_or_else(String::new, |m| format!(" ({m})"));
+        format!(
+            "{} - {size} {}, {}{model}",
+            self.mount_point,
+            self.file_system,
+            short_device_name(&self.device)
+        )
+    }
 }
 
 /// Returns all real (non-virtual) mounted filesystems.
@@ -459,9 +492,67 @@ fn real_disks(disks: &Disks) -> Vec<MountedDisk> {
         .map(|d| MountedDisk {
             device: d.name().to_string_lossy().to_string(),
             mount_point: d.mount_point().to_string_lossy().to_string(),
+            file_system: d.file_system().to_string_lossy().to_string(),
+            total_bytes: d.total_space(),
             total_gb: d.total_space() / 1_073_741_824,
         })
         .collect()
+}
+
+/// Every attached filesystem, one entry per device, sorted by mount point, with the
+/// `DISK_N` index of the ones `tracked` covers.  Unlike `discover_disks` this ignores
+/// the tracking flags - boot partitions and excluded mounts are attached all the same.
+pub fn mounted_filesystems(tracked: &[DiscoveredDisk]) -> Vec<MountedFilesystem> {
+    let disks = Disks::new_with_refreshed_list();
+    let mounts = real_disks(&disks);
+    let mut listed: Vec<MountedFilesystem> = unique_devices(&mounts.iter().collect::<Vec<_>>())
+        .into_iter()
+        .map(|m| MountedFilesystem {
+            mount_point: m.mount_point.clone(),
+            device: m.device.clone(),
+            file_system: m.file_system.clone(),
+            total_bytes: m.total_bytes,
+            model: device_model(&m.device),
+            tracked_index: tracked
+                .iter()
+                .find(|d| d.device == m.device || d.mount_point == m.mount_point)
+                .map(|d| d.disk_index),
+        })
+        .collect();
+    listed.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+    listed
+}
+
+/// Hardware model of the drive backing `device`, from sysfs.  Partitions carry no
+/// model of their own, so the parent block device is the one asked.
+#[cfg(target_os = "linux")]
+fn device_model(device: &str) -> Option<String> {
+    let block = std::fs::canonicalize(std::path::Path::new("/sys/class/block").join(short_device_name(device))).ok()?;
+    let drive = if block.join("partition").exists() {
+        block.parent()?.to_path_buf()
+    } else {
+        block
+    };
+
+    let read = |file: &str| {
+        std::fs::read_to_string(drive.join("device").join(file))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    let model = read("model")?;
+    // SATA drives report the controller protocol as their vendor, which says nothing
+    // about the drive; USB enclosures and SCSI disks report a real manufacturer.
+    match read("vendor").filter(|v| v != "ATA" && !model.starts_with(v.as_str())) {
+        Some(vendor) => Some(format!("{vendor} {model}")),
+        None => Some(model),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn device_model(_device: &str) -> Option<String> {
+    None
 }
 
 /// Whether `--all-disks` should track this filesystem, i.e. it is neither a boot/EFI/recovery
@@ -512,12 +603,18 @@ pub fn list_real_disks(excluded: &[String]) {
     }
     info!("Available disks:");
     for mount in &mounts {
-        info!("  device: {}  mount: {}  size: {} GB", mount.device, mount.mount_point, mount.total_gb);
+        info!(
+            "  device: {}  mount: {}  size: {} GB  fs: {}",
+            mount.device, mount.mount_point, mount.total_gb, mount.file_system
+        );
     }
     let auto_tracked: Vec<&MountedDisk> = mounts.iter().filter(|m| is_auto_tracked(m, excluded)).collect();
     info!("Disks tracked by --all-disks:");
     for mount in unique_devices(&auto_tracked) {
-        info!("  device: {}  mount: {}  size: {} GB", mount.device, mount.mount_point, mount.total_gb);
+        info!(
+            "  device: {}  mount: {}  size: {} GB  fs: {}",
+            mount.device, mount.mount_point, mount.total_gb, mount.file_system
+        );
     }
 }
 
@@ -737,6 +834,8 @@ mod tests {
         MountedDisk {
             device: device.to_string(),
             mount_point: mount_point.to_string(),
+            file_system: "ext4".to_string(),
+            total_bytes: 100 * 1_073_741_824,
             total_gb: 100,
         }
     }

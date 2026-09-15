@@ -2,6 +2,7 @@ use axum::extract::ws::Utf8Bytes;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
+use system_info_collector_core::discovery::MountedFilesystem;
 use tokio::sync::broadcast;
 
 /// How many frames a slow websocket client may fall behind before it is told to
@@ -47,6 +48,10 @@ pub struct SystemMetadata {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemInfo {
+    /// Distribution and release, e.g. `Ubuntu 24.04.3 LTS`.
+    pub os_name: String,
+    pub kernel_version: String,
+    pub hostname: String,
     pub total_memory_mb: f64,
     pub total_swap_mb: f64,
     pub cpu_cores: usize,
@@ -55,8 +60,8 @@ pub struct SystemInfo {
     pub gpu_names: Vec<String>,
     /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 = unknown).
     pub gpu_vram_mb: Vec<u64>,
-    /// What each DISK_N column refers to, e.g. `/home (nvme1n1 916 GB)`.
-    pub disk_labels: Vec<String>,
+    /// Every attached filesystem, carrying the DISK_N index of the tracked ones.
+    pub mounted_disks: Vec<MountedFilesystem>,
     /// What each NET_N column refers to, e.g. `wlan0 (WiFi - Wi-Fi 6 AX201)`.
     pub net_labels: Vec<String>,
     pub start_time: f64,
@@ -96,6 +101,9 @@ impl DataBuffer {
         let meta = self.metadata.read().expect("metadata lock poisoned");
         meta.clone().unwrap_or(SystemMetadata {
             system_info: SystemInfo {
+                os_name: String::new(),
+                kernel_version: String::new(),
+                hostname: String::new(),
                 total_memory_mb: 0.0,
                 total_swap_mb: 0.0,
                 cpu_cores: 0,
@@ -103,7 +111,7 @@ impl DataBuffer {
                 cpu_model: String::new(),
                 gpu_names: vec![],
                 gpu_vram_mb: vec![],
-                disk_labels: vec![],
+                mounted_disks: vec![],
                 net_labels: vec![],
                 start_time: 0.0,
                 app_version: String::new(),

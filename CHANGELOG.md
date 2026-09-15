@@ -34,6 +34,11 @@
 - Fixed "RSS max" and "RSS change" of a row grouped by executable adding up figures that belong to different moments: instances that took turns rather than running side by side reported the memory of all of them at once (37 respawning processes measured 120 MB where their combined peak was 33 MB)
 - Fixed the RSS shape column holding a dead process's last value to the end of the window, which drew a row of respawning processes as a staircase that never comes down
 - The table's numbers and its shape columns are now built from one pair of series, so a shape can no longer disagree with the figure beside it
+- The System Information panel and the startup log now list every attached filesystem with its size, type and drive model (`/home - 915.8 GiB ext4, nvme1n1 SSDPR-PX600-1K0-80`), not only the disks whose usage is tracked - the model is what a drive is looked up or bought by, and sysinfo does not report it
+- The separate "Tracked disks" tile is gone: tracked mounts are marked `DISK_N` in that one list instead of being spelled out twice
+- The panel reports the operating system, kernel version and hostname
+- `--list-disks` reports the filesystem type of each mount
+- The deployed service no longer collects `memory-free` by default - on Linux it excludes the page cache and reads far below the memory actually obtainable, which `memory-available` already reports
 
 ## Version 0.7.0 - 18.03.2026
 - Increased minimum rust version to 1.92

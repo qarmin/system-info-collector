@@ -15,7 +15,7 @@ use std::{env, process};
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
 use sysinfo::System;
-use system_info_collector_core::discovery::{DiscoveredDisk, DiscoveredInterface, list_real_disks, list_real_interfaces};
+use system_info_collector_core::discovery::{DiscoveredInterface, list_real_disks, list_real_interfaces, mounted_filesystems};
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
 use system_info_collector_core::session_recorder::{SessionConfig, SessionProgress};
@@ -74,11 +74,29 @@ async fn main() {
             let total_memory_mb = bytes_to_mb(meta_sys.total_memory());
             let total_swap_mb = bytes_to_mb(meta_sys.total_swap());
 
+            // `long_os_version` spells this "Linux (Ubuntu 24.04)", which reads oddly in a panel.
+            let os_name = match (System::name(), System::os_version()) {
+                (Some(name), Some(version)) => format!("{name} {version}"),
+                (Some(name), None) => name,
+                _ => System::long_os_version().unwrap_or_else(|| "Unknown".to_string()),
+            };
+            let kernel_version = System::kernel_version().unwrap_or_default();
+            let hostname = System::host_name().unwrap_or_default();
+
+            info!("OS: {os_name}, kernel {kernel_version}, host {hostname}");
             info!("CPU: {cpu_model}, {cpu_physical_cores} physical cores / {cpu_logical_cores} threads");
             info!("Memory: {total_memory_mb:.0} MB total RAM, {total_swap_mb:.0} MB swap");
 
             // Create the engine — this runs hardware discovery exactly once.
             let engine = CollectorEngine::new(std::sync::Arc::clone(&settings));
+
+            let mounted_disks = mounted_filesystems(&engine.discovery().disks);
+            for mount in &mounted_disks {
+                match mount.tracked_index {
+                    Some(index) => info!("Disk {}, tracked as DISK_{index}", mount.describe()),
+                    None => info!("Disk {}, not tracked", mount.describe()),
+                }
+            }
 
             let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
             let gpu_vram_mb: Vec<u64> = engine.discovery().gpus.iter().map(|g| g.vram_total_mb).collect();
@@ -195,6 +213,9 @@ async fn main() {
 
                 let metadata = SystemMetadata {
                     system_info: SystemInfo {
+                        os_name,
+                        kernel_version,
+                        hostname,
                         total_memory_mb,
                         total_swap_mb,
                         cpu_cores: cpu_logical_cores,
@@ -202,7 +223,7 @@ async fn main() {
                         cpu_model: cpu_model.clone(),
                         gpu_names: gpu_names.clone(),
                         gpu_vram_mb: gpu_vram_mb.clone(),
-                        disk_labels: disks.iter().map(DiscoveredDisk::display_label).collect(),
+                        mounted_disks,
                         net_labels: interfaces.iter().map(DiscoveredInterface::display_label).collect(),
                         start_time: settings.start_time,
                         app_version: env!("CARGO_PKG_VERSION").to_string(),
