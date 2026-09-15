@@ -210,7 +210,22 @@ restore. Do not estimate.
 ## 5. Viewer aggregation, headless
 
 The viewer holds all the aggregation logic and none of it is covered by
-`cargo test`. Extract its script and run it under node with a stub DOM:
+`cargo test`. The CPU part of that is scripted - it loads a recording, runs
+`buildRows()` grouped and ungrouped, and checks the figures against the sample
+arrays read independently:
+
+```bash
+node .claude/skills/verify-session/verify_viewer.js <recording.json>
+```
+
+It asserts what went wrong once already: that no row reports a CPU max below its
+own CPU avg (a grouped row's average is its members added together, so its peak
+has to be their combined peak, not the largest single member), that a grouped
+row's max equals the peak of the members' per-tick sum, and that a system CPU
+series of all zeros is labelled as missing rather than drawn as an idle machine.
+
+For anything it does not cover, extract the script and run it under node with a
+stub DOM the same way:
 
 ```bash
 python3 -c "

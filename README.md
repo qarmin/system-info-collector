@@ -305,15 +305,19 @@ end times on the edges, and the process table below recomputes for exactly that 
 changed. Each row also carries a shape column per metric - CPU, write, write-to-device, read and RSS - scaled to that
 row, so a single spike is distinguishable from an even stream that adds up to the same total. There are also a process
 tree (with subtree totals) and a lifetimes view, where a process respawned on a timer shows up as a regular comb of
-short bars. Kernel threads are hidden from the table by default and there is a checkbox to bring them back; every
+short bars. Grouping by executable folds every instance of a program into one row: the figures are its instances added
+together, and the peak columns are the highest they reached *together* - a program respawned hundreds of times never
+coexists with itself, so adding up the peaks it reached one at a time would describe a moment that never happened. Kernel threads are hidden from the table by default and there is a checkbox to bring them back; every
 column is explained in a glossary at the bottom of the page.
 
 ### Sampling rate and what it cannot see
 
-The maximum rate is **5 Hz**, and a higher `--hz` is rejected rather than accepted. `sysinfo` will not re-read
+The maximum rate is **4 Hz**, and a higher `--hz` is rejected rather than accepted. `sysinfo` will not re-read
 `/proc/stat` more often than every 200 ms while still refreshing each process's own counters, so a faster rate leaves
 per-process CPU% divided by a stale denominator - the numbers stay plausible while being wrong, which is worse than
-refusing.
+refusing. Sampling exactly at that 200 ms floor is not safe either: the gate is checked against the wall clock, so a
+5 Hz tick clears it only about half the time, and a busy core owing 4.17% per tick was recorded as `4.17, 4.17, 2.09`
+repeating. 4 Hz keeps 50 ms of margin and measures flat.
 
 A process living less than one sampling interval is never observed directly. It is usually still visible, because Linux
 folds a reaped child's I/O accounting into its parent: the bytes surface against whatever spawned it. Where the child
@@ -467,7 +471,7 @@ covers the whole period instead of just its tail. The reduction is logged.
 | `GET /api/export/html?mode=…` | dashboard snapshot download |
 | `GET /api/export/sources` | data files available for export, with the period, point count and size of each |
 | `GET /session` | the process session viewer |
-| `POST /api/session/start` | body `{"seconds": 60, "hz": 5}` - starts a recording; `409` when one is already running, `400` when the rate is above the 5 Hz maximum |
+| `POST /api/session/start` | body `{"seconds": 60, "hz": 4}` - starts a recording; `409` when one is already running, `400` when the rate is above the 4 Hz maximum |
 | `POST /api/session/stop` | stops the running recording and keeps what it collected; `404` when none is running |
 | `GET /api/session/status` | whether a recording is active, elapsed and remaining seconds, samples taken, and the file name once it finishes |
 | `GET /api/session/list` | saved recordings, newest first, each with its metadata |

@@ -27,6 +27,13 @@
 - Added a `verify-session` skill in `.claude/skills/` with a `verify_session.py` script that checks a recording's invariants, reconciles rates against totals, reports peaks in context and summarises attribution
 - Split the Disk Space chart into separate used and available charts
 - Disks, GPUs and network interfaces now keep one colour across every chart; paired series (read/write, RX/TX) share a hue at two intensities
+- Fixed the "CPU total" chart of a session reading 0% throughout: refreshing processes updates only the aggregated CPU line of `/proc/stat`, so the per-CPU list the recorder summed stayed at the zero it was created with
+- Fixed "CPU max" of a row grouped by executable being the largest single instance rather than the largest combined load of all of them, which put the max below the row's own average whenever the instances overlapped - 344 short-lived `ffmpeg` processes peaking at 17% each showed avg 55%, max 17%
+- Lowered the maximum session sampling rate from 5 Hz to 4 Hz: sampling exactly at the 200 ms floor `sysinfo` enforces cleared it only about half the time, which halved roughly a third of all per-process CPU samples (a busy core owing 4.17% per tick recorded as `4.17, 4.17, 2.09` repeating)
+- A session whose CPU series was never recorded now says so on the chart instead of drawing an idle machine
+- Fixed "RSS max" and "RSS change" of a row grouped by executable adding up figures that belong to different moments: instances that took turns rather than running side by side reported the memory of all of them at once (37 respawning processes measured 120 MB where their combined peak was 33 MB)
+- Fixed the RSS shape column holding a dead process's last value to the end of the window, which drew a row of respawning processes as a staircase that never comes down
+- The table's numbers and its shape columns are now built from one pair of series, so a shape can no longer disagree with the figure beside it
 
 ## Version 0.7.0 - 18.03.2026
 - Increased minimum rust version to 1.92

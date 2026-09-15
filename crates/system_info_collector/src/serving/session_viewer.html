@@ -81,7 +81,7 @@
             <input type="number" id="recordSecondsCustom" min="1" max="300" step="1" value="120" style="display:none; width:90px;">
             <label>Rate
                 <select id="recordHz">
-                    <option value="5" selected>5 Hz (max)</option>
+                    <option value="4" selected>4 Hz (max)</option>
                     <option value="2">2 Hz</option>
                     <option value="1">1 Hz</option>
                 </select>
@@ -131,7 +131,7 @@
                 <button class="ghost on" id="viewTable" onclick="setView('table')">Table</button>
                 <button class="ghost" id="viewTree" onclick="setView('tree')">Tree</button>
                 <button class="ghost" id="viewGantt" onclick="setView('gantt')">Lifetimes</button>
-                <label style="margin-left:10px;"><input type="checkbox" id="groupByExe" onchange="render()"> Group by executable</label>
+                <label style="margin-left:10px;" title="One row per executable: the figures are all its instances added together, so CPU max is their highest combined sample rather than the peak of any single one"><input type="checkbox" id="groupByExe" onchange="render()"> Group by executable</label>
                 <label><input type="checkbox" id="hideIdle" onchange="render()" checked> Hide idle</label>
                 <label title="Kernel threads are always recorded, because buffered writes are charged to them - this only hides them from the table"><input type="checkbox" id="showKernel" onchange="render()"> Show kernel threads</label>
                 <input type="text" id="filter" placeholder="filter by name / path..." oninput="render()" style="min-width:220px; margin-left:auto;">
@@ -391,6 +391,71 @@ function toRates(agg, seconds) {
     };
 }
 
+/// Members added up for every tick of a window, for a field that is an amount
+/// spent during the tick: a tick with no sample contributed nothing to it.
+///
+/// This is what a grouped row's peak has to be measured on, because its average
+/// is its members added together too.  Taking the largest member peak instead
+/// reports a max below the row's own average as soon as the members overlap:
+/// 344 short-lived ffmpeg processes peaking at 17% each still add up to 55% of
+/// the machine while they run together.
+function flowSeries(members, field, a, b) {
+    const series = new Float64Array(b - a + 1);
+    for (const proc of members) {
+        const samples = state.data.samples[proc.id];
+        if (!samples) continue;
+        const to = lowerBound(samples.t, b + 1);
+        for (let i = lowerBound(samples.t, a); i < to; i++) series[samples.t[i] - a] += samples[field][i];
+    }
+    return series;
+}
+
+/// Members added up for every tick of a window, for a field that is a level the
+/// process holds rather than an amount it spends.
+///
+/// RSS is recorded only when it changes, so a gap means "unchanged" and the last
+/// value has to be carried - but only between the ticks the process was alive
+/// for.  Carrying it past death makes a row of respawning processes climb like a
+/// staircase that never comes down, and adding up each member's own peak instead
+/// of taking the peak of this series reports 344 ffmpeg instances that never
+/// coexisted as though they had all held their memory at once.
+function levelSeries(members, field, a, b) {
+    const series = new Float64Array(b - a + 1);
+    for (const proc of members) {
+        const samples = state.data.samples[proc.id];
+        if (!samples) continue;
+        const from = lowerBound(samples.t, a);
+        const to = lowerBound(samples.t, b + 1);
+        let held = from > 0 ? samples[field][from - 1] : (samples[field][from] ?? 0);
+        let next = from;
+        const last = Math.min(proc.last_tick, b);
+        for (let tick = Math.max(proc.first_tick, a); tick <= last; tick++) {
+            while (next < to && samples.t[next] === tick) held = samples[field][next++];
+            series[tick - a] += held;
+        }
+    }
+    return series;
+}
+
+function peakOf(values) {
+    let peak = 0;
+    for (const value of values) if (value > peak) peak = value;
+    return peak;
+}
+
+/// Replaces the figures of `agg` that only mean something for the members taken
+/// together: their combined peak, and the change in what they held between the
+/// ends of the window.  Summed peaks and summed changes belong to no moment in
+/// time and overstate a row of processes that took turns.
+function combinePeaks(agg, members, a, b) {
+    agg.cpuMax = peakOf(flowSeries(members, 'cpu', a, b));
+    const rss = levelSeries(members, 'rss_mb', a, b);
+    agg.rssMax = peakOf(rss);
+    agg.rssDelta = rss[rss.length - 1] - rss[0];
+}
+
+/// Folds one process into a row.  `cpuMax`, `rssMax` and `rssDelta` are only
+/// right here for a row of one; `combinePeaks` replaces them for the rest.
 function addAgg(target, extra) {
     target.cpuAvg += extra.cpuAvg;
     target.cpuMax = Math.max(target.cpuMax, extra.cpuMax);
@@ -508,6 +573,14 @@ function buildRows() {
 
     const rows = [...byKey.values()];
     for (const row of rows) {
+        // A peak of several processes is a property of them running together, so
+        // it is measured on their combined series rather than assembled out of
+        // the peaks they each reached alone.  One member needs none of this: its
+        // own peak is already the row's.
+        if (row.members.length > 1) {
+            combinePeaks(row.agg, row.members, a, b);
+            if (row.baseAgg) combinePeaks(row.baseAgg, row.members, state.baseline.a, state.baseline.b);
+        }
         row.rates = toRates(row.agg, seconds);
         row.baseRates = row.baseAgg ? toRates(row.baseAgg, baseSeconds) : null;
         row.diff = row.baseRates ? {
@@ -587,11 +660,21 @@ const SYSTEM_CHARTS = [
     },
 ];
 
+/// Recordings made before the system CPU series was fixed hold a zero at every
+/// tick.  The recorder's own work rules out a genuine flat zero, so such a series
+/// is called missing instead of being drawn as an idle machine.
+function chartTitle(spec) {
+    if (spec.key !== 'cpu') return spec.title;
+    const series = state.data.system.cpu_pct ?? [];
+    const missing = series.length > 0 && series.every(value => value === 0);
+    return missing ? spec.title + ' - not recorded in this session, re-record to get it' : spec.title;
+}
+
 function buildSystemCharts() {
     const host = document.getElementById('chartStack');
     host.innerHTML = SYSTEM_CHARTS.map(spec => `
         <div class="chart-block">
-            <div class="chart-title">${esc(spec.title)}</div>
+            <div class="chart-title">${esc(chartTitle(spec))}</div>
             <div class="chart-wrap"><canvas id="canvas_${spec.key}"></canvas></div>
         </div>`).join('');
 
@@ -857,13 +940,13 @@ function renderSessionTotals() {
     const rate = bytes => `${(bytes / MB / seconds).toFixed(2)} MB/s`;
     const tick = 1 / meta.hz;
     // A peak next to the average is what stops the two looking contradictory: a
-    // chart touching 10 MB/s for one 200 ms sample only contributes 2 MB.
-    const peakOf = field => {
+    // chart touching 10 MB/s for one 250 ms sample only contributes 2.5 MB.
+    const peakOfField = field => {
         const series = state.data.system[field] || [];
         return series.length > 0 ? Math.max(...series) : 0;
     };
     const line = (label, bytes, peakField, note) => {
-        const peak = peakField ? peakOf(peakField) : null;
+        const peak = peakField ? peakOfField(peakField) : null;
         const peakCell = peak === null
             ? '<td class="hint">-</td>'
             : `<td>${peak.toFixed(2)} MB/s<span class="hint"> = ${fmtMb(peak * tick)}</span></td>`;
@@ -1015,13 +1098,13 @@ function renderSelectionInfo() {
 const COLUMNS = [
     { key: 'name', label: 'Process', left: true },
     { key: 'cpu', label: 'CPU avg', hint: 'Average over the selected period, divided by core count' },
-    { key: 'cpuMax', label: 'CPU max', hint: 'Highest single sample in the selected period' },
+    { key: 'cpuMax', label: 'CPU max', hint: 'Highest single sample in the selected period; for a row grouped by executable, the highest load of all its instances taken together in one sample' },
     { key: 'wchar', label: 'Write syscall', hint: 'Written during the selected period through write() - includes pipes, sockets and terminals, so this is not necessarily disk traffic' },
     { key: 'written', label: 'Write device', hint: 'Handed to the disk by this process during the selected period - usually zero, a kernel flush thread does that part' },
     { key: 'child', label: 'Write by children', hint: 'Folded in by the kernel from children reaped during the selected period' },
     { key: 'read', label: 'Read syscall', hint: 'Read during the selected period through read() - files, but also pipes, sockets, terminals and /proc, so this is not necessarily disk traffic' },
-    { key: 'rss', label: 'RSS max', hint: 'Peak resident memory in the selected period' },
-    { key: 'rssDelta', label: 'RSS change', hint: 'Resident memory at the end of the period minus at its start' },
+    { key: 'rss', label: 'RSS max', hint: 'Peak resident memory in the selected period; for a row grouped by executable, the peak the instances reached together, which is far below their peaks added up when they took turns rather than ran side by side' },
+    { key: 'rssDelta', label: 'RSS change', hint: 'Resident memory at the end of the period minus at its start; for a row grouped by executable, the change in what its instances held together, so one that exited has given its memory back' },
     { key: 'd', label: 'I/O wait', hint: 'Samples that caught the process in state D, blocked on storage' },
     {
         key: 'sessWrite',
@@ -1287,9 +1370,7 @@ function orderAsTree(rows) {
 /// would be far too heavy.
 ///
 /// Each cell is scaled to its own maximum, so the shape is readable even for a
-/// process whose absolute numbers are tiny next to the busiest row.  Metrics
-/// that are per-tick deltas are summed across a group's members; RSS is a level,
-/// so it is summed too but never accumulated over time.
+/// process whose absolute numbers are tiny next to the busiest row.
 function drawSparklines() {
     const canvases = document.querySelectorAll('canvas.spark');
     if (canvases.length === 0) return;
@@ -1297,7 +1378,6 @@ function drawSparklines() {
     // quadratic scan over every process.
     const rowsByKey = new Map(buildRows().map(row => [row.key, row]));
     const colorByField = new Map(SHAPE_COLUMNS.map(shape => [shape.field, shape.color]));
-    const width = state.sel.b - state.sel.a + 1;
 
     for (const canvas of canvases) {
         const row = rowsByKey.get(canvas.getAttribute('data-key'));
@@ -1306,27 +1386,12 @@ function drawSparklines() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (!row || !field) continue;
 
-        const series = new Float64Array(width);
-        // RSS is carried forward between samples, so a gap means "unchanged"
-        // rather than zero and the last known value has to be held.
+        // The same two series the table's numbers come from, so a shape can never
+        // disagree with the figure beside it.
         const isLevel = field === 'rss_mb';
-
-        for (const proc of row.members) {
-            const samples = state.data.samples[proc.id];
-            if (!samples) continue;
-            const from = lowerBound(samples.t, state.sel.a);
-            const to = lowerBound(samples.t, state.sel.b + 1);
-            if (isLevel) {
-                let held = from > 0 ? samples[field][from - 1] : (samples[field][from] ?? 0);
-                let next = from;
-                for (let i = 0; i < width; i++) {
-                    while (next < to && samples.t[next] - state.sel.a === i) held = samples[field][next++];
-                    series[i] += held;
-                }
-            } else {
-                for (let i = from; i < to; i++) series[samples.t[i] - state.sel.a] += samples[field][i];
-            }
-        }
+        const series = isLevel
+            ? levelSeries(row.members, field, state.sel.a, state.sel.b)
+            : flowSeries(row.members, field, state.sel.a, state.sel.b);
 
         let max = 0;
         let min = Infinity;

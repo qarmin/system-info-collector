@@ -31,9 +31,15 @@ pub const SESSION_FORMAT_VERSION: u32 = 1;
 /// (200 ms) while still refreshing each process's own `utime`/`stime` on every
 /// call.  Sampling faster leaves the per-process numerator covering a short
 /// window and the global denominator covering an older, longer one, so CPU% comes
-/// out silently deflated instead of failing loudly.  5 Hz is that 200 ms floor
-/// expressed as a rate.
-pub const MAX_SESSION_HZ: f32 = 5.0;
+/// out silently deflated instead of failing loudly.
+///
+/// Sampling *at* the floor is not safe either, which is why this is 4 Hz and not
+/// the 5 Hz that 200 ms expresses: the gate is checked against wall clock, so a
+/// 200 ms tick clears it only about half the time.  One busy core on a 24-core
+/// machine, which owes exactly 4.17% per tick, was recorded at 5 Hz as
+/// `4.17, 4.17, 2.09` repeating - a third of the samples halved.  The 50 ms of
+/// margin at 4 Hz makes the same measurement flat.
+pub const MAX_SESSION_HZ: f32 = 4.0;
 
 /// Below this the recording is too coarse to attribute anything.
 pub const MIN_SESSION_HZ: f32 = 0.2;
@@ -707,9 +713,12 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
         capture_writer_fds(&mut writers, &mut tracked, &mut fds, &mut path_ids, &mut paths, tick, refreshed_at);
 
         system.t_ms.push(refreshed_at.duration_since(start_instant).as_millis() as u32);
-        system
-            .cpu_pct
-            .push(sys.cpus().iter().map(sysinfo::Cpu::cpu_usage).sum::<f32>() / cpu_cores as f32);
+        // Not `sys.cpus()`: refreshing processes updates only the aggregated
+        // `cpu ` line of /proc/stat, leaving every per-CPU entry at the zero it
+        // was created with, so summing that list reports a permanently idle
+        // machine.  The global figure is refreshed by that same call, which also
+        // makes it cover exactly the window the per-process numbers cover.
+        system.cpu_pct.push(sys.global_cpu_usage());
         system.mem_used_mb.push(sys.used_memory() as f32 / 1_048_576.0);
         system.disk_read_mbs.push(bytes_per_sec_to_mbs(device_read, elapsed_secs));
         system.disk_write_mbs.push(bytes_per_sec_to_mbs(device_written, elapsed_secs));
@@ -1133,16 +1142,34 @@ mod tests {
         too_fast.validate().expect_err("10 Hz would deflate per-process CPU%");
         let ok = SessionConfig {
             duration_secs: 60.0,
-            hz: 5.0,
+            hz: MAX_SESSION_HZ,
         };
-        ok.validate().expect("5 Hz is the documented maximum");
+        ok.validate().expect("the documented maximum must be accepted");
+    }
+
+    /// The maximum rate is only correct relative to the floor `sysinfo` enforces,
+    /// so a version bump that moves that floor has to fail here rather than in a
+    /// recording nobody re-measures.  Sampling exactly at the floor still halves
+    /// roughly a third of the samples, hence the margin.
+    #[test]
+    fn keeps_margin_over_the_sysinfo_cpu_refresh_floor() {
+        let interval = SessionConfig {
+            duration_secs: 60.0,
+            hz: MAX_SESSION_HZ,
+        }
+        .interval();
+        assert!(
+            interval >= sysinfo::MINIMUM_CPU_UPDATE_INTERVAL + Duration::from_millis(40),
+            "{interval:?} leaves too little margin over {:?}",
+            sysinfo::MINIMUM_CPU_UPDATE_INTERVAL
+        );
     }
 
     #[test]
     fn rejects_sessions_over_the_sample_cap() {
         let huge = SessionConfig {
             duration_secs: 100_000.0,
-            hz: 5.0,
+            hz: 4.0,
         };
         huge.validate().expect_err("must refuse a session past the sample cap");
     }
@@ -1151,10 +1178,10 @@ mod tests {
     fn derives_tick_count_and_interval() {
         let config = SessionConfig {
             duration_secs: 60.0,
-            hz: 5.0,
+            hz: 4.0,
         };
-        assert_eq!(config.tick_count(), 300);
-        assert_eq!(config.interval(), Duration::from_millis(200));
+        assert_eq!(config.tick_count(), 240);
+        assert_eq!(config.interval(), Duration::from_millis(250));
     }
 
     #[test]

@@ -72,9 +72,9 @@ pub struct SessionArgs {
 
     #[arg(
         long,
-        default_value = "5.0",
+        default_value = "4.0",
         value_name = "HZ",
-        help = "Samples per second. 5 Hz is the maximum: sysinfo cannot report correct per-process CPU% any faster, so a higher rate is rejected rather than silently reporting deflated values."
+        help = "Samples per second. 4 Hz is the maximum: sysinfo re-reads the CPU denominator no more often than every 200 ms, and a tick that short halves part of the samples, so a higher rate is rejected rather than silently reporting deflated values."
     )]
     pub hz: f32,
 
