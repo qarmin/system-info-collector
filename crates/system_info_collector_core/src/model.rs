@@ -20,24 +20,10 @@ pub struct CollectedItemModels {
     pub gpu_names: Vec<String>,
     /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 if unknown).
     pub gpu_vram_mb: Vec<u64>,
-    /// Top N processes by CPU%, loaded from an optional extra file.
-    pub top_cpu_processes: Option<TopProcessData>,
-    /// Top N processes by RAM (MB), loaded from an optional extra file.
-    pub top_ram_processes: Option<TopProcessData>,
-    /// Disk mount points parsed from CSV metadata (DISK_0=path, …).
-    pub disk_names: Vec<String>,
-}
-
-/// Data loaded from a top-N-processes file (CPU or RAM).
-#[derive(Default, Clone, Debug, Deserialize)]
-pub struct TopProcessData {
-    pub n: usize,
-    pub start_time: f64,
-    /// Timestamps (seconds since start_time) for each row.
-    pub timestamps: Vec<f64>,
-    /// `ranks[rank_index][row_index]` = `Some((process_name, value))`.
-    /// `None` when fewer than N processes were running at that moment.
-    pub ranks: Vec<Vec<Option<(String, f64)>>>,
+    /// Disk labels parsed from CSV metadata (DISK_LABEL_N, mount point on older files).
+    pub disk_labels: Vec<String>,
+    /// Network interface labels parsed from CSV metadata (NET_LABEL_N, name on older files).
+    pub net_labels: Vec<String>,
 }
 
 #[derive(Default, Debug, Clone)]

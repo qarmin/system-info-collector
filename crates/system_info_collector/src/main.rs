@@ -15,22 +15,31 @@ use std::{env, process};
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
 use sysinfo::System;
-use system_info_collector_core::discovery::{list_real_disks, list_real_interfaces};
+use system_info_collector_core::discovery::{DiscoveredInterface, list_real_disks, list_real_interfaces, mounted_filesystems};
 use system_info_collector_core::engine::CollectorEngine;
-use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode};
+use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
+use system_info_collector_core::session_recorder::{SessionConfig, SessionProgress};
+use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
 use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
 
 use crate::cli::{Commands, parse_cli};
 use crate::converting::ploty_creator::load_results_and_save_plot;
 use crate::serving::data_buffer::{DataBuffer, DataPoint, SystemInfo, SystemMetadata};
+use crate::serving::server::ExportPaths;
+use crate::serving::session_service::SessionService;
+use crate::session_store::{SessionStore, build_standalone_html, write_session};
 use crate::settings::{build_collect_settings, build_convert_settings};
 
 mod cli;
 mod converting;
 mod serving;
+mod session_store;
 mod settings;
 
-#[tokio::main]
+// The collector runs a handful of periodic tasks that spend nearly all their
+// time asleep, so the default "one worker per core" runtime is pure waste -
+// on a 80-core machine it would spawn 80 threads to do the work of two.
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
     let _ = TermLogger::init(ConfigBuilder::default().build(), TerminalMode::Mixed, ColorChoice::Auto);
 
@@ -42,11 +51,11 @@ async fn main() {
         Commands::Collect(collect_args) => {
             // Handle --list-* flags before doing anything else.
             if collect_args.list_disks {
-                list_real_disks();
+                list_real_disks(&collect_args.disk_exclude);
                 return;
             }
             if collect_args.list_networks {
-                list_real_interfaces();
+                list_real_interfaces(&collect_args.network_exclude);
                 return;
             }
 
@@ -65,15 +74,36 @@ async fn main() {
             let total_memory_mb = bytes_to_mb(meta_sys.total_memory());
             let total_swap_mb = bytes_to_mb(meta_sys.total_swap());
 
+            // `long_os_version` spells this "Linux (Ubuntu 24.04)", which reads oddly in a panel.
+            let os_name = match (System::name(), System::os_version()) {
+                (Some(name), Some(version)) => format!("{name} {version}"),
+                (Some(name), None) => name,
+                _ => System::long_os_version().unwrap_or_else(|| "Unknown".to_string()),
+            };
+            let kernel_version = System::kernel_version().unwrap_or_default();
+            let hostname = System::host_name().unwrap_or_default();
+
+            info!("OS: {os_name}, kernel {kernel_version}, host {hostname}");
             info!("CPU: {cpu_model}, {cpu_physical_cores} physical cores / {cpu_logical_cores} threads");
             info!("Memory: {total_memory_mb:.0} MB total RAM, {total_swap_mb:.0} MB swap");
 
             // Create the engine — this runs hardware discovery exactly once.
             let engine = CollectorEngine::new(std::sync::Arc::clone(&settings));
 
+            let mounted_disks = mounted_filesystems(&engine.discovery().disks);
+            for mount in &mounted_disks {
+                match mount.tracked_index {
+                    Some(index) => info!("Disk {}, tracked as DISK_{index}", mount.describe()),
+                    None => info!("Disk {}, not tracked", mount.describe()),
+                }
+            }
+
             let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
+            let gpu_vram_mb: Vec<u64> = engine.discovery().gpus.iter().map(|g| g.vram_total_mb).collect();
             if gpu_names.is_empty() {
                 info!("GPU: none detected");
+            } else {
+                info!("GPU: {}", gpu_names.join(", "));
             }
 
             let shutdown = engine.shutdown_handle();
@@ -81,84 +111,145 @@ async fn main() {
             // Build the HTTP data buffer before starting the engine so we can
             // pass a clone to the on_row callback.
             let data_buffer: Option<DataBuffer> = if settings.serve {
-                let buffer = DataBuffer::new(settings.max_results);
+                let buffer_capacity = settings.buffer_capacity();
+                let covered_hours = buffer_capacity as f32 * settings.check_interval / 3600.0;
+                info!(
+                    "Live view buffer: {buffer_capacity} samples (~{covered_hours:.1} h at {}s interval)",
+                    settings.check_interval
+                );
+                if (buffer_capacity as f32 * settings.check_interval) < settings.buffer_seconds - 1.0 {
+                    warn!(
+                        "Requested {}s of live history needs more than {MAX_BUFFER_SAMPLES} samples - capped to ~{covered_hours:.1} h",
+                        settings.buffer_seconds
+                    );
+                }
+                let buffer = DataBuffer::new(buffer_capacity);
 
                 let interfaces = engine.discovery().interfaces.clone();
                 let disks = engine.discovery().disks.clone();
 
-                // Build column headers that match the expanded per-GPU / per-interface
-                // format produced by file_writer, so the JS chart detector can find them.
-                let mut column_headers = vec!["Timestamp".to_string()];
+                // Mirror the expanded per-GPU / per-interface column layout produced by
+                // file_writer, so the chart detector in the web UI finds the columns.
+                let mut data_types = vec![DataType::SECONDS_SINCE_START];
+                let has_rx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC);
+                let has_tx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC);
+                let mut network_rate_emitted = false;
                 for mode in &settings.collection_mode {
                     match mode {
                         SimpleDataCollectionMode::GPU_UTILIZATION => {
                             for (idx, name) in gpu_names.iter().enumerate() {
-                                column_headers.push(DataType::GPU_N_UTIL((idx, name.clone())).column_name());
+                                data_types.push(DataType::GPU_N_UTIL((idx, name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::GPU_MEMORY_USED => {
                             for (idx, name) in gpu_names.iter().enumerate() {
-                                column_headers.push(DataType::GPU_N_VRAM_MB((idx, name.clone())).column_name());
+                                data_types.push(DataType::GPU_N_VRAM_MB((idx, name.clone())));
                             }
                         }
                         SimpleDataCollectionMode::GPU_TEMPERATURE => {
                             for (idx, name) in gpu_names.iter().enumerate() {
-                                column_headers.push(DataType::GPU_N_TEMP_C((idx, name.clone())).column_name());
+                                data_types.push(DataType::GPU_N_TEMP_C((idx, name.clone())));
                             }
                         }
-                        SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
-                            for iface in &interfaces {
-                                column_headers.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                        SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                            if !network_rate_emitted {
+                                network_rate_emitted = true;
+                                let ifaces = interfaces.iter().map(|iface| (iface.iface_index, iface.display_label()));
+                                data_types.extend(network_rate_columns(has_rx, has_tx, ifaces));
                             }
                         }
-                        SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                        SimpleDataCollectionMode::NETWORK_TOTAL => {
                             for iface in &interfaces {
-                                column_headers.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                                data_types.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.display_label())));
+                                data_types.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_USED => {
                             for disk in &disks {
-                                column_headers.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                                data_types.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.display_label())));
                             }
                         }
                         SimpleDataCollectionMode::DISK_AVAILABLE => {
                             for disk in &disks {
-                                column_headers.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                                data_types.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.display_label())));
                             }
                         }
-                        other => column_headers.push(other.to_string()),
+                        SimpleDataCollectionMode::DISK_BUSY => {
+                            for disk in &disks {
+                                data_types.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.display_label())));
+                            }
+                        }
+                        SimpleDataCollectionMode::DISK_READ => {
+                            for disk in &disks {
+                                data_types.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.display_label())));
+                            }
+                        }
+                        SimpleDataCollectionMode::DISK_WRITE => {
+                            for disk in &disks {
+                                data_types.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.display_label())));
+                            }
+                        }
+                        SimpleDataCollectionMode::CPU_USAGE_TOTAL => data_types.push(DataType::CPU_USAGE_TOTAL),
+                        SimpleDataCollectionMode::CPU_USAGE_PER_CORE => data_types.push(DataType::CPU_USAGE_PER_CORE),
+                        SimpleDataCollectionMode::SWAP_FREE => data_types.push(DataType::SWAP_FREE),
+                        SimpleDataCollectionMode::SWAP_USED => data_types.push(DataType::SWAP_USED),
+                        SimpleDataCollectionMode::MEMORY_USED => data_types.push(DataType::MEMORY_USED),
+                        SimpleDataCollectionMode::MEMORY_FREE => data_types.push(DataType::MEMORY_FREE),
+                        SimpleDataCollectionMode::MEMORY_AVAILABLE => data_types.push(DataType::MEMORY_AVAILABLE),
                     }
                 }
-                for p in &settings.process_cmd_to_search {
-                    column_headers.push(format!("{} CPU", p.graph_name));
-                    column_headers.push(format!("{} Memory", p.graph_name));
+                for (idx, p) in settings.process_cmd_to_search.iter().enumerate() {
+                    data_types.push(DataType::CUSTOM_CPU((idx, p.graph_name.clone())));
+                    data_types.push(DataType::CUSTOM_MEMORY((idx, p.graph_name.clone())));
                 }
+
+                // The web UI groups columns into charts by their canonical CSV name, and
+                // shows the readable label next to the data.
+                let mut column_headers = vec!["Timestamp".to_string()];
+                column_headers.extend(data_types.iter().skip(1).map(DataType::column_name));
+
+                let mut column_labels = vec!["Timestamp".to_string()];
+                column_labels.extend(data_types.iter().skip(1).map(DataType::pretty_print));
 
                 let metadata = SystemMetadata {
                     system_info: SystemInfo {
+                        os_name,
+                        kernel_version,
+                        hostname,
                         total_memory_mb,
                         total_swap_mb,
                         cpu_cores: cpu_logical_cores,
                         cpu_physical_cores,
                         cpu_model: cpu_model.clone(),
                         gpu_names: gpu_names.clone(),
+                        gpu_vram_mb: gpu_vram_mb.clone(),
+                        mounted_disks,
+                        net_labels: interfaces.iter().map(DiscoveredInterface::display_label).collect(),
                         start_time: settings.start_time,
                         app_version: env!("CARGO_PKG_VERSION").to_string(),
                     },
                     column_headers,
-                    max_buffer_size: settings.max_results,
+                    column_labels,
+                    max_buffer_size: buffer_capacity,
+                    check_interval: settings.check_interval,
                 };
                 buffer.set_metadata(metadata);
+
+                // Reports are rendered from the CSV on disk, so the server needs to know
+                // where this run writes it.
+                let export_paths = ExportPaths::new(settings.convert.data_path.clone());
 
                 // Start the HTTP server in its own OS thread with an independent
                 // Tokio runtime so it never blocks data collection.
                 let server_buffer = buffer.clone();
                 let port = settings.port;
+                let session_dir = settings.session_dir.clone();
                 std::thread::spawn(move || {
                     info!("Starting HTTP server thread on port {port}");
-                    let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime for server");
+                    let sessions = SessionService::new(SessionStore::new(&session_dir), env!("CARGO_PKG_VERSION"));
+                    let runtime = crate::serving::server::build_runtime().expect("Failed to create Tokio runtime for server");
                     runtime.block_on(async move {
-                        if let Err(e) = crate::serving::server::start_server(port, server_buffer).await {
+                        if let Err(e) = crate::serving::server::start_server(port, server_buffer, export_paths, sessions).await {
                             error!("Server error: {e}");
                         }
                     });
@@ -168,18 +259,7 @@ async fn main() {
             } else {
                 None
             };
-            // Build top-N live callback (only when serve is enabled).
-            let on_top_row: Option<std::sync::Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>> =
-                if let Some(ref buf) = data_buffer {
-                    let top_buf = buf.clone();
-                    Some(std::sync::Arc::new(move |ts, cpu, ram| {
-                        top_buf.add_top_point(ts, cpu, ram);
-                    }))
-                } else {
-                    None
-                };
-
-            let _ = (cpu_model, gpu_names); // suppress unused warnings when !serve
+            let _ = (cpu_model, gpu_names, gpu_vram_mb); // suppress unused warnings when !serve
 
             // Register Ctrl-C handler: first press → graceful stop, second → immediate exit.
             let shutdown_for_ctrlc = shutdown.clone();
@@ -197,15 +277,11 @@ async fn main() {
             .expect("Error setting Ctrl-C handler");
 
             if let Err(e) = engine
-                .run(
-                    env!("CARGO_PKG_VERSION"),
-                    move |row| {
-                        if let Some(ref buf) = data_buffer {
-                            buf.add_data_point(DataPoint::from_row(&row));
-                        }
-                    },
-                    on_top_row,
-                )
+                .run(env!("CARGO_PKG_VERSION"), move |row| {
+                    if let Some(ref buf) = data_buffer {
+                        buf.add_data_point(DataPoint::from_row(row));
+                    }
+                })
                 .await
             {
                 error!("{e}");
@@ -225,9 +301,87 @@ async fn main() {
                 process::exit(1);
             }
         }
+
+        Commands::Session(session_args) => {
+            if let Err(e) = run_session_command(session_args).await {
+                error!("{e}");
+                process::exit(1);
+            }
+        }
     }
 
     info!("Closing app successfully");
+}
+
+/// Record a session straight from the terminal, with no server involved.
+async fn run_session_command(args: cli::SessionArgs) -> Result<(), anyhow::Error> {
+    let config = SessionConfig {
+        duration_secs: args.duration,
+        hz: args.hz,
+    };
+    config.validate()?;
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let progress = std::sync::Arc::new(SessionProgress::default());
+
+    let stop_for_ctrlc = std::sync::Arc::clone(&stop);
+    ctrlc::set_handler(move || {
+        info!("Stopping the recording early, keeping what was collected");
+        stop_for_ctrlc.store(true, Ordering::Relaxed);
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    let ticks_total = config.tick_count();
+    let reporter = tokio::spawn({
+        let progress = std::sync::Arc::clone(&progress);
+        let stop = std::sync::Arc::clone(&stop);
+        async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+            ticker.tick().await;
+            while !stop.load(Ordering::Relaxed) {
+                ticker.tick().await;
+                let done = progress.ticks_done.load(Ordering::Relaxed);
+                if done >= ticks_total {
+                    break;
+                }
+                info!(
+                    "Recording... {done}/{ticks_total} samples, {} processes seen (Ctrl-C to stop)",
+                    progress.processes_seen.load(Ordering::Relaxed)
+                );
+            }
+        }
+    });
+
+    // The recorder is fully synchronous and sleeps between ticks, so it must not
+    // occupy one of the two async worker threads.
+    let data = {
+        let progress = std::sync::Arc::clone(&progress);
+        let stop = std::sync::Arc::clone(&stop);
+        tokio::task::spawn_blocking(move || system_info_collector_core::session_recorder::record(config, &stop, &progress, env!("CARGO_PKG_VERSION")))
+            .await?
+    }?;
+    reporter.abort();
+
+    let path = match args.output {
+        Some(output) => {
+            let path = std::path::PathBuf::from(output);
+            write_session(&path, &data)?;
+            path
+        }
+        None => SessionStore::new(&args.session_dir).save(&data)?,
+    };
+
+    if args.open {
+        let json = serde_json::to_string(&data)?;
+        let html_path = path.with_extension("html");
+        std::fs::write(&html_path, build_standalone_html(&json))?;
+        info!("Viewer written to {}", html_path.display());
+        if let Err(e) = open::that(&html_path) {
+            warn!("Could not open {}: {e}", html_path.display());
+        }
+    }
+
+    Ok(())
 }
 
 // This is unused depending on build features

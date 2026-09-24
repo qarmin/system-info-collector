@@ -25,7 +25,7 @@ use log::{error, info};
 use sysinfo::{Disks, System};
 
 use crate::discovery::RuntimeDiscovery;
-use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode};
+use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
 use crate::workers::sysinfo_worker::bytes_to_mb;
@@ -34,11 +34,6 @@ use crate::workers::sysinfo_worker::bytes_to_mb;
 /// latest snapshots out of `SharedState` (brief read-lock), formats a CSV row,
 /// writes it to disk and calls `on_row` so the HTTP server can update its
 /// in-memory buffer.
-///
-/// When `--top-n-processes` is active, `on_top_row` (if supplied) is also
-/// called each tick with `(seconds_since_start, top_cpu, top_ram)` so the
-/// HTTP server can maintain a live top-process history.
-#[expect(clippy::type_complexity)]
 pub async fn run<F>(
     settings: Arc<CollectSettings>,
     state: Arc<RwLock<SharedState>>,
@@ -47,7 +42,6 @@ pub async fn run<F>(
     on_row: Arc<F>,
     discovery: Arc<RuntimeDiscovery>,
     csv_header: String,
-    on_top_row: Option<Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>>,
 ) where
     F: Fn(Vec<String>) + Send + Sync + 'static,
 {
@@ -58,9 +52,9 @@ pub async fn run<F>(
 
     let disks = &discovery.disks;
 
-    // Initialize disk monitor if any disks are requested and disk modes are active.
-    let has_disk_modes = settings.collection_mode.iter().any(|m| m.is_disk());
-    let mut sysinfo_disks = if disks.is_empty() || !has_disk_modes {
+    // Initialize disk monitor if any disks are requested and disk space modes are active.
+    let has_disk_space_modes = settings.collection_mode.iter().any(|m| m.is_disk_space());
+    let mut sysinfo_disks = if disks.is_empty() || !has_disk_space_modes {
         None
     } else {
         Some(Disks::new_with_refreshed_list())
@@ -76,23 +70,6 @@ pub async fn run<F>(
     let mut last_disk_refresh: Option<Instant> = None;
     let disk_interval_ms = (settings.disk_interval_secs * 1000.0) as u128;
 
-    // Open optional top-N process files.
-    let mut top_cpu_file: Option<BufWriter<File>> = None;
-    let mut top_ram_file: Option<BufWriter<File>> = None;
-    if settings.top_n_processes > 0 {
-        let n = settings.top_n_processes;
-        let cpu_path = top_n_path(&settings.convert.data_path, "cpu");
-        let ram_path = top_n_path(&settings.convert.data_path, "ram");
-        match open_top_n_file(&cpu_path, "CPU", n, settings.start_time) {
-            Ok(f) => top_cpu_file = Some(f),
-            Err(e) => error!("Failed to open top-CPU file {cpu_path}: {e}"),
-        }
-        match open_top_n_file(&ram_path, "RAM", n, settings.start_time) {
-            Ok(f) => top_ram_file = Some(f),
-            Err(e) => error!("Failed to open top-RAM file {ram_path}: {e}"),
-        }
-    }
-
     loop {
         interval.tick().await;
 
@@ -107,15 +84,14 @@ pub async fn run<F>(
             - settings.start_time;
 
         // Brief read-lock to clone the latest snapshots.
-        let (sysinfo_snap, network_snaps, gpu_snaps, process_snaps, top_cpu_snap, top_ram_snap) = {
+        let (sysinfo_snap, network_snaps, gpu_snaps, disk_io_snaps, process_snaps) = {
             let guard = state.read().expect("SharedState RwLock poisoned");
             (
                 guard.latest_sysinfo.clone(),
                 guard.latest_networks.clone(),
                 guard.latest_gpus.clone(),
+                guard.latest_disk_io.clone(),
                 guard.latest_processes.clone(),
-                guard.latest_top_cpu.clone(),
-                guard.latest_top_ram.clone(),
             )
         };
 
@@ -131,6 +107,10 @@ pub async fn run<F>(
         // Build the CSV row in the same column order as the header.
         let mut row: Vec<String> = Vec::with_capacity(16);
         row.push(fmt_f64(seconds_since_start));
+
+        let has_rx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC);
+        let has_tx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC);
+        let mut network_rate_written = false;
 
         for mode in &settings.collection_mode {
             match mode {
@@ -157,16 +137,35 @@ pub async fn run<F>(
                 SimpleDataCollectionMode::SWAP_FREE => {
                     row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.swap_free_mb)));
                 }
-                // Network modes expand to one column per discovered interface.
+                // Network rate modes expand to one column per discovered interface,
+                // interleaved rx/tx per interface (see `network_rate_columns`).
                 // Values are written in MB/s (bytes ÷ 1 048 576) for readability.
-                SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
-                    for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.rx_bytes_per_sec / 1_048_576.0)));
+                SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                    if !network_rate_written {
+                        network_rate_written = true;
+                        for snap in &network_snaps {
+                            if has_rx {
+                                row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.rx_bytes_per_sec / 1_048_576.0)));
+                            }
+                            if has_tx {
+                                row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.tx_bytes_per_sec / 1_048_576.0)));
+                            }
+                        }
                     }
                 }
-                SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                // Cumulative RX/TX totals since interface up, in MB - own chart, separate from the rate above.
+                SimpleDataCollectionMode::NETWORK_TOTAL => {
                     for snap in &network_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |n| fmt_f64(n.tx_bytes_per_sec / 1_048_576.0)));
+                        match snap {
+                            Some(n) => {
+                                row.push(fmt_f64(n.total_rx_bytes as f64 / 1_048_576.0));
+                                row.push(fmt_f64(n.total_tx_bytes as f64 / 1_048_576.0));
+                            }
+                            None => {
+                                row.push("-1".to_string());
+                                row.push("-1".to_string());
+                            }
+                        }
                     }
                 }
                 // GPU modes expand to one column per discovered GPU.
@@ -209,6 +208,22 @@ pub async fn run<F>(
                             Some(d) => row.push((d.available_space() / 1_073_741_824).to_string()),
                             None => row.push("-1".to_string()),
                         }
+                    }
+                }
+                // Disk I/O modes expand to one column per tracked disk, fed by disk_io_worker.
+                SimpleDataCollectionMode::DISK_BUSY => {
+                    for snap in &disk_io_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.busy_pct)));
+                    }
+                }
+                SimpleDataCollectionMode::DISK_READ => {
+                    for snap in &disk_io_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.read_mb_per_sec)));
+                    }
+                }
+                SimpleDataCollectionMode::DISK_WRITE => {
+                    for snap in &disk_io_snaps {
+                        row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.write_mb_per_sec)));
                     }
                 }
             }
@@ -279,21 +294,6 @@ pub async fn run<F>(
             break;
         }
 
-        // Write top-N rows (best-effort: errors are logged but don't stop collection).
-        if settings.top_n_processes > 0 {
-            let n = settings.top_n_processes;
-            if let Some(ref mut f) = top_cpu_file {
-                write_top_n_row(f, seconds_since_start, &top_cpu_snap, n, !settings.disable_instant_flushing);
-            }
-            if let Some(ref mut f) = top_ram_file {
-                let ram_as_f32: Vec<(String, f32)> = top_ram_snap.iter().map(|(name, v)| (name.clone(), *v as f32)).collect();
-                write_top_n_row(f, seconds_since_start, &ram_as_f32, n, !settings.disable_instant_flushing);
-            }
-            if let Some(ref cb) = on_top_row {
-                cb(seconds_since_start, top_cpu_snap.clone(), top_ram_snap.clone());
-            }
-        }
-
         on_row(row);
     }
 
@@ -342,14 +342,27 @@ pub fn write_csv_header(
         .unwrap_or_default();
 
     // Network interface metadata entries: NET_0=eth0, NET_1=wlan0, …
+    // NET_LABEL_N carries the readable form ("wlan0 (WiFi - Wi-Fi 6 AX201)") used in charts.
     let net_meta: String = discovery
         .interfaces
         .iter()
-        .map(|i| format!(",NET_{}={}", i.iface_index, i.name))
+        .map(|i| format!(",NET_{}={},NET_LABEL_{}={}", i.iface_index, i.name, i.iface_index, i.display_label()))
         .collect();
 
-    // Disk metadata entries: DISK_0=/,DISK_1=/home,…
-    let disk_meta: String = disks.iter().map(|d| format!(",DISK_{}={}", d.disk_index, d.mount_point)).collect();
+    // Disk metadata entries: DISK_0=/,DISK_1=/home,… plus the readable
+    // DISK_LABEL_N ("/home (nvme1n1 916 GB)") used in charts.
+    let disk_meta: String = disks
+        .iter()
+        .map(|d| {
+            format!(
+                ",DISK_{}={},DISK_LABEL_{}={}",
+                d.disk_index,
+                d.mount_point,
+                d.disk_index,
+                d.display_label()
+            )
+        })
+        .collect();
 
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());
@@ -376,16 +389,25 @@ pub fn write_csv_header(
     // GPU/network modes expand to one column per discovered GPU/interface.
     let mut columns: Vec<String> = vec![DataType::SECONDS_SINCE_START.column_name()];
 
+    let has_rx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC);
+    let has_tx = settings.collection_mode.contains(&SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC);
+    let mut network_rate_emitted = false;
+
     for mode in &settings.collection_mode {
         match mode {
-            SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC => {
-                for iface in &discovery.interfaces {
-                    columns.push(DataType::NET_N_RX_BPS((iface.iface_index, iface.name.clone())).column_name());
+            SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+                if !network_rate_emitted {
+                    network_rate_emitted = true;
+                    let interfaces = discovery.interfaces.iter().map(|iface| (iface.iface_index, iface.name.clone()));
+                    for column in network_rate_columns(has_rx, has_tx, interfaces) {
+                        columns.push(column.column_name());
+                    }
                 }
             }
-            SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
+            SimpleDataCollectionMode::NETWORK_TOTAL => {
                 for iface in &discovery.interfaces {
-                    columns.push(DataType::NET_N_TX_BPS((iface.iface_index, iface.name.clone())).column_name());
+                    columns.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.name.clone())).column_name());
+                    columns.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.name.clone())).column_name());
                 }
             }
             SimpleDataCollectionMode::GPU_UTILIZATION => {
@@ -411,6 +433,21 @@ pub fn write_csv_header(
             SimpleDataCollectionMode::DISK_AVAILABLE => {
                 for disk in disks {
                     columns.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_BUSY => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_READ => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::DISK_WRITE => {
+                for disk in disks {
+                    columns.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
                 }
             }
             other => columns.push(other.to_string()),
@@ -490,7 +527,7 @@ fn cleanup_rotated_files(data_path: &str, max_count: usize) {
 
 /// Returns `true` if `file_name` looks like a rotated file for the given `base` and `ext`.
 /// Expected middle part: `_YYYY-MM-DD_HH-MM-SS` (20 chars including the leading underscore).
-fn is_rotated_filename(file_name: &str, base: &str, ext: &str) -> bool {
+pub fn is_rotated_filename(file_name: &str, base: &str, ext: &str) -> bool {
     let prefix = format!("{base}_");
     if !file_name.starts_with(&prefix) || !file_name.ends_with(ext) {
         return false;
@@ -557,57 +594,4 @@ fn open_data_file_at(path: &str) -> Result<BufWriter<File>, Error> {
         .open(path)
         .context(format!("Failed to open data file {path}"))?;
     Ok(BufWriter::new(file))
-}
-
-// ── Top-N process file helpers ────────────────────────────────────────────────
-
-/// Derive the path for a top-N file from the main data path.
-/// e.g. `system_data.csv` → `system_data_top_cpu.csv`
-pub fn top_n_path(data_path: &str, kind: &str) -> String {
-    insert_before_extension(data_path, &format!("_top_{kind}"))
-}
-
-/// Open and write the two-line header for a top-N process file.
-/// Format:
-///   Line 1: `START_TIME=xxx,TOP_N=5,TYPE=CPU`
-///   Line 2: `TIMESTAMP,1,2,3,4,5`
-fn open_top_n_file(path: &str, type_tag: &str, n: usize, start_time: f64) -> Result<BufWriter<File>, Error> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .context(format!("Failed to open top-N file {path}"))?;
-    let mut writer = BufWriter::new(file);
-
-    // Metadata line
-    writeln!(writer, "START_TIME={start_time},TOP_N={n},TYPE={type_tag}").context(format!("Failed to write header to {path}"))?;
-
-    // Column header: TIMESTAMP,1,2,...,N
-    let cols: Vec<String> = std::iter::once("TIMESTAMP".to_string()).chain((1..=n).map(|i| i.to_string())).collect();
-    writeln!(writer, "{}", cols.join(",")).context(format!("Failed to write column header to {path}"))?;
-
-    writer.flush().context(format!("Failed to flush {path}"))?;
-    Ok(writer)
-}
-
-/// Write one data row to a top-N file.
-/// Pads with empty entries if fewer than `n` processes are present.
-fn write_top_n_row(file: &mut BufWriter<File>, timestamp: f64, entries: &[(String, f32)], n: usize, flush: bool) {
-    let mut cols: Vec<String> = Vec::with_capacity(n + 1);
-    cols.push(fmt_f64(timestamp));
-    for i in 0..n {
-        if let Some((name, val)) = entries.get(i) {
-            cols.push(format!("{name}|{}", fmt_f64(*val as f64)));
-        } else {
-            cols.push(String::new());
-        }
-    }
-    if let Err(e) = writeln!(file, "{}", cols.join(",")) {
-        error!("Failed to write top-N row: {e}");
-        return;
-    }
-    if flush && let Err(e) = file.flush() {
-        error!("Failed to flush top-N file: {e}");
-    }
 }

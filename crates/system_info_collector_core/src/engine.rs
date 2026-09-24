@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use crate::discovery::{GpuVendor, RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
-use crate::workers::{file_writer, network_worker, nvidia_worker, sysinfo_worker};
+use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker, sysinfo_worker};
 
 #[cfg(target_os = "linux")]
 use crate::workers::amd_intel_gpu_worker;
@@ -30,21 +30,20 @@ impl CollectorEngine {
     /// Create the engine and run hardware discovery once.
     /// Discovery results are stored and exposed via [`CollectorEngine::discovery`].
     pub fn new(settings: Arc<CollectSettings>) -> Self {
-        let needs_gpu = settings.collection_mode.iter().any(|m| m.is_gpu());
-        let needs_network = settings.collection_mode.iter().any(|m| m.is_network());
-
-        let gpus = if needs_gpu { discover_gpus() } else { vec![] };
-        let interfaces = if needs_network {
-            discover_interfaces(&settings.network_interfaces, settings.all_networks)
-        } else {
-            vec![]
-        };
-        let disks = discover_disks(&settings.disk_mount_points, settings.all_disks);
+        // Hardware discovery always runs, independent of which `-m` metrics were
+        // requested, so startup logging / CSV header metadata (detected GPU model,
+        // available network interfaces, ...) is accurate even when e.g. no GPU
+        // metric is being collected. `discover_interfaces`/`discover_disks` already
+        // self-gate on the --network/--all-networks/--disk/--all-disks CLI flags.
+        let gpus = discover_gpus();
+        let interfaces = discover_interfaces(&settings.network_interfaces, settings.all_networks, &settings.excluded_networks);
+        let disks = discover_disks(&settings.disk_mount_points, settings.all_disks, &settings.excluded_disks);
 
         let state = SharedState {
             latest_processes: vec![None; settings.process_cmd_to_search.len()],
             latest_gpus: vec![None; gpus.len()],
             latest_networks: vec![None; interfaces.len()],
+            latest_disk_io: vec![None; disks.len()],
             ..SharedState::default()
         };
 
@@ -76,21 +75,13 @@ impl CollectorEngine {
     ///
     /// `on_row` is called with the raw CSV column values after each successful
     /// write.  The CLI uses this to push data into the HTTP server buffer.
-    ///
-    /// `on_top_row`, when provided, is called each tick when `--top-n-processes`
-    /// is active: `(seconds_since_start, top_cpu_vec, top_ram_vec)`.
-    #[expect(clippy::type_complexity)]
-    pub async fn run<F>(
-        self,
-        app_version: &str,
-        on_row: F,
-        on_top_row: Option<Arc<dyn Fn(f64, Vec<(String, f32)>, Vec<(String, f64)>) + Send + Sync>>,
-    ) -> Result<(), Error>
+    pub async fn run<F>(self, app_version: &str, on_row: F) -> Result<(), Error>
     where
         F: Fn(Vec<String>) + Send + Sync + 'static,
     {
         let needs_gpu = self.settings.collection_mode.iter().any(|m| m.is_gpu());
         let needs_network = self.settings.collection_mode.iter().any(|m| m.is_network());
+        let needs_disk_io = self.settings.collection_mode.iter().any(|m| m.is_disk_io());
 
         let discovery = Arc::clone(&self.discovery);
 
@@ -122,6 +113,16 @@ impl CollectorEngine {
         // network worker — only when network modes are selected and interfaces found
         if needs_network && !discovery.interfaces.is_empty() {
             join_set.spawn(network_worker::run(
+                Arc::clone(&self.settings),
+                Arc::clone(&self.state),
+                Arc::clone(&self.shutdown),
+                Arc::clone(&discovery),
+            ));
+        }
+
+        // disk I/O worker — only when a disk I/O metric is selected and disks were found
+        if needs_disk_io && !discovery.disks.is_empty() {
+            join_set.spawn(disk_io_worker::run(
                 Arc::clone(&self.settings),
                 Arc::clone(&self.state),
                 Arc::clone(&self.shutdown),
@@ -175,7 +176,6 @@ impl CollectorEngine {
             on_row,
             Arc::clone(&discovery),
             csv_header,
-            on_top_row,
         ));
 
         info!("All workers started, collecting data…");

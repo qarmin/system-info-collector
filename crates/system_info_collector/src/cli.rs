@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use system_info_collector_core::enums::SimpleDataCollectionMode;
 
+use crate::session_store::DEFAULT_SESSION_DIR;
+
 /// Plot-related settings shared between Collect and Convert commands.
 #[derive(Debug, clap::Args, Clone)]
 pub struct PlotArgs {
@@ -52,6 +54,46 @@ pub struct Args {
 pub enum Commands {
     Collect(CollectArgs),
     Convert(ConvertArgs),
+    Session(SessionArgs),
+}
+
+/// Record every process for a short period, to find out what is loading the
+/// machine right now.
+#[derive(Parser, Debug, Clone)]
+pub struct SessionArgs {
+    #[arg(
+        short,
+        long,
+        default_value = "60",
+        value_name = "SECONDS",
+        help = "How long to record. Ctrl-C stops early and keeps what was collected."
+    )]
+    pub duration: f64,
+
+    #[arg(
+        long,
+        default_value = "4.0",
+        value_name = "HZ",
+        help = "Samples per second. 4 Hz is the maximum: sysinfo re-reads the CPU denominator no more often than every 200 ms, and a tick that short halves part of the samples, so a higher rate is rejected rather than silently reporting deflated values."
+    )]
+    pub hz: f32,
+
+    #[arg(
+        long,
+        default_value = DEFAULT_SESSION_DIR,
+        value_name = "DIR",
+        help = "Directory recordings are written to and listed from."
+    )]
+    pub session_dir: String,
+
+    #[arg(short, long, value_name = "FILE", help = "Write the recording here instead of into --session-dir.")]
+    pub output: Option<String>,
+
+    #[arg(
+        long,
+        help = "Also write a self-contained HTML viewer next to the recording and open it - one file, no server needed."
+    )]
+    pub open: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -117,7 +159,7 @@ pub struct CollectArgs {
         long,
         default_value = "200.0",
         value_name = "MAXIMUM_FILE_SIZE_MB",
-        help = "Maximum data-file size in MB before collection stops."
+        help = "Maximum data-file size in MB. Once reached, the file is rotated aside and collection continues into a new one."
     )]
     pub maximum_data_file_size_mb: f32,
 
@@ -161,6 +203,14 @@ pub struct CollectArgs {
     )]
     pub disk_interval: f32,
 
+    #[arg(
+        long,
+        default_value = "1.0",
+        value_name = "DISK_IO_INTERVAL",
+        help = "Interval (seconds) over which disk busy% and read/write throughput are averaged."
+    )]
+    pub disk_io_interval: f32,
+
     // ── HTTP server ───────────────────────────────────────────────────────────
     #[arg(
         short = 's',
@@ -183,23 +233,22 @@ pub struct CollectArgs {
     #[arg(
         short = 'l',
         long,
-        default_value = "10000",
-        value_name = "MAX_RESULTS",
-        help = "Maximum data points held in the server buffer."
+        default_value = "86400",
+        value_name = "SECONDS",
+        help = "How much history the live web view keeps in memory, in seconds (default 86400 = 24 h). The sample count is derived from --check-interval. Exports are unaffected - they always read the whole CSV file."
     )]
-    pub max_results: usize,
+    pub buffer_seconds: f32,
 
     #[arg(short = 'C', long, help = "Convert to HTML plot after collection finishes.")]
     pub convert_after: bool,
 
-    // ── Top-N processes ───────────────────────────────────────────────────────
     #[arg(
         long,
-        default_value = "0",
-        value_name = "N",
-        help = "Track the top N most CPU-hungry and RAM-hungry processes, writing them to separate files (0 = disabled) VERY RESOURCE-INTENSIVE, because it needs to refresh all processes"
+        default_value = DEFAULT_SESSION_DIR,
+        value_name = "DIR",
+        help = "Directory for process recordings started from the web UI (requires --serve)."
     )]
-    pub top_n_processes: usize,
+    pub session_dir: String,
 
     // ── Disk monitoring ───────────────────────────────────────────────────────
     #[arg(
@@ -215,6 +264,13 @@ pub struct CollectArgs {
     #[arg(long, default_value = "false", help = "List available disks and exit.")]
     pub list_disks: bool,
 
+    #[arg(
+        long = "exclude-disk",
+        value_name = "MOUNT_OR_DEVICE",
+        help = "Leave a disk out of --all-disks, by mount point (also covers anything mounted below it) or device name. Repeatable. Boot, EFI and recovery partitions are excluded already."
+    )]
+    pub disk_exclude: Vec<String>,
+
     // ── Network interface selection ───────────────────────────────────────────
     #[arg(long, value_name = "INTERFACE", help = "Track a specific network interface (e.g. enp8s0). Repeatable.")]
     pub network: Vec<String>,
@@ -224,15 +280,19 @@ pub struct CollectArgs {
 
     #[arg(long, default_value = "false", help = "List available network interfaces and exit.")]
     pub list_networks: bool,
+
+    #[arg(
+        long = "exclude-network",
+        value_name = "INTERFACE",
+        help = "Leave an interface out of --all-networks. Repeatable. Loopback and container/bridge interfaces are excluded already."
+    )]
+    pub network_exclude: Vec<String>,
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct ConvertArgs {
-    /// One or more data files: first is the main CSV, the rest are top-N process files
-    /// (auto-detected from their header).
-    /// Usage: -d system_data.csv -d system_data_top_cpu.csv -d system_data_top_ram.csv
-    #[arg(short, long, num_args = 1.., default_values = &["system_data.csv"], value_name = "DATA_PATH")]
-    pub data_paths: Vec<String>,
+    #[arg(short, long, default_value = "system_data.csv", value_name = "DATA_PATH")]
+    pub data_path: String,
 
     #[command(flatten)]
     pub plot: PlotArgs,

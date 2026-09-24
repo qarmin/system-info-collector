@@ -1,0 +1,25 @@
+[Unit]
+Description=System Info Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+# Recordings started from the web UI run inside this process, and reading another
+# process's /proc/<pid>/io needs both of these: cap_dac_read_search to open the
+# 0400 file and cap_sys_ptrace to pass the access check the kernel applies to it.
+# Without them the recorder only sees this user's own processes, and every daemon
+# and kernel thread reads as having done no I/O at all.
+#
+# Granting them here rather than relying on setcap keeps it working across
+# deploys: file capabilities are extended attributes and do not survive scp.
+# Unknown to systemd before v229, which warns and otherwise carries on.
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+WorkingDirectory=/home/__USER__/data_collector
+ExecStart=/home/__USER__/data_collector/system_info_collector collect -d /home/__USER__/data_collector/data.csv -m __METRICS__ --all-networks __DISKS__ __PROCESSES__ -c 1.0 -s
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

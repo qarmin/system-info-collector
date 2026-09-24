@@ -6,11 +6,8 @@ use system_info_collector_core::settings::{CollectSettings, ConvertSettings, Fin
 use crate::cli::{CollectArgs, ConvertArgs};
 
 pub fn build_convert_settings(args: ConvertArgs) -> ConvertSettings {
-    let mut paths = args.data_paths;
-    let main_path = paths.remove(0);
     ConvertSettings {
-        data_path: main_path,
-        extra_data_paths: paths,
+        data_path: args.data_path,
         plot_path: args.plot.plot_path,
         plot_width: args.plot.plot_width,
         plot_height: args.plot.plot_height,
@@ -47,7 +44,6 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
 
     let convert_settings = ConvertSettings {
         data_path: args.data_path,
-        extra_data_paths: vec![],
         plot_path: args.plot.plot_path,
         plot_width: args.plot.plot_width,
         plot_height: args.plot.plot_height,
@@ -70,6 +66,7 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         network_interval_secs: args.network_interval.max(0.05),
         gpu_interval_secs: args.gpu_interval.max(0.05),
         disk_interval_secs: args.disk_interval.max(0.05),
+        disk_io_interval_secs: args.disk_io_interval.max(0.05),
         convert: convert_settings,
         collection_mode: args.collection_mode,
         disable_instant_flushing: args.disable_instant_flushing,
@@ -84,12 +81,14 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         convert_after: args.convert_after,
         serve: args.serve,
         port: args.port,
-        max_results: args.max_results.clamp(1, 100_000),
-        top_n_processes: args.top_n_processes,
+        buffer_seconds: args.buffer_seconds.max(1.0),
+        session_dir: args.session_dir,
         disk_mount_points: args.disk,
         all_disks: args.all_disks,
+        excluded_disks: args.disk_exclude,
         network_interfaces: args.network,
         all_networks: args.all_networks,
+        excluded_networks: args.network_exclude,
         compact_csv: !args.no_compact,
     }
 }

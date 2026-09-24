@@ -19,6 +19,10 @@ pub enum SimpleDataCollectionMode {
     NETWORK_RX_BYTES_PER_SEC,
     #[cfg_attr(feature = "clap", clap(name = "network-tx"))]
     NETWORK_TX_BYTES_PER_SEC,
+    /// Cumulative RX/TX bytes since interface up, per interface (requires --network or --all-networks).
+    /// Rendered as its own chart, separate from the RX/TX rate above.
+    #[cfg_attr(feature = "clap", clap(name = "network-total"))]
+    NETWORK_TOTAL,
     GPU_UTILIZATION,
     GPU_MEMORY_USED,
     GPU_TEMPERATURE,
@@ -28,19 +32,36 @@ pub enum SimpleDataCollectionMode {
     /// Write available-space column for each tracked disk (requires --disk or --all-disks).
     #[cfg_attr(feature = "clap", clap(name = "disk-available"))]
     DISK_AVAILABLE,
+    /// Write iostat-style %util for each tracked disk - the share of wall time the
+    /// device had I/O in flight (requires --disk or --all-disks, Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "disk-busy"))]
+    DISK_BUSY,
+    /// Write read throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "disk-read"))]
+    DISK_READ,
+    /// Write write throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "disk-write"))]
+    DISK_WRITE,
 }
 
 impl SimpleDataCollectionMode {
     pub fn is_network(self) -> bool {
-        matches!(self, Self::NETWORK_RX_BYTES_PER_SEC | Self::NETWORK_TX_BYTES_PER_SEC)
+        matches!(
+            self,
+            Self::NETWORK_RX_BYTES_PER_SEC | Self::NETWORK_TX_BYTES_PER_SEC | Self::NETWORK_TOTAL
+        )
     }
 
     pub fn is_gpu(self) -> bool {
         matches!(self, Self::GPU_UTILIZATION | Self::GPU_MEMORY_USED | Self::GPU_TEMPERATURE)
     }
 
-    pub fn is_disk(self) -> bool {
+    pub fn is_disk_space(self) -> bool {
         matches!(self, Self::DISK_USED | Self::DISK_AVAILABLE)
+    }
+
+    pub fn is_disk_io(self) -> bool {
+        matches!(self, Self::DISK_BUSY | Self::DISK_READ | Self::DISK_WRITE)
     }
 }
 
@@ -79,12 +100,22 @@ pub enum DataType {
     // Dynamic per-interface columns: (iface_index, iface_name)
     NET_N_RX_BPS((usize, String)),
     NET_N_TX_BPS((usize, String)),
+    // Dynamic per-interface cumulative totals: (iface_index, iface_name).
+    // Kept separate from NET_N_*_BPS so they land on their own chart (is_network()
+    // only covers the rate columns; see is_network_total()).
+    NET_N_RX_TOTAL_MB((usize, String)),
+    NET_N_TX_TOTAL_MB((usize, String)),
     // Custom process columns: (index, process_graph_name)
     CUSTOM_CPU((usize, String)),
     CUSTOM_MEMORY((usize, String)),
     // Dynamic per-disk columns: (disk_index, mount_point)
     DISK_N_USED_GB((usize, String)),
     DISK_N_AVAIL_GB((usize, String)),
+    // Dynamic per-disk I/O columns: (disk_index, mount_point).
+    // Kept apart from the space columns above so each unit gets its own chart.
+    DISK_N_BUSY_PCT((usize, String)),
+    DISK_N_READ_MBPS((usize, String)),
+    DISK_N_WRITE_MBPS((usize, String)),
 }
 
 impl std::fmt::Display for DataType {
@@ -115,10 +146,15 @@ impl DataType {
             Self::GPU_N_TEMP_C((idx, _)) => format!("GPU_{idx}_TEMP_C"),
             Self::NET_N_RX_BPS((idx, _)) => format!("NET_{idx}_RX_BPS"),
             Self::NET_N_TX_BPS((idx, _)) => format!("NET_{idx}_TX_BPS"),
+            Self::NET_N_RX_TOTAL_MB((idx, _)) => format!("NET_{idx}_RX_TOTAL_MB"),
+            Self::NET_N_TX_TOTAL_MB((idx, _)) => format!("NET_{idx}_TX_TOTAL_MB"),
             Self::CUSTOM_CPU((idx, _)) => format!("CUSTOM_{idx}_CPU"),
             Self::CUSTOM_MEMORY((idx, _)) => format!("CUSTOM_{idx}_MEMORY"),
             Self::DISK_N_USED_GB((idx, _)) => format!("DISK_{idx}_USED_GB"),
             Self::DISK_N_AVAIL_GB((idx, _)) => format!("DISK_{idx}_AVAIL_GB"),
+            Self::DISK_N_BUSY_PCT((idx, _)) => format!("DISK_{idx}_BUSY_PCT"),
+            Self::DISK_N_READ_MBPS((idx, _)) => format!("DISK_{idx}_READ_MBPS"),
+            Self::DISK_N_WRITE_MBPS((idx, _)) => format!("DISK_{idx}_WRITE_MBPS"),
         }
     }
 
@@ -170,6 +206,8 @@ impl DataType {
                         return match parts[1] {
                             "RX_BPS" => Some(Self::NET_N_RX_BPS((idx, name))),
                             "TX_BPS" => Some(Self::NET_N_TX_BPS((idx, name))),
+                            "RX_TOTAL_MB" => Some(Self::NET_N_RX_TOTAL_MB((idx, name))),
+                            "TX_TOTAL_MB" => Some(Self::NET_N_TX_TOTAL_MB((idx, name))),
                             _ => None,
                         };
                     }
@@ -198,6 +236,9 @@ impl DataType {
                         return match parts[1] {
                             "USED_GB" => Some(Self::DISK_N_USED_GB((idx, name))),
                             "AVAIL_GB" => Some(Self::DISK_N_AVAIL_GB((idx, name))),
+                            "BUSY_PCT" => Some(Self::DISK_N_BUSY_PCT((idx, name))),
+                            "READ_MBPS" => Some(Self::DISK_N_READ_MBPS((idx, name))),
+                            "WRITE_MBPS" => Some(Self::DISK_N_WRITE_MBPS((idx, name))),
                             _ => None,
                         };
                     }
@@ -228,10 +269,15 @@ impl DataType {
             "GPU_N_TEMP_C",
             "NET_N_RX_BPS",
             "NET_N_TX_BPS",
+            "NET_N_RX_TOTAL_MB",
+            "NET_N_TX_TOTAL_MB",
             "CUSTOM_N_CPU",
             "CUSTOM_N_MEMORY",
             "DISK_N_USED_GB",
             "DISK_N_AVAIL_GB",
+            "DISK_N_BUSY_PCT",
+            "DISK_N_READ_MBPS",
+            "DISK_N_WRITE_MBPS",
         ]
         .join(", ")
     }
@@ -251,11 +297,17 @@ impl DataType {
         matches!(self, Self::CPU_USAGE_TOTAL | Self::CPU_USAGE_PER_CORE | Self::CUSTOM_CPU(_))
     }
 
+    /// RX/TX *rate* columns only (MB/s chart). See `is_network_total()` for the
+    /// cumulative-total columns, which get their own separate chart.
     pub fn is_network(&self) -> bool {
         matches!(
             self,
             Self::NETWORK_RX_BYTES_PER_SEC | Self::NETWORK_TX_BYTES_PER_SEC | Self::NET_N_RX_BPS(_) | Self::NET_N_TX_BPS(_)
         )
+    }
+
+    pub fn is_network_total(&self) -> bool {
+        matches!(self, Self::NET_N_RX_TOTAL_MB(_) | Self::NET_N_TX_TOTAL_MB(_))
     }
 
     pub fn is_gpu(&self) -> bool {
@@ -270,8 +322,37 @@ impl DataType {
         )
     }
 
-    pub fn is_disk(&self) -> bool {
+    pub fn is_gpu_util(&self) -> bool {
+        matches!(self, Self::GPU_UTILIZATION | Self::GPU_N_UTIL(_))
+    }
+
+    pub fn is_gpu_vram(&self) -> bool {
+        matches!(self, Self::GPU_MEMORY_USED | Self::GPU_N_VRAM_MB(_))
+    }
+
+    pub fn is_gpu_temp(&self) -> bool {
+        matches!(self, Self::GPU_TEMPERATURE | Self::GPU_N_TEMP_C(_))
+    }
+
+    pub fn is_disk_space(&self) -> bool {
         matches!(self, Self::DISK_N_USED_GB(_) | Self::DISK_N_AVAIL_GB(_))
+    }
+
+    pub fn is_disk_used(&self) -> bool {
+        matches!(self, Self::DISK_N_USED_GB(_))
+    }
+
+    pub fn is_disk_available(&self) -> bool {
+        matches!(self, Self::DISK_N_AVAIL_GB(_))
+    }
+
+    pub fn is_disk_busy(&self) -> bool {
+        matches!(self, Self::DISK_N_BUSY_PCT(_))
+    }
+
+    /// Read/write throughput columns only - busy% has its own chart, in percent.
+    pub fn is_disk_io(&self) -> bool {
+        matches!(self, Self::DISK_N_READ_MBPS(_) | Self::DISK_N_WRITE_MBPS(_))
     }
 
     pub fn pretty_print(&self) -> String {
@@ -294,12 +375,34 @@ impl DataType {
             Self::GPU_N_TEMP_C((idx, name)) => format!("GPU{idx} {name} temp °C"),
             Self::NET_N_RX_BPS((_, name)) => format!("{name} RX MB/s"),
             Self::NET_N_TX_BPS((_, name)) => format!("{name} TX MB/s"),
+            Self::NET_N_RX_TOTAL_MB((_, name)) => format!("{name} RX total MB"),
+            Self::NET_N_TX_TOTAL_MB((_, name)) => format!("{name} TX total MB"),
             Self::CUSTOM_CPU((_, name)) => format!("CPU usage for {name}"),
             Self::CUSTOM_MEMORY((_, name)) => format!("Memory usage for {name}"),
             Self::DISK_N_USED_GB((_, mount)) => format!("{mount} used GB"),
             Self::DISK_N_AVAIL_GB((_, mount)) => format!("{mount} avail GB"),
+            Self::DISK_N_BUSY_PCT((_, mount)) => format!("{mount} busy %"),
+            Self::DISK_N_READ_MBPS((_, mount)) => format!("{mount} read MB/s"),
+            Self::DISK_N_WRITE_MBPS((_, mount)) => format!("{mount} write MB/s"),
         }
     }
+}
+
+/// Builds the RX/TX rate columns interleaved per interface (rx0, tx0, rx1, tx1, ...)
+/// instead of grouped by metric (rx0, rx1, tx0, tx1), regardless of which order
+/// `NETWORK_RX_BYTES_PER_SEC` / `NETWORK_TX_BYTES_PER_SEC` were requested in - keeps
+/// each interface's series adjacent in the CSV header and the GUI legend.
+pub fn network_rate_columns(has_rx: bool, has_tx: bool, interfaces: impl IntoIterator<Item = (usize, String)>) -> Vec<DataType> {
+    let mut columns = Vec::new();
+    for (idx, name) in interfaces {
+        if has_rx {
+            columns.push(DataType::NET_N_RX_BPS((idx, name.clone())));
+        }
+        if has_tx {
+            columns.push(DataType::NET_N_TX_BPS((idx, name)));
+        }
+    }
+    columns
 }
 
 #[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
@@ -322,6 +425,9 @@ pub enum GeneralInfoGroup {
     MEMORY,
     SWAP,
     NETWORK,
+    NETWORK_TOTAL,
     GPU,
     DISK,
+    DISK_BUSY,
+    DISK_IO,
 }

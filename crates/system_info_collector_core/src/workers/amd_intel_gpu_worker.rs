@@ -36,7 +36,7 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
 
         for (i, gpu) in gpus.iter().enumerate() {
             let snapshot = match &gpu.vendor {
-                GpuVendor::AmdLinux { card_device_path, .. } => read_amd_snapshot(card_device_path),
+                GpuVendor::AmdLinux { handle, .. } => read_amd_snapshot(handle),
                 GpuVendor::IntelLinux { card_device_path, .. } => {
                     let snap = read_intel_snapshot(card_device_path, intel_prev[i].as_ref());
                     // Update the prev state for the next iteration.
@@ -66,12 +66,15 @@ pub async fn run(_settings: Arc<CollectSettings>, _state: Arc<RwLock<SharedState
     // AMD/Intel sysfs reading is only available on Linux.
 }
 
+/// Reads a live snapshot via `amdgpu-sysfs`, which wraps the same sysfs files
+/// (`gpu_busy_percent`, `mem_info_vram_*`, hwmon `tempN_input`) with proper
+/// multi-hwmon handling instead of hand-rolled parsing.
 #[cfg(target_os = "linux")]
-fn read_amd_snapshot(device_path: &std::path::Path) -> GpuSnapshot {
-    let utilization_gpu = read_u32_from_sysfs(&device_path.join("gpu_busy_percent")).unwrap_or(0);
-    let memory_used_mb = read_u64_from_sysfs(&device_path.join("mem_info_vram_used")).unwrap_or(0) / 1024 / 1024;
-    let memory_total_mb = read_u64_from_sysfs(&device_path.join("mem_info_vram_total")).unwrap_or(0) / 1024 / 1024;
-    let temperature = read_amd_temperature(device_path).unwrap_or(0);
+pub fn read_amd_snapshot(handle: &amdgpu_sysfs::gpu_handle::GpuHandle) -> GpuSnapshot {
+    let utilization_gpu = u32::from(handle.get_busy_percent().unwrap_or(0));
+    let memory_used_mb = handle.get_used_vram().unwrap_or(0) / 1024 / 1024;
+    let memory_total_mb = handle.get_total_vram().unwrap_or(0) / 1024 / 1024;
+    let temperature = read_amd_temperature(handle).unwrap_or(0);
 
     GpuSnapshot {
         utilization_gpu,
@@ -108,23 +111,18 @@ fn read_intel_snapshot(card_path: &std::path::Path, prev: Option<&(u64, std::tim
     }
 }
 
+/// Prefers the "edge" sensor (die edge temperature, present on all AMD GPUs);
+/// falls back to whatever sensor the hwmon reports first.
 #[cfg(target_os = "linux")]
-fn read_amd_temperature(device_path: &std::path::Path) -> Option<u32> {
-    // Temperature is exposed via hwmon: device/hwmon/hwmonN/temp1_input (millidegrees C).
-    let hwmon_dir = device_path.join("hwmon");
-    let entries = std::fs::read_dir(&hwmon_dir).ok()?;
-    for entry in entries.flatten() {
-        let temp_path = entry.path().join("temp1_input");
-        if let Some(val) = read_u64_from_sysfs(&temp_path) {
-            return Some((val / 1000) as u32); // millidegrees → degrees
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn read_u32_from_sysfs(path: &std::path::Path) -> Option<u32> {
-    std::fs::read_to_string(path).ok()?.trim().parse::<u32>().ok()
+fn read_amd_temperature(handle: &amdgpu_sysfs::gpu_handle::GpuHandle) -> Option<u32> {
+    handle.hw_monitors.first().and_then(|mon| {
+        let temps = mon.get_temps();
+        temps
+            .get("edge")
+            .or_else(|| temps.values().next())
+            .and_then(|t| t.current)
+            .map(|c| c as u32)
+    })
 }
 
 #[cfg(target_os = "linux")]

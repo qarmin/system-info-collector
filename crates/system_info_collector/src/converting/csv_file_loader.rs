@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, metadata};
 use std::io::{BufRead, BufReader, Lines};
 
 use anyhow::{Context, Error, Result};
 use log::info;
 use system_info_collector_core::enums::{DataType, GeneralInfoGroup, HeaderValues};
-use system_info_collector_core::model::{CollectedItemModels, TopProcessData};
+use system_info_collector_core::model::CollectedItemModels;
 use system_info_collector_core::settings::ConvertSettings;
 
 pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModels, Error> {
@@ -24,59 +24,21 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
 
     let (swap_total, memory_total, cpu_core_count, check_interval, hashmap_data, start_time) = parse_file_values_data(&mut lines_iter)?;
 
-    // Extract GPU names from metadata map (GPU_0=name, GPU_1=name, …).
-    let mut gpu_name_entries: Vec<(usize, String)> = hashmap_data
-        .iter()
-        .filter_map(|(k, v)| k.strip_prefix("GPU_").and_then(|n| n.parse::<usize>().ok()).map(|idx| (idx, v.clone())))
+    // GPU names (GPU_0=name, …) and VRAM totals (GPU_VRAM_0=MB, …).
+    let gpu_names: Vec<String> = indexed_meta(&hashmap_data, "GPU_").into_values().collect();
+    let gpu_vram_mb: Vec<u64> = indexed_meta(&hashmap_data, "GPU_VRAM_")
+        .into_values()
+        .map(|mb| mb.parse::<u64>().unwrap_or(0))
         .collect();
-    gpu_name_entries.sort_by_key(|(idx, _)| *idx);
-    let gpu_names: Vec<String> = gpu_name_entries.into_iter().map(|(_, name)| name).collect();
-
-    // Extract GPU VRAM totals (GPU_VRAM_0=MB, …).
-    let mut gpu_vram_entries: Vec<(usize, u64)> = hashmap_data
-        .iter()
-        .filter_map(|(k, v)| {
-            k.strip_prefix("GPU_VRAM_")
-                .and_then(|n| n.parse::<usize>().ok())
-                .and_then(|idx| v.parse::<u64>().ok().map(|mb| (idx, mb)))
-        })
-        .collect();
-    gpu_vram_entries.sort_by_key(|(idx, _)| *idx);
-    let gpu_vram_mb: Vec<u64> = gpu_vram_entries.into_iter().map(|(_, mb)| mb).collect();
 
     // CPU model string (absent in old CSV files).
     let cpu_model = hashmap_data.get("CPU_MODEL").cloned().unwrap_or_default();
 
-    // Extract disk mount points (DISK_0=path, DISK_1=path, …).
-    let mut disk_name_entries: Vec<(usize, String)> = hashmap_data
-        .iter()
-        .filter_map(|(k, v)| k.strip_prefix("DISK_").and_then(|n| n.parse::<usize>().ok()).map(|idx| (idx, v.clone())))
-        .collect();
-    disk_name_entries.sort_by_key(|(idx, _)| *idx);
-    let disk_names: Vec<String> = disk_name_entries.into_iter().map(|(_, name)| name).collect();
+    let disk_labels: Vec<String> = labeled_meta(&hashmap_data, "DISK_", "DISK_LABEL_").into_values().collect();
+    let net_labels: Vec<String> = labeled_meta(&hashmap_data, "NET_", "NET_LABEL_").into_values().collect();
 
     let (collected_data_names, collected_groups) = parse_header(&mut lines_iter, &hashmap_data)?;
     let collected_data = parse_data(&mut lines_iter, &collected_data_names, cpu_core_count)?;
-
-    // Load optional extra data files (top-N process files).
-    let mut top_cpu_processes: Option<TopProcessData> = None;
-    let mut top_ram_processes: Option<TopProcessData> = None;
-
-    for extra_path in &settings.extra_data_paths {
-        match load_top_process_file(extra_path) {
-            Ok((kind, data)) => {
-                info!("Loaded top-{kind} process file: {extra_path}");
-                if kind == "CPU" {
-                    top_cpu_processes = Some(data);
-                } else {
-                    top_ram_processes = Some(data);
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to load extra data file {extra_path}: {e}");
-            }
-        }
-    }
 
     Ok(CollectedItemModels {
         collected_data,
@@ -89,70 +51,49 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         cpu_model,
         gpu_names,
         gpu_vram_mb,
-        disk_names,
-        top_cpu_processes,
-        top_ram_processes,
+        disk_labels,
+        net_labels,
     })
 }
 
-/// Load a top-N process file.  Returns `(type_tag, data)` where type_tag is "CPU" or "RAM".
-pub fn load_top_process_file(path: &str) -> Result<(String, TopProcessData), Error> {
-    let file = File::open(path).context(format!("Failed to open top-N file {path}"))?;
-    let reader = BufReader::new(file);
-    let mut lines = reader.lines();
+/// Values of metadata keys shaped `<prefix>N`, ordered by N.
+fn indexed_meta(meta: &HashMap<String, String>, prefix: &str) -> BTreeMap<usize, String> {
+    meta.iter()
+        .filter_map(|(key, value)| {
+            let index = key.strip_prefix(prefix)?.parse::<usize>().ok()?;
+            Some((index, value.clone()))
+        })
+        .collect()
+}
 
-    // Metadata line: START_TIME=xxx,TOP_N=5,TYPE=CPU
-    let meta_line = lines.next().context("Missing metadata line")?.context("Failed to read metadata line")?;
-    let mut meta: HashMap<String, String> = HashMap::new();
-    for kv in meta_line.split(',') {
-        let mut parts = kv.splitn(2, '=');
-        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
-            meta.insert(k.to_string(), v.to_string());
-        }
-    }
+/// Same, except `<label_prefix>N` (the readable form, e.g. `DISK_LABEL_0`) wins over
+/// `<prefix>N`, which is all that files written by older versions carry.
+fn labeled_meta(meta: &HashMap<String, String>, prefix: &str, label_prefix: &str) -> BTreeMap<usize, String> {
+    let mut entries = indexed_meta(meta, prefix);
+    entries.extend(indexed_meta(meta, label_prefix));
+    entries
+}
 
-    let start_time: f64 = meta.get("START_TIME").and_then(|s| s.parse().ok()).unwrap_or(0.0);
-    let n: usize = meta.get("TOP_N").and_then(|s| s.parse().ok()).unwrap_or(5);
-    let kind = meta.get("TYPE").cloned().unwrap_or_else(|| "CPU".to_string());
+/// Read only the timestamp column of a data file, returning `(start_time, relative timestamps)`.
+///
+/// Used to list which days and weeks are available for export without paying
+/// for a full parse of every column.
+pub fn scan_timestamps(path: &str) -> Result<(f64, Vec<f64>), Error> {
+    let file = File::open(path).context(format!("Failed to open data file {path}"))?;
+    let mut lines_iter = BufReader::new(file).lines();
 
-    // Column header line: TIMESTAMP,1,2,...,N  (skip it)
-    let _header = lines.next().context("Missing header line")?.context("Failed to read header line")?;
+    let (_, _, _, _, _, start_time) = parse_file_values_data(&mut lines_iter)?;
+    lines_iter
+        .next()
+        .context("Missing column header line")?
+        .context("Failed to read column header line")?;
 
-    let mut timestamps: Vec<f64> = Vec::new();
-    let mut ranks: Vec<Vec<Option<(String, f64)>>> = (0..n).map(|_| Vec::new()).collect();
+    let timestamps = lines_iter
+        .map_while(Result::ok)
+        .filter_map(|line| line.split(',').next().and_then(|s| s.parse::<f64>().ok()))
+        .collect();
 
-    for line in lines {
-        let line = line.context("Failed to read data line")?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let mut cols = line.split(',');
-        let ts: f64 = cols.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-        timestamps.push(ts);
-
-        for rank_vec in &mut ranks {
-            let entry = cols.next().and_then(|s| {
-                if s.is_empty() {
-                    return None;
-                }
-                let mut parts = s.splitn(2, '|');
-                let name = parts.next()?.to_string();
-                let val: f64 = parts.next()?.parse().ok()?;
-                Some((name, val))
-            });
-            rank_vec.push(entry);
-        }
-    }
-
-    Ok((
-        kind,
-        TopProcessData {
-            n,
-            start_time,
-            timestamps,
-            ranks,
-        },
-    ))
+    Ok((start_time, timestamps))
 }
 
 fn parse_data(
@@ -222,32 +163,12 @@ fn parse_header(
         .context("Failed to read second line of data file")?
         .context("Failed to read second line of data file")?;
 
-    // Build name lookup maps from the metadata line.
-    // GPU_N=<name>, NET_N=<iface>, CUSTOM_N=<name>
-    let mut gpu_names: HashMap<usize, String> = HashMap::new();
-    let mut iface_names: HashMap<usize, String> = HashMap::new();
-    let mut custom_names: HashMap<usize, String> = HashMap::new();
-    let mut disk_names: HashMap<usize, String> = HashMap::new();
-
-    for (key, val) in hashmap_data {
-        if let Some(rest) = key.strip_prefix("GPU_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                gpu_names.insert(idx, val.clone());
-            }
-        } else if let Some(rest) = key.strip_prefix("NET_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                iface_names.insert(idx, val.clone());
-            }
-        } else if let Some(rest) = key.strip_prefix("CUSTOM_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                custom_names.insert(idx, val.clone());
-            }
-        } else if let Some(rest) = key.strip_prefix("DISK_")
-            && let Ok(idx) = rest.parse::<usize>()
-        {
-            disk_names.insert(idx, val.clone());
-        }
-    }
+    // Name lookup maps for the dynamic columns, so GPU_0_UTIL and friends can be
+    // labelled with what they actually measure.
+    let gpu_names: HashMap<usize, String> = indexed_meta(hashmap_data, "GPU_").into_iter().collect();
+    let custom_names: HashMap<usize, String> = indexed_meta(hashmap_data, "CUSTOM_").into_iter().collect();
+    let iface_names: HashMap<usize, String> = labeled_meta(hashmap_data, "NET_", "NET_LABEL_").into_iter().collect();
+    let disk_names: HashMap<usize, String> = labeled_meta(hashmap_data, "DISK_", "DISK_LABEL_").into_iter().collect();
 
     let collected_data_names: Vec<DataType> = header_line
         .split(',')
@@ -285,11 +206,20 @@ fn parse_header(
     if collected_data_names.iter().any(|e| e.is_network()) {
         collected_groups.push(GeneralInfoGroup::NETWORK);
     }
+    if collected_data_names.iter().any(|e| e.is_network_total()) {
+        collected_groups.push(GeneralInfoGroup::NETWORK_TOTAL);
+    }
     if collected_data_names.iter().any(|e| e.is_gpu()) {
         collected_groups.push(GeneralInfoGroup::GPU);
     }
-    if collected_data_names.iter().any(|e| e.is_disk()) {
+    if collected_data_names.iter().any(|e| e.is_disk_space()) {
         collected_groups.push(GeneralInfoGroup::DISK);
+    }
+    if collected_data_names.iter().any(|e| e.is_disk_busy()) {
+        collected_groups.push(GeneralInfoGroup::DISK_BUSY);
+    }
+    if collected_data_names.iter().any(|e| e.is_disk_io()) {
+        collected_groups.push(GeneralInfoGroup::DISK_IO);
     }
 
     Ok((collected_data_names, collected_groups))

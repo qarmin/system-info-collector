@@ -2,5 +2,26 @@
 .idea/
 *.iml
 /.idea
-*.csv
-*.html
+
+# Plots, exports and collected data are written into the working directory, which
+# in practice is the repo root - so they are ignored *there* rather than by
+# extension everywhere.
+#
+# A blanket `*.html` had silently excluded crates/.../session_viewer.html, which is
+# pulled in with include_str!: the file was never committed and the build failed on
+# every other machine. Anchoring the patterns to the root means a page or fixture
+# living next to the code it belongs to can never be caught by accident.
+# `just check_embedded` verifies that, if this ever needs loosening again.
+/*.html
+/*.csv
+/*.zip
+/session_*.json
+/plot_*.html
+
+# Recordings hold full command lines and the paths of open files, which routinely
+# contain tokens and passwords. Ignored at any depth, on purpose.
+sessions/
+
+tmp/
+test/
+tst/

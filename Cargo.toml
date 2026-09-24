@@ -5,11 +5,17 @@ members = [
 ]
 resolver = "2"
 
+# Local patch: vendor/plotly adds xaxis9-12/yaxis9-12/zaxis9-12 to the upstream
+# Layout struct (which stops at axis 8), so the exported HTML report can have
+# more than 8 chart rows. See vendor/plotly/src/layout/mod.rs for the diff.
+[patch.crates-io]
+plotly = { path = "vendor/plotly" }
+
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2024"
-rust-version = "1.92.0"
+rust-version = "1.95.0"
 license = "MIT"
 homepage = "https://github.com/qarmin/system-info-collector"
 repository = "https://github.com/qarmin/system-info-collector"
@@ -44,7 +50,6 @@ fallible_impl_from = "warn"
 filter_map_next = "warn"
 flat_map_option = "warn"
 float_cmp = "warn"
-from_iter_instead_of_collect = "warn"
 ignored_unit_patterns = "warn"
 implicit_clone = "warn"
 index_refutable_slice = "warn"
