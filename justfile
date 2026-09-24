@@ -6,7 +6,7 @@
 #   just full_send_arm 192.168.1.60 "cpu-usage-total memory-used" "" system-info-collector-arm.service
 #
 # Recipes are grouped - `just --groups` lists the groups, `just --list` shows them section by
-# section, `just --list <group>` shows one group on its own:
+# section, `just --list --group <name>` shows one group on its own:
 #
 #   build    compiling for this machine and for other targets
 #   dev      formatting, lints, dependency updates
@@ -61,10 +61,12 @@ fix:
     cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features
     cargo +nightly fmt
 
+# `-i` also raises the requirements written in Cargo.toml, not just the lockfile,
+# so a semver-breaking bump is actually picked up. Needs cargo-edit.
 [doc('Updates dependencies, including semver-breaking ones')]
 [group('dev')]
 upgrade:
-    cargo +nightly -Z unstable-options update --breaking
+    cargo upgrade -i
     cargo update
 
 # Verifies that every file pulled in with include_str! is actually in the repository.

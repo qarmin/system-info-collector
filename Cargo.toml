@@ -15,7 +15,7 @@ plotly = { path = "vendor/plotly" }
 version = "0.8.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2024"
-rust-version = "1.92.0"
+rust-version = "1.95.0"
 license = "MIT"
 homepage = "https://github.com/qarmin/system-info-collector"
 repository = "https://github.com/qarmin/system-info-collector"

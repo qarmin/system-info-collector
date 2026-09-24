@@ -345,7 +345,7 @@ avoid.
 
 ## Contributing and development
 
-`just --groups` lists the recipe groups, `just --list` shows them all:
+`just --groups` lists the recipe groups, `just --list` shows them all, and `just --list --group <name>` shows one:
 
 | Group | What is in it |
 | --- | --- |
