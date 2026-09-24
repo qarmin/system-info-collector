@@ -159,7 +159,7 @@ pub struct CollectArgs {
         long,
         default_value = "200.0",
         value_name = "MAXIMUM_FILE_SIZE_MB",
-        help = "Maximum data-file size in MB before collection stops."
+        help = "Maximum data-file size in MB. Once reached, the file is rotated aside and collection continues into a new one."
     )]
     pub maximum_data_file_size_mb: f32,
 

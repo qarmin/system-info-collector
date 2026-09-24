@@ -5,7 +5,16 @@
 #   just full_send 192.168.1.50 "cpu-usage-total memory-used" "/"
 #   just full_send_arm 192.168.1.60 "cpu-usage-total memory-used" "" system-info-collector-arm.service
 #
-# Recipes are grouped - `just --groups` lists the groups, `just --list` shows them section by section.
+# Recipes are grouped - `just --groups` lists the groups, `just --list` shows them section by
+# section, `just --list <group>` shows one group on its own:
+#
+#   build    compiling for this machine and for other targets
+#   dev      formatting, lints, dependency updates
+#   release  cargo install here, cargo publish to crates.io
+#   run      collecting on this machine
+#   session  recording every process for a short period
+#   plots    turning collected CSVs into HTML reports
+#   deploy   installing the systemd service here or on another machine
 #
 # Notes:
 #   - `metrics` is space-separated (matches the CLI's `-m` flag), not comma-separated.
@@ -22,8 +31,9 @@
 
 user := `whoami`
 
-# ─── build: compiling, linting and packaging ─────────────────────────────────
+# ─── build: compiling for this machine and for other targets ─────────────────
 
+[doc('Release + debug build, clippy and the test suite')]
 [group('build')]
 build_all:
     cargo build --release
@@ -31,13 +41,28 @@ build_all:
     cargo clippy
     cargo test
 
+[doc('Cross-compiles for 32-bit ARM (armv7 hard-float)')]
 [group('build')]
+cross_arm_32:
+    RUSTFLAGS="" cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
+
+[doc('Cross-compiles for x86_64 against an older glibc')]
+[group('build')]
+cross_x86_64:
+    # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
+    RUSTFLAGS="" cargo zigbuild --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
+
+# ─── dev: formatting, lints and dependencies ─────────────────────────────────
+
+[doc('Formats, applies clippy fixes, formats again')]
+[group('dev')]
 fix:
     cargo +nightly fmt
     cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features
     cargo +nightly fmt
 
-[group('build')]
+[doc('Updates dependencies, including semver-breaking ones')]
+[group('dev')]
 upgrade:
     cargo +nightly -Z unstable-options update --breaking
     cargo update
@@ -47,24 +72,19 @@ upgrade:
 # how session_viewer.html once shipped broken. Part of `cargo test`, so `build_all`
 # already covers it; this is for running it on its own.
 [doc('Checks that every include_str! target is tracked by git')]
-[group('build')]
+[group('dev')]
 check_embedded:
     cargo test --test embedded_files_are_committed -- --nocapture
 
-[group('build')]
-cross_arm_32:
-    RUSTFLAGS="" cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
+# ─── release: putting the binary on this machine and on crates.io ────────────
 
-[group('build')]
-cross_x86_64:
-    # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version
-    RUSTFLAGS="" cargo zigbuild --target x86_64-unknown-linux-gnu.2.28 -p system_info_collector
-
-[group('build')]
+[doc('cargo install from this checkout, into ~/.cargo/bin')]
+[group('release')]
 install:
     cargo install --path crates/system_info_collector
 
-[group('build')]
+[doc('Publishes both crates to crates.io (core first)')]
+[group('release')]
 publish:
     cd crates/system_info_collector_core && cargo publish --dry-run
     cd crates/system_info_collector_core && cargo publish
@@ -73,26 +93,31 @@ publish:
 
 # ─── run: collecting on this machine ─────────────────────────────────────────
 
+[doc('Collects with tracked processes, then converts and opens the plot')]
 [group('run')]
 run:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
     cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o --all-networks; firefox system_data_plot.html
 
+[doc('Same as `run`, with the live web server on as well')]
 [group('run')]
 runs:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
     cargo run -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s --all-networks; firefox system_data_plot.html
 
+[doc('Same as `run`, release build')]
 [group('run')]
 runr:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
     cargo run --release -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -o --all-networks; firefox system_data_plot.html
 
+[doc('Same as `runs`, release build')]
 [group('run')]
 runrs:
     # Well, do not run this to test things, because just runs this in a shell command, that is captured as normal program
     cargo run --release -p system_info_collector -- collect -e "FIREFOX|firefox" -e "NEMO|nemo" -c 0.2 -C -s --all-networks; firefox system_data_plot.html
 
+[doc('Every metric at once, with the live server - deletes local CSVs first')]
 [group('run')]
 all:
     rm *.csv || true
@@ -109,6 +134,7 @@ all:
         -c 0.5 -s
     just show
 
+[doc('The metrics worth having day to day, with the live server')]
 [group('run')]
 normal:
     rm *.csv || true
@@ -122,12 +148,14 @@ normal:
         --all-networks --all-disks -e "GNOME SHELL|gnome-shell" \
         -c 0.5 -s
 
+[doc('Per-core CPU only - the most expensive metric, for measuring overhead')]
 [group('run')]
 heavy:
     rm *.csv || true
     cargo run --release -p system_info_collector -- collect \
         -m cpu-usage-total cpu-usage-per-core -c 2.0 -s
 
+[doc('Profiles the collector under samply (rdebug profile)')]
 [group('run')]
 samplyrd:
     rm *.csv || true
@@ -150,24 +178,46 @@ samplyrd:
 system-check:
     cargo run -p system_info_collector_core --example system_check
 
+# ─── session: recording every process for a short period ─────────────────────
+
+[doc('Records every process for N seconds and opens the viewer')]
+[group('session')]
+session duration="60":
+    cargo run --release -p system_info_collector -- session --duration {{ duration }} --open
+
+# A recording made without the capabilities below sees /proc/<pid>/io for this
+# user's own processes only, so every daemon and kernel thread reads as having
+# done no I/O. `cargo run` builds a fresh binary each time, which drops the
+# xattrs, hence granting them here rather than once.
+[doc('Records every process as root, so every process has I/O counters')]
+[group('session')]
+session_root duration="60":
+    cargo build --release -p system_info_collector
+    sudo setcap {{ session_caps }} target/release/system_info_collector
+    target/release/system_info_collector session --duration {{ duration }} --open
+
 # ─── plots: turning collected CSVs into reports ──────────────────────────────
 
+[doc('Converts system_data.csv into plot.html and opens it')]
 [group('plots')]
 show:
     rm *.html || true
     cargo run --release -p system_info_collector -- convert -d system_data.csv -p plot.html -o
     firefox plot.html
 
+[doc('Fetches data.csv from an ARM device and plots it')]
 [group('plots')]
 show_data ip_address:
     scp -O root@{{ ip_address }}:/home/root/data_collector/data.csv .
     cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o
 
+[doc('Plots a local data.csv, one report per calendar day')]
 [group('plots')]
 show_data_custom ip_address path:
     #scp -O {{ ip_address }}:{{ path }} .
     cargo run --release -p system_info_collector -- convert -d data.csv -p plot.html -o --split-mode per-day
 
+[doc('Deletes the CSVs in the project root')]
 [group('plots')]
 cleancsv:
     rm *.csv
@@ -213,6 +263,7 @@ grant_caps_local:
     sudo setcap {{ session_caps }} /home/{{ user }}/data_collector/system_info_collector
     getcap /home/{{ user }}/data_collector/system_info_collector
 
+[doc('Stops the service on an ARM perimeter device (root)')]
 [group('deploy')]
 stop_remote ip_address:
     ssh root@{{ ip_address }} 'systemctl stop system-info-collector' || true
@@ -225,6 +276,7 @@ stop_remote_x86_64 ip_address:
     ssh -t {{ user }}@{{ ip_address }} 'sudo systemctl stop system-info-collector' || true
     ssh {{ user }}@{{ ip_address }} 'pkill -f /home/{{ user }}/data_collector/system_info_collector' || true
 
+[doc('Builds for ARM and copies the binary over, without touching the service')]
 [group('deploy')]
 arm_send ip_address:
     # To avoid glibc version issues, using zigbuild
@@ -235,6 +287,7 @@ arm_send ip_address:
     ssh root@{{ ip_address }} 'rm -f /home/root/data_collector/system_info_collector' || true
     scp -O target/armv7-unknown-linux-gnueabihf/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
 
+[doc('Builds for x86_64 and copies the binary over, without touching the service')]
 [group('deploy')]
 x86_64_send ip_address:
     # To avoid glibc version issues on older target distros, using zigbuild against an older glibc version

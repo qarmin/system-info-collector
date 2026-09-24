@@ -12,7 +12,7 @@ resolver = "2"
 plotly = { path = "vendor/plotly" }
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Rafał Mikrut <qarminkrut@gmail.com>"]
 edition = "2024"
 rust-version = "1.92.0"
@@ -50,7 +50,6 @@ fallible_impl_from = "warn"
 filter_map_next = "warn"
 flat_map_option = "warn"
 float_cmp = "warn"
-from_iter_instead_of_collect = "warn"
 ignored_unit_patterns = "warn"
 implicit_clone = "warn"
 index_refutable_slice = "warn"
