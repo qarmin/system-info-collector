@@ -45,7 +45,7 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                     }
                     snap
                 }
-                GpuVendor::Nvidia { .. } => continue, // handled by nvidia_worker
+                GpuVendor::Nvidia { .. } | GpuVendor::Vivante { .. } => continue,
             };
 
             {

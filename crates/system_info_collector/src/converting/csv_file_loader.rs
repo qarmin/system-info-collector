@@ -31,6 +31,12 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         .map(|mb| mb.parse::<u64>().unwrap_or(0))
         .collect();
 
+    let gpu_drivers = indexed_meta(&hashmap_data, "GPU_DRIVER_");
+    let gpu_driver_versions: Vec<String> = indexed_meta(&hashmap_data, "GPU_")
+        .into_keys()
+        .map(|index| gpu_drivers.get(&index).cloned().unwrap_or_default())
+        .collect();
+
     // CPU model string (absent in old CSV files).
     let cpu_model = hashmap_data.get("CPU_MODEL").cloned().unwrap_or_default();
 
@@ -51,6 +57,7 @@ pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModel
         cpu_model,
         gpu_names,
         gpu_vram_mb,
+        gpu_driver_versions,
         disk_labels,
         net_labels,
     })

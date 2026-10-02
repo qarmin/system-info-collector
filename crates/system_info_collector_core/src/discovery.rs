@@ -22,6 +22,8 @@ pub enum GpuVendor {
     },
     /// Intel GPU on Linux, monitored via `/sys/class/drm/cardN/`.
     IntelLinux { card_device_path: PathBuf, name: String },
+    /// Vivante GPU behind NXP's `galcore` driver (i.MX), monitored via its idle register and debugfs.
+    Vivante { register_base: u64, name: String },
 }
 
 /// A single discovered GPU entry.
@@ -32,12 +34,17 @@ pub struct DiscoveredGpu {
     pub vendor: GpuVendor,
     /// Total VRAM in megabytes (0 if unknown).
     pub vram_total_mb: u64,
+    /// Kernel or vendor driver and its version, e.g. `galcore 6.4.3.p2.336687` (empty if unknown).
+    pub driver_version: String,
 }
 
 impl DiscoveredGpu {
     pub fn display_name(&self) -> &str {
         match &self.vendor {
-            GpuVendor::Nvidia { name, .. } | GpuVendor::AmdLinux { name, .. } | GpuVendor::IntelLinux { name, .. } => name,
+            GpuVendor::Nvidia { name, .. }
+            | GpuVendor::AmdLinux { name, .. }
+            | GpuVendor::IntelLinux { name, .. }
+            | GpuVendor::Vivante { name, .. } => name,
         }
     }
 }
@@ -105,8 +112,7 @@ const VIRTUAL_FS_TYPES: &[&str] = &[
 /// never change and are not what anyone watches disk usage for.  `--disk /boot` still works.
 /// Patterns are lowercase, matched case-insensitively - recovery volumes are spelled
 /// `Recovery` on macOS and Windows.
-const AUTO_SKIPPED_MOUNTS: &[&str] =
-    &["/boot", "/efi", "/recovery", "/volumes/recovery", "/system/volumes/recovery"];
+const AUTO_SKIPPED_MOUNTS: &[&str] = &["/boot", "/efi", "/recovery", "/volumes/recovery", "/system/volumes/recovery"];
 
 /// True when `mount_point` is `pattern` itself or sits below it.
 fn mount_matches(mount_point: &str, pattern: &str) -> bool {
@@ -142,7 +148,7 @@ pub struct DiscoveredDisk {
 impl DiscoveredDisk {
     /// Label for charts and the live view, e.g. `/home (nvme1n1 916 GB)`.
     pub fn display_label(&self) -> String {
-        let device = short_device_name(&self.device);
+        let device = self.io_stat_name.clone().unwrap_or_else(|| short_device_name(&self.device));
         let label = if self.total_gb > 0 {
             format!("{} ({device} {} GB)", self.mount_point, self.total_gb)
         } else {
@@ -191,11 +197,20 @@ pub fn discover_gpus() -> Vec<DiscoveredGpu> {
     #[cfg(target_os = "linux")]
     discover_amd_intel_gpus_linux(&mut gpus);
 
+    #[cfg(target_os = "linux")]
+    discover_vivante_gpu(&mut gpus);
+
     if gpus.is_empty() {
         info!("No supported GPUs discovered");
     } else {
         for gpu in &gpus {
-            info!("Discovered GPU {}: {} ({:?})", gpu.gpu_index, gpu.display_name(), gpu.vendor_kind());
+            info!(
+                "Discovered GPU {}: {} ({:?}), driver {}",
+                gpu.gpu_index,
+                gpu.display_name(),
+                gpu.vendor_kind(),
+                gpu.driver_version
+            );
         }
     }
 
@@ -210,6 +225,8 @@ fn discover_nvidia_gpus(gpus: &mut Vec<DiscoveredGpu>) {
             return;
         }
     };
+
+    let driver_version = nvml.sys_driver_version().map(|v| format!("NVIDIA {v}")).unwrap_or_default();
 
     let count = match nvml.device_count() {
         Ok(n) => n,
@@ -229,6 +246,7 @@ fn discover_nvidia_gpus(gpus: &mut Vec<DiscoveredGpu>) {
                     gpu_index,
                     vendor: GpuVendor::Nvidia { nvml_index: i, name },
                     vram_total_mb,
+                    driver_version: driver_version.clone(),
                 });
             }
             Err(e) => warn!("Failed to access NVIDIA GPU {i}: {e}"),
@@ -295,6 +313,7 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu {
                     gpu_index,
+                    driver_version: kernel_driver_version(&device_path),
                     vendor: GpuVendor::AmdLinux { handle, name },
                     vram_total_mb,
                 });
@@ -305,6 +324,7 @@ fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
                 let gpu_index = gpus.len();
                 gpus.push(DiscoveredGpu {
                     gpu_index,
+                    driver_version: kernel_driver_version(&device_path),
                     vendor: GpuVendor::IntelLinux {
                         card_device_path: device_path,
                         name,
@@ -420,6 +440,116 @@ fn resolve_pci_device_name(device_path: &std::path::Path) -> Option<String> {
     read_pci_label(device_path).or_else(|| lookup_pci_name(device_path))
 }
 
+pub const GALCORE_DEBUGFS: &str = "/sys/kernel/debug/gc";
+const GALCORE_REGISTER_BASE: &str = "/sys/module/galcore/parameters/registerMemBase";
+
+/// Only the 3D core is tracked: on i.MX6 the 2D (GC320) and VG (GC355) cores sit idle under Qt Quick.
+#[cfg(target_os = "linux")]
+fn discover_vivante_gpu(gpus: &mut Vec<DiscoveredGpu>) {
+    let Ok(info) = std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/info")) else {
+        return;
+    };
+    let Some(model) = parse_vivante_model(&info) else {
+        warn!("galcore: no 3D core in {GALCORE_DEBUGFS}/info, skipping");
+        return;
+    };
+    let Some(register_base) = std::fs::read_to_string(GALCORE_REGISTER_BASE)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+    else {
+        warn!("galcore: cannot read {GALCORE_REGISTER_BASE}, skipping");
+        return;
+    };
+    let vram_total_mb = std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/meminfo"))
+        .ok()
+        .and_then(|s| parse_vivante_meminfo(&s))
+        .map_or(0, |m| m.total_bytes / 1024 / 1024);
+    let gpu_index = gpus.len();
+    gpus.push(DiscoveredGpu {
+        gpu_index,
+        vendor: GpuVendor::Vivante {
+            register_base,
+            name: format!("Vivante GC{model}"),
+        },
+        vram_total_mb,
+        driver_version: std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/version"))
+            .ok()
+            .and_then(|s| parse_galcore_version(&s))
+            .unwrap_or_default(),
+    });
+}
+
+/// First line of `gc/version` is `6.4.3.p2.336687 built at <hash>`.
+pub fn parse_galcore_version(version: &str) -> Option<String> {
+    let first_word = version.split_whitespace().next()?;
+    Some(format!("galcore {first_word}"))
+}
+
+/// In-tree drivers (amdgpu, i915, xe) carry no version of their own - they ship with the kernel.
+#[cfg(target_os = "linux")]
+fn kernel_driver_version(device_path: &std::path::Path) -> String {
+    let Some(driver) = std::fs::read_link(device_path.join("driver"))
+        .ok()
+        .and_then(|link| link.file_name().map(|n| n.to_string_lossy().to_string()))
+    else {
+        return String::new();
+    };
+    let module_version = std::fs::read_to_string(format!("/sys/module/{driver}/version")).ok();
+    let kernel_version = sysinfo::System::kernel_version();
+    match (module_version, kernel_version) {
+        (Some(version), _) => format!("{driver} {}", version.trim()),
+        (None, Some(kernel)) => format!("{driver} (kernel {kernel})"),
+        (None, None) => driver,
+    }
+}
+
+/// Model of the `gpu : 0` block (the 3D core), e.g. `2000` for GC2000.
+pub fn parse_vivante_model(info: &str) -> Option<String> {
+    let mut in_core_0 = false;
+    for line in info.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            "gpu" => in_core_0 = value.trim() == "0",
+            "model" if in_core_0 => return Some(value.trim().to_string()),
+            _ => {}
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VivanteMemInfo {
+    /// Sum of `Used` over every pool (contiguous SYSTEM + MMU-mapped VIRTUAL).
+    pub used_bytes: u64,
+    /// `Total` of the contiguous SYSTEM pool, the only pool with a fixed size.
+    pub total_bytes: u64,
+}
+
+pub fn parse_vivante_meminfo(meminfo: &str) -> Option<VivanteMemInfo> {
+    let mut used_bytes = 0;
+    let mut total_bytes = 0;
+    let mut found = false;
+    for line in meminfo.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let Some(bytes) = value.trim().strip_suffix('B').and_then(|v| v.trim().parse::<u64>().ok()) else {
+            continue;
+        };
+        match key.trim() {
+            "Used" => {
+                used_bytes += bytes;
+                found = true;
+            }
+            "Total" => total_bytes = total_bytes.max(bytes),
+            _ => {}
+        }
+    }
+    found.then_some(VivanteMemInfo { used_bytes, total_bytes })
+}
+
 #[cfg(target_os = "linux")]
 fn resolve_gpu_name(device_path: &std::path::Path, fallback: &str) -> String {
     resolve_pci_device_name(device_path).unwrap_or_else(|| fallback.to_string())
@@ -431,6 +561,7 @@ impl DiscoveredGpu {
             GpuVendor::Nvidia { .. } => "NVIDIA",
             GpuVendor::AmdLinux { .. } => "AMD (Linux sysfs)",
             GpuVendor::IntelLinux { .. } => "Intel (Linux sysfs)",
+            GpuVendor::Vivante { .. } => "Vivante (galcore)",
         }
     }
 }
@@ -558,14 +689,12 @@ fn device_model(_device: &str) -> Option<String> {
 /// Whether `--all-disks` should track this filesystem, i.e. it is neither a boot/EFI/recovery
 /// partition nor excluded by `--exclude-disk`.
 fn is_auto_tracked(mount: &MountedDisk, excluded: &[String]) -> bool {
-    let skipped_by = auto_skipped_by(&mount.mount_point)
-        .map(ToString::to_string)
-        .or_else(|| {
-            excluded
-                .iter()
-                .find(|pattern| mount_matches(&mount.mount_point, pattern) || &mount.device == *pattern)
-                .cloned()
-        });
+    let skipped_by = auto_skipped_by(&mount.mount_point).map(ToString::to_string).or_else(|| {
+        excluded
+            .iter()
+            .find(|pattern| mount_matches(&mount.mount_point, pattern) || &mount.device == *pattern)
+            .cloned()
+    });
 
     match skipped_by {
         Some(pattern) => {
@@ -663,7 +792,7 @@ fn track_disk(disk_index: usize, mount: &MountedDisk) -> DiscoveredDisk {
         disk_index,
         mount_point: mount.mount_point.clone(),
         device: mount.device.clone(),
-        io_stat_name: device_stat_name(&mount.device),
+        io_stat_name: device_stat_name(&mount.device, &mount.mount_point),
         total_gb: mount.total_gb,
     };
     match &disk.io_stat_name {
@@ -886,5 +1015,35 @@ mod tests {
             speed_mbps: Some(1000),
         };
         assert_eq!(wired.display_label(), "eth0 (Ethernet - 1000 Mb/s)");
+    }
+
+    const GALCORE_INFO: &str = "gpu      : 0\nmodel    : 2000\nrevision : ffff5450\nproduct  :    0\neco      :    0\n\ngpu      : 8\nmodel    :  320\nrevision : 5303\n\ngpu      : 9\nmodel    :  355\n";
+    const GALCORE_MEMINFO: &str = "VIDEO MEMORY:\n  POOL SYSTEM:\n    Free :     112002796 B\n    Used :      22214932 B\n    MinFree :  107759308 B\n    MaxUsed :   26458420 B\n    Total :    134217728 B\n  POOL VIRTUAL:\n    Used :      21549056 B\n    MaxUsed :   21549056 B\n";
+
+    #[test]
+    fn galcore_version_drops_build_hash() {
+        assert_eq!(
+            parse_galcore_version("6.4.3.p2.336687 built at 7f42315f44fc\nPlatform path: drivers/mxc/gpu-viv\n").as_deref(),
+            Some("galcore 6.4.3.p2.336687")
+        );
+        assert_eq!(parse_galcore_version(""), None);
+    }
+
+    #[test]
+    fn vivante_model_is_the_3d_core() {
+        assert_eq!(parse_vivante_model(GALCORE_INFO).as_deref(), Some("2000"));
+        assert_eq!(parse_vivante_model("gpu      : 8\nmodel    :  320\n"), None);
+    }
+
+    #[test]
+    fn vivante_meminfo_sums_used_over_pools() {
+        assert_eq!(
+            parse_vivante_meminfo(GALCORE_MEMINFO),
+            Some(VivanteMemInfo {
+                used_bytes: 22_214_932 + 21_549_056,
+                total_bytes: 134_217_728,
+            })
+        );
+        assert_eq!(parse_vivante_meminfo("VIDEO MEMORY:\n"), None);
     }
 }

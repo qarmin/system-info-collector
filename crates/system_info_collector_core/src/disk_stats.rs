@@ -63,11 +63,38 @@ pub fn read_counters() -> HashMap<String, DiskCounters> {
 /// The kernel device name to look up in [`read_counters`] for a device path
 /// such as `/dev/nvme0n1p6` or `/dev/mapper/vg-root`, or `None` when the device
 /// has no I/O counters (missing on this platform, network filesystem, …).
-pub fn device_stat_name(device_path: &str) -> Option<String> {
+///
+/// Falls back to the mount point's own device number for roots mounted as `/dev/root`,
+/// a name the kernel invents in /proc/mounts that exists neither in /dev nor in /proc/diskstats.
+pub fn device_stat_name(device_path: &str, mount_point: &str) -> Option<String> {
+    let counters = read_counters();
     let canonical = std::fs::canonicalize(device_path).ok();
     let path = canonical.as_deref().unwrap_or_else(|| std::path::Path::new(device_path));
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    read_counters().contains_key(&name).then_some(name)
+    let by_path = path.file_name().map(|name| name.to_string_lossy().into_owned());
+    by_path
+        .into_iter()
+        .chain(mounted_device_name(mount_point))
+        .find(|name| counters.contains_key(name))
+}
+
+#[cfg(target_os = "linux")]
+fn mounted_device_name(mount_point: &str) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let (major, minor) = split_dev(std::fs::metadata(mount_point).ok()?.dev());
+    let target = std::fs::read_link(format!("/sys/dev/block/{major}:{minor}")).ok()?;
+    Some(target.file_name()?.to_string_lossy().into_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn mounted_device_name(_mount_point: &str) -> Option<String> {
+    None
+}
+
+/// glibc's `gnu_dev_major`/`gnu_dev_minor` encoding of `st_dev`.
+fn split_dev(dev: u64) -> (u64, u64) {
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
+    (major, minor)
 }
 
 /// Field layout per line: `major minor name reads rd_merged rd_sectors rd_ms writes
@@ -98,6 +125,13 @@ fn parse_counters(content: &str) -> HashMap<String, DiskCounters> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn splits_device_numbers_like_glibc() {
+        assert_eq!(split_dev(0x0801), (8, 1));
+        assert_eq!(split_dev(0x0001_0301), (259, 1));
+        assert_eq!(split_dev(0xb300), (179, 0));
+    }
 
     #[test]
     fn parses_diskstats_lines() {

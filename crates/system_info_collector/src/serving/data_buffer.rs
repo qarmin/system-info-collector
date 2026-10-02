@@ -60,6 +60,8 @@ pub struct SystemInfo {
     pub gpu_names: Vec<String>,
     /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 = unknown).
     pub gpu_vram_mb: Vec<u64>,
+    /// Driver per GPU, parallel to `gpu_names` (empty = unknown).
+    pub gpu_driver_versions: Vec<String>,
     /// Every attached filesystem, carrying the DISK_N index of the tracked ones.
     pub mounted_disks: Vec<MountedFilesystem>,
     /// What each NET_N column refers to, e.g. `wlan0 (WiFi - Wi-Fi 6 AX201)`.
@@ -111,6 +113,7 @@ impl DataBuffer {
                 cpu_model: String::new(),
                 gpu_names: vec![],
                 gpu_vram_mb: vec![],
+                gpu_driver_versions: vec![],
                 mounted_disks: vec![],
                 net_labels: vec![],
                 start_time: 0.0,

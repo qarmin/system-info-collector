@@ -144,6 +144,7 @@ fn print_gpus() {
             GpuVendor::Nvidia { nvml_index, .. } => print_nvidia_sample(*nvml_index),
             GpuVendor::AmdLinux { handle, .. } => print_amd_sample(handle),
             GpuVendor::IntelLinux { card_device_path, .. } => print_intel_sample(card_device_path),
+            GpuVendor::Vivante { register_base, .. } => println!("    idle register at {register_base:#x}"),
         }
     }
 }

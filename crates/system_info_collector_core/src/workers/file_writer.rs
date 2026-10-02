@@ -334,6 +334,13 @@ pub fn write_csv_header(
         .map(|g| format!(",GPU_VRAM_{}={}", g.gpu_index, g.vram_total_mb))
         .collect();
 
+    let gpu_driver_meta: String = discovery
+        .gpus
+        .iter()
+        .filter(|g| !g.driver_version.is_empty())
+        .map(|g| format!(",GPU_DRIVER_{}={}", g.gpu_index, g.driver_version.replace(',', " ")))
+        .collect();
+
     // CPU model from first CPU (commas replaced to avoid breaking the CSV metadata line).
     let cpu_model_meta = sys
         .cpus()
@@ -367,7 +374,7 @@ pub fn write_csv_header(
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());
     let general_info = format!(
-        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}{}",
+        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}{}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -383,6 +390,7 @@ pub fn write_csv_header(
         net_meta,
         cpu_model_meta,
         gpu_vram_meta,
+        gpu_driver_meta,
         disk_meta,
     );
     // Column header line.

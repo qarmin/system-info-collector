@@ -13,6 +13,8 @@ use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker,
 
 #[cfg(target_os = "linux")]
 use crate::workers::amd_intel_gpu_worker;
+#[cfg(target_os = "linux")]
+use crate::workers::vivante_gpu_worker;
 
 /// The central collection engine.
 ///
@@ -153,7 +155,7 @@ impl CollectorEngine {
                 let amd_intel_gpus: Vec<_> = discovery
                     .gpus
                     .iter()
-                    .filter(|g| !matches!(g.vendor, GpuVendor::Nvidia { .. }))
+                    .filter(|g| matches!(g.vendor, GpuVendor::AmdLinux { .. } | GpuVendor::IntelLinux { .. }))
                     .cloned()
                     .collect();
                 if !amd_intel_gpus.is_empty() {
@@ -162,6 +164,15 @@ impl CollectorEngine {
                         Arc::clone(&self.state),
                         Arc::clone(&self.shutdown),
                         Arc::new(amd_intel_gpus),
+                    ));
+                }
+
+                if let Some(gpu) = discovery.gpus.iter().find(|g| matches!(g.vendor, GpuVendor::Vivante { .. })) {
+                    join_set.spawn(vivante_gpu_worker::run(
+                        Arc::clone(&self.settings),
+                        Arc::clone(&self.state),
+                        Arc::clone(&self.shutdown),
+                        gpu.clone(),
                     ));
                 }
             }

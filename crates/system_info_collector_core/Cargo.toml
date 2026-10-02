@@ -28,3 +28,6 @@ humansize = "2.1.3"
 
 [features]
 clap = ["dep:clap"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

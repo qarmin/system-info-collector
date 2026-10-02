@@ -91,6 +91,7 @@ fn slice_model_by_indices(model: &CollectedItemModels, indices: &[usize]) -> Col
         cpu_model: model.cpu_model.clone(),
         gpu_names: model.gpu_names.clone(),
         gpu_vram_mb: model.gpu_vram_mb.clone(),
+        gpu_driver_versions: model.gpu_driver_versions.clone(),
         disk_labels: model.disk_labels.clone(),
         net_labels: model.net_labels.clone(),
     }
@@ -356,7 +357,13 @@ fn notes_html(loaded_results: &CollectedItemModels) -> String {
             .filter(|&&mb| mb > 0)
             .map(|&mb| format!(" ({} VRAM)", humansize::format_size(mb * 1024 * 1024, humansize::BINARY)))
             .unwrap_or_default();
-        notes_vec.push(format!("GPU {idx}: {name}{vram_str}"));
+        let driver_str = loaded_results
+            .gpu_driver_versions
+            .get(idx)
+            .filter(|driver| !driver.is_empty())
+            .map(|driver| format!(", driver {driver}"))
+            .unwrap_or_default();
+        notes_vec.push(format!("GPU {idx}: {name}{vram_str}{driver_str}"));
     }
     for (idx, label) in loaded_results.disk_labels.iter().enumerate() {
         notes_vec.push(format!("Disk {idx}: {label}"));

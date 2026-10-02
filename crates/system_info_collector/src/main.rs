@@ -100,6 +100,7 @@ async fn main() {
 
             let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
             let gpu_vram_mb: Vec<u64> = engine.discovery().gpus.iter().map(|g| g.vram_total_mb).collect();
+            let gpu_driver_versions: Vec<String> = engine.discovery().gpus.iter().map(|g| g.driver_version.clone()).collect();
             if gpu_names.is_empty() {
                 info!("GPU: none detected");
             } else {
@@ -223,6 +224,7 @@ async fn main() {
                         cpu_model: cpu_model.clone(),
                         gpu_names: gpu_names.clone(),
                         gpu_vram_mb: gpu_vram_mb.clone(),
+                        gpu_driver_versions,
                         mounted_disks,
                         net_labels: interfaces.iter().map(DiscoveredInterface::display_label).collect(),
                         start_time: settings.start_time,

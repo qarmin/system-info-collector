@@ -20,6 +20,8 @@ pub struct CollectedItemModels {
     pub gpu_names: Vec<String>,
     /// Total VRAM per GPU in MB, parallel to `gpu_names` (0 if unknown).
     pub gpu_vram_mb: Vec<u64>,
+    /// Driver per GPU, parallel to `gpu_names` (empty if unknown or on old files).
+    pub gpu_driver_versions: Vec<String>,
     /// Disk labels parsed from CSV metadata (DISK_LABEL_N, mount point on older files).
     pub disk_labels: Vec<String>,
     /// Network interface labels parsed from CSV metadata (NET_LABEL_N, name on older files).

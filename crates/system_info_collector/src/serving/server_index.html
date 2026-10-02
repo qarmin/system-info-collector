@@ -43,14 +43,22 @@
             border-left: 4px solid #1976d2;
         }
         .system-info h3 {
-            margin-top: 0;
+            margin: 0;
             color: #90caf9;
+        }
+        .system-info-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .system-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin-top: 10px;
+        }
+        .system-info.collapsed .system-stats {
+            display: none;
         }
         .stat-item {
             padding: 10px;
@@ -330,7 +338,10 @@
         <h1>System Info Collector - Live Data</h1>
 
         <div class="system-info" id="systemInfo">
-            <h3>System Information</h3>
+            <div class="system-info-header">
+                <h3>System Information</h3>
+                <button id="toggleSystemInfoBtn" onclick="toggleSystemInfo()">Hide</button>
+            </div>
             <div class="system-stats">
                 <div class="stat-item">
                     <div class="stat-label">Operating System</div>
@@ -363,6 +374,10 @@
                 <div class="stat-item">
                     <div class="stat-label">GPU VRAM</div>
                     <div class="stat-value" id="gpuVram">Loading...</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">GPU Driver</div>
+                    <div class="stat-value" id="gpuDriver">Loading...</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">Disks</div>
@@ -544,6 +559,36 @@
             if (saved.hiddenSeries && typeof saved.hiddenSeries === 'object') state.hiddenSeries = saved.hiddenSeries;
         }
 
+        // Per page rather than in UI_STATE_KEY: every exported report is its own file:// URL.
+        const SYSTEM_INFO_HIDDEN_KEY = `system-info-collector-sysinfo-hidden:${location.pathname}${location.search}`;
+
+        function applySystemInfoHidden(hidden) {
+            document.getElementById('systemInfo').classList.toggle('collapsed', hidden);
+            document.getElementById('toggleSystemInfoBtn').textContent = hidden ? 'Show' : 'Hide';
+        }
+
+        function loadSystemInfoHidden() {
+            try {
+                return localStorage.getItem(SYSTEM_INFO_HIDDEN_KEY) === '1';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function toggleSystemInfo() {
+            const hidden = !document.getElementById('systemInfo').classList.contains('collapsed');
+            applySystemInfoHidden(hidden);
+            try {
+                if (hidden) {
+                    localStorage.setItem(SYSTEM_INFO_HIDDEN_KEY, '1');
+                } else {
+                    localStorage.removeItem(SYSTEM_INFO_HIDDEN_KEY);
+                }
+            } catch (e) {
+                // Same as saveUiState - unavailable storage only costs the remembered state.
+            }
+        }
+
         function hiddenLabels(chartKey) {
             return state.hiddenSeries[chartKey] || (state.hiddenSeries[chartKey] = []);
         }
@@ -614,6 +659,11 @@
             document.getElementById('gpuVram').textContent =
                 (gpuNames && gpuNames.length > 0)
                     ? gpuNames.map((name, i) => `${name}: ${gpuVramMb[i] ? gpuVramMb[i].toFixed(0) + ' MB' : 'unknown'}`).join(', ')
+                    : 'N/A';
+            const gpuDrivers = metadata.system_info.gpu_driver_versions || [];
+            document.getElementById('gpuDriver').textContent =
+                (gpuNames && gpuNames.length > 0)
+                    ? gpuNames.map((name, i) => `${name}: ${gpuDrivers[i] || 'unknown'}`).join(', ')
                     : 'N/A';
             // DISK_0 / NET_0 in the raw data mean nothing on their own, so the panel
             // spells out which device each index is.
@@ -1572,6 +1622,7 @@
         document.addEventListener('DOMContentLoaded', async function () {
             loadUiState();
             applyFullWidth();
+            applySystemInfoHidden(loadSystemInfoHidden());
             document.getElementById('showTable').checked = state.showTable;
 
             await loadMetadata();

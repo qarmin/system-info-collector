@@ -1882,6 +1882,7 @@ dependencies = [
  "chrono",
  "clap",
  "humansize",
+ "libc",
  "log",
  "nvml-wrapper",
  "serde",
