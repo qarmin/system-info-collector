@@ -42,6 +42,12 @@ pub enum SimpleDataCollectionMode {
     /// Write write throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
     #[cfg_attr(feature = "clap", clap(name = "disk-write"))]
     DISK_WRITE,
+    /// Write the average ICMP round-trip time in ms for each --ping-target (Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "ping-latency"))]
+    PING_LATENCY,
+    /// Write the share of lost ICMP echo requests in % for each --ping-target (Linux only).
+    #[cfg_attr(feature = "clap", clap(name = "ping-loss"))]
+    PING_LOSS,
 }
 
 impl SimpleDataCollectionMode {
@@ -62,6 +68,10 @@ impl SimpleDataCollectionMode {
 
     pub fn is_disk_io(self) -> bool {
         matches!(self, Self::DISK_BUSY | Self::DISK_READ | Self::DISK_WRITE)
+    }
+
+    pub fn is_ping(self) -> bool {
+        matches!(self, Self::PING_LATENCY | Self::PING_LOSS)
     }
 }
 
@@ -116,6 +126,9 @@ pub enum DataType {
     DISK_N_BUSY_PCT((usize, String)),
     DISK_N_READ_MBPS((usize, String)),
     DISK_N_WRITE_MBPS((usize, String)),
+    // Dynamic per-ping-target columns: (target_index, target_label)
+    PING_N_RTT_MS((usize, String)),
+    PING_N_LOSS_PCT((usize, String)),
 }
 
 impl std::fmt::Display for DataType {
@@ -155,6 +168,8 @@ impl DataType {
             Self::DISK_N_BUSY_PCT((idx, _)) => format!("DISK_{idx}_BUSY_PCT"),
             Self::DISK_N_READ_MBPS((idx, _)) => format!("DISK_{idx}_READ_MBPS"),
             Self::DISK_N_WRITE_MBPS((idx, _)) => format!("DISK_{idx}_WRITE_MBPS"),
+            Self::PING_N_RTT_MS((idx, _)) => format!("PING_{idx}_RTT_MS"),
+            Self::PING_N_LOSS_PCT((idx, _)) => format!("PING_{idx}_LOSS_PCT"),
         }
     }
 
@@ -167,6 +182,7 @@ impl DataType {
         iface_names: &std::collections::HashMap<usize, String>,
         custom_names: &std::collections::HashMap<usize, String>,
         disk_names: &std::collections::HashMap<usize, String>,
+        ping_names: &std::collections::HashMap<usize, String>,
     ) -> Option<Self> {
         match s {
             "SECONDS_SINCE_START" => Some(Self::SECONDS_SINCE_START),
@@ -243,6 +259,19 @@ impl DataType {
                         };
                     }
                 }
+                if let Some(rest) = s.strip_prefix("PING_") {
+                    let parts: Vec<&str> = rest.splitn(2, '_').collect();
+                    if parts.len() == 2
+                        && let Ok(idx) = parts[0].parse::<usize>()
+                    {
+                        let name = ping_names.get(&idx).cloned().unwrap_or_else(|| format!("target{idx}"));
+                        return match parts[1] {
+                            "RTT_MS" => Some(Self::PING_N_RTT_MS((idx, name))),
+                            "LOSS_PCT" => Some(Self::PING_N_LOSS_PCT((idx, name))),
+                            _ => None,
+                        };
+                    }
+                }
                 None
             }
         }
@@ -278,6 +307,8 @@ impl DataType {
             "DISK_N_BUSY_PCT",
             "DISK_N_READ_MBPS",
             "DISK_N_WRITE_MBPS",
+            "PING_N_RTT_MS",
+            "PING_N_LOSS_PCT",
         ]
         .join(", ")
     }
@@ -355,6 +386,14 @@ impl DataType {
         matches!(self, Self::DISK_N_READ_MBPS(_) | Self::DISK_N_WRITE_MBPS(_))
     }
 
+    pub fn is_ping_latency(&self) -> bool {
+        matches!(self, Self::PING_N_RTT_MS(_))
+    }
+
+    pub fn is_ping_loss(&self) -> bool {
+        matches!(self, Self::PING_N_LOSS_PCT(_))
+    }
+
     pub fn pretty_print(&self) -> String {
         match self {
             Self::SECONDS_SINCE_START => "Unix timestamp".to_string(),
@@ -384,6 +423,8 @@ impl DataType {
             Self::DISK_N_BUSY_PCT((_, mount)) => format!("{mount} busy %"),
             Self::DISK_N_READ_MBPS((_, mount)) => format!("{mount} read MB/s"),
             Self::DISK_N_WRITE_MBPS((_, mount)) => format!("{mount} write MB/s"),
+            Self::PING_N_RTT_MS((_, target)) => format!("{target} RTT ms"),
+            Self::PING_N_LOSS_PCT((_, target)) => format!("{target} loss %"),
         }
     }
 }
@@ -430,4 +471,6 @@ pub enum GeneralInfoGroup {
     DISK,
     DISK_BUSY,
     DISK_IO,
+    PING_LATENCY,
+    PING_LOSS,
 }

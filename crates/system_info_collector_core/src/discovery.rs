@@ -172,6 +172,18 @@ pub struct RuntimeDiscovery {
     pub gpus: Vec<DiscoveredGpu>,
     pub interfaces: Vec<DiscoveredInterface>,
     pub disks: Vec<DiscoveredDisk>,
+    /// Empty when no ping metric was requested or pinging is unavailable.
+    pub ping_targets: Vec<DiscoveredPingTarget>,
+    /// Problems worth showing to the user, e.g. a requested metric that cannot be collected.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredPingTarget {
+    /// Slot index in `SharedState.ping_windows`.
+    pub ping_index: usize,
+    /// Host name, IP, or `gateway`.
+    pub host: String,
 }
 
 impl RuntimeDiscovery {

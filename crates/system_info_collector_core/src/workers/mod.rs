@@ -3,6 +3,8 @@ pub mod disk_io_worker;
 pub mod file_writer;
 pub mod network_worker;
 pub mod nvidia_worker;
+#[cfg(target_os = "linux")]
+pub mod ping_worker;
 pub mod sysinfo_worker;
 #[cfg(target_os = "linux")]
 pub mod vivante_gpu_worker;

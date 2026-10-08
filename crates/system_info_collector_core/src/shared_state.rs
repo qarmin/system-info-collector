@@ -44,6 +44,26 @@ pub struct DiskIoSnapshot {
     pub write_mb_per_sec: f64,
 }
 
+/// Echo results for one ping target since the last CSV row.
+/// Indexed by `DiscoveredPingTarget::ping_index`.
+#[derive(Debug, Clone, Default)]
+pub struct PingWindow {
+    pub replies: u32,
+    pub lost: u32,
+    pub rtt_sum_ms: f64,
+}
+
+impl PingWindow {
+    pub fn avg_rtt_ms(&self) -> Option<f64> {
+        (self.replies > 0).then(|| self.rtt_sum_ms / f64::from(self.replies))
+    }
+
+    pub fn loss_pct(&self) -> Option<f64> {
+        let total = self.replies + self.lost;
+        (total > 0).then(|| f64::from(self.lost) * 100.0 / f64::from(total))
+    }
+}
+
 /// Per-process metrics for a single tracked process.
 #[derive(Debug, Clone)]
 pub struct ProcessSnapshot {
@@ -71,6 +91,8 @@ pub struct SharedState {
     /// Latest per-disk I/O snapshots, indexed by disk_index.
     /// Sized to `RuntimeDiscovery::disk_count()` at engine startup.
     pub latest_disk_io: Vec<Option<DiskIoSnapshot>>,
+    /// Ping results accumulated since the last row, drained by file_writer.
+    pub ping_windows: Vec<PingWindow>,
     /// Latest per-process snapshots, indexed by search-pattern slot.
     /// Written by sysinfo_worker alongside sysinfo data.
     pub latest_processes: Vec<Option<ProcessSnapshot>>,

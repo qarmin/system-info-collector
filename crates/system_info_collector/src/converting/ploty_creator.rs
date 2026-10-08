@@ -230,8 +230,8 @@ fn per_chart_legends_script() -> &'static str {
 // ── main plot ─────────────────────────────────────────────────────────────────
 
 /// vendor/plotly patches the upstream `Layout` struct (capped at axis 8) up to
-/// axis 12 - see vendor/plotly/src/layout/mod.rs and `set_axes` below.
-const MAX_CHART_ROWS: usize = 12;
+/// axis 14 - see vendor/plotly/src/layout/mod.rs and `set_axes` below.
+const MAX_CHART_ROWS: usize = 14;
 
 /// Fine-grained chart groups.  GPU is split into three separate charts so that
 /// utilisation (%), VRAM (MB), and temperature (°C) each get their own axis.
@@ -250,6 +250,8 @@ enum ChartGroup {
     DiskAvailable,
     DiskBusy,
     DiskIo,
+    PingLatency,
+    PingLoss,
 }
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
@@ -328,6 +330,12 @@ fn build_main_plot(loaded_results: &CollectedItemModels, settings: &ConvertSetti
     if let Some(&i) = layout_info.get(&ChartGroup::DiskIo) {
         create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_io, settings);
     }
+    if let Some(&i) = layout_info.get(&ChartGroup::PingLatency) {
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_ping_latency, settings);
+    }
+    if let Some(&i) = layout_info.get(&ChartGroup::PingLoss) {
+        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_ping_loss, settings);
+    }
 
     Ok(plot)
 }
@@ -397,6 +405,8 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     let has_disk_available = has_disk && loaded_results.collected_data.keys().any(DataType::is_disk_available);
     let has_disk_busy = groups.contains(&GeneralInfoGroup::DISK_BUSY);
     let has_disk_io = groups.contains(&GeneralInfoGroup::DISK_IO);
+    let has_ping_latency = groups.contains(&GeneralInfoGroup::PING_LATENCY);
+    let has_ping_loss = groups.contains(&GeneralInfoGroup::PING_LOSS);
 
     let rows = has_memory as usize
         + has_cpu as usize
@@ -409,9 +419,11 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
         + has_disk_used as usize
         + has_disk_available as usize
         + has_disk_busy as usize
-        + has_disk_io as usize;
+        + has_disk_io as usize
+        + has_ping_latency as usize
+        + has_ping_loss as usize;
 
-    // Upstream plotly caps out at 8 named axes; vendor/plotly patches in xaxis9-12
+    // Upstream plotly caps out at 8 named axes; vendor/plotly patches in xaxis9-14
     // (see set_axes below), so the grid can go up to MAX_CHART_ROWS.
     let capped_rows = rows.min(MAX_CHART_ROWS);
     let dynamic_height = settings.plot_height.max(capped_rows as u32 * 380);
@@ -500,6 +512,15 @@ fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSe
     if has_disk_io {
         add_chart!(ChartGroup::DiskIo, Axis::new().title(Title::with_text("Disk I/O [MB/s]")));
     }
+    if has_ping_latency {
+        add_chart!(ChartGroup::PingLatency, Axis::new().title(Title::with_text("Ping RTT [ms]")));
+    }
+    if has_ping_loss {
+        add_chart!(
+            ChartGroup::PingLoss,
+            Axis::new().range(vec![-1, 100]).title(Title::with_text("Ping Loss [%]"))
+        );
+    }
 
     let _ = current;
     (layout, idx_info)
@@ -569,6 +590,7 @@ fn device_color(data_type: &DataType, white_mode: bool) -> Option<String> {
     const DISK_BASE: usize = 205;
     const GPU_BASE: usize = 25;
     const NET_BASE: usize = 105;
+    const PING_BASE: usize = 320;
     const HUE_STEP: usize = 137;
 
     let (base, idx, strong) = match data_type {
@@ -583,6 +605,7 @@ fn device_color(data_type: &DataType, white_mode: bool) -> Option<String> {
         DataType::NET_N_TX_BPS((i, _)) | DataType::NET_N_TX_TOTAL_MB((i, _)) => (NET_BASE, *i, false),
         DataType::NETWORK_RX_BYTES_PER_SEC => (NET_BASE, 0, true),
         DataType::NETWORK_TX_BYTES_PER_SEC => (NET_BASE, 0, false),
+        DataType::PING_N_RTT_MS((i, _)) | DataType::PING_N_LOSS_PCT((i, _)) => (PING_BASE, *i, true),
         _ => return None,
     };
 
@@ -614,7 +637,13 @@ fn create_traces(
     let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| belongs_to_chart(dt)).collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
-        let mut trace = Scatter::new(dates.to_owned(), data.clone())
+        // A window with no reply has no RTT; an empty value leaves a gap instead of a dip to -1.
+        let values = if data_type.is_ping_latency() {
+            data.iter().map(|v| if v == "-1" { String::new() } else { v.clone() }).collect()
+        } else {
+            data.clone()
+        };
+        let mut trace = Scatter::new(dates.to_owned(), values)
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
             .x_axis(format!("x{i}"));
@@ -639,6 +668,8 @@ fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {
         10 => layout.x_axis10(x).y_axis10(y),
         11 => layout.x_axis11(x).y_axis11(y),
         12 => layout.x_axis12(x).y_axis12(y),
+        13 => layout.x_axis13(x).y_axis13(y),
+        14 => layout.x_axis14(x).y_axis14(y),
         _ => layout,
     }
 }

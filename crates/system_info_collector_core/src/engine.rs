@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Error;
-use log::info;
+use log::{info, warn};
 use sysinfo::{ProcessesToUpdate, System};
 use tokio::task::JoinSet;
 
@@ -13,6 +13,8 @@ use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker,
 
 #[cfg(target_os = "linux")]
 use crate::workers::amd_intel_gpu_worker;
+#[cfg(target_os = "linux")]
+use crate::workers::ping_worker;
 #[cfg(target_os = "linux")]
 use crate::workers::vivante_gpu_worker;
 
@@ -26,11 +28,15 @@ pub struct CollectorEngine {
     state: Arc<RwLock<SharedState>>,
     shutdown: Arc<AtomicBool>,
     discovery: Arc<RuntimeDiscovery>,
+    #[cfg(target_os = "linux")]
+    ping_client: Option<surge_ping::Client>,
 }
 
 impl CollectorEngine {
     /// Create the engine and run hardware discovery once.
     /// Discovery results are stored and exposed via [`CollectorEngine::discovery`].
+    ///
+    /// Must be called inside a Tokio runtime - the ICMP socket for ping metrics is opened here.
     pub fn new(settings: Arc<CollectSettings>) -> Self {
         // Hardware discovery always runs, independent of which `-m` metrics were
         // requested, so startup logging / CSV header metadata (detected GPU model,
@@ -41,21 +47,59 @@ impl CollectorEngine {
         let interfaces = discover_interfaces(&settings.network_interfaces, settings.all_networks, &settings.excluded_networks);
         let disks = discover_disks(&settings.disk_mount_points, settings.all_disks, &settings.excluded_disks);
 
+        let mut warnings = Vec::new();
+        #[cfg_attr(not(target_os = "linux"), expect(unused_mut))]
+        let mut ping_targets = Vec::new();
+        #[cfg(target_os = "linux")]
+        let mut ping_client = None;
+        if settings.collection_mode.iter().any(|m| m.is_ping()) {
+            #[cfg(target_os = "linux")]
+            match ping_worker::open_client() {
+                Ok(client) => {
+                    ping_client = Some(client);
+                    ping_targets = settings
+                        .ping_targets
+                        .iter()
+                        .enumerate()
+                        .map(|(ping_index, host)| crate::discovery::DiscoveredPingTarget {
+                            ping_index,
+                            host: host.clone(),
+                        })
+                        .collect();
+                }
+                Err(e) => warnings.push(e),
+            }
+            #[cfg(not(target_os = "linux"))]
+            warnings.push("Ping metrics are only supported on Linux and were disabled.".to_string());
+        }
+        for warning in &warnings {
+            warn!("{warning}");
+        }
+
         let state = SharedState {
             latest_processes: vec![None; settings.process_cmd_to_search.len()],
             latest_gpus: vec![None; gpus.len()],
             latest_networks: vec![None; interfaces.len()],
             latest_disk_io: vec![None; disks.len()],
+            ping_windows: vec![Default::default(); ping_targets.len()],
             ..SharedState::default()
         };
 
-        let discovery = Arc::new(RuntimeDiscovery { gpus, interfaces, disks });
+        let discovery = Arc::new(RuntimeDiscovery {
+            gpus,
+            interfaces,
+            disks,
+            ping_targets,
+            warnings,
+        });
 
         Self {
             settings,
             state: Arc::new(RwLock::new(state)),
             shutdown: Arc::new(AtomicBool::new(false)),
             discovery,
+            #[cfg(target_os = "linux")]
+            ping_client,
         }
     }
 
@@ -129,6 +173,19 @@ impl CollectorEngine {
                 Arc::clone(&self.state),
                 Arc::clone(&self.shutdown),
                 Arc::clone(&discovery),
+            ));
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(client) = self.ping_client.clone()
+            && !discovery.ping_targets.is_empty()
+        {
+            join_set.spawn(ping_worker::run(
+                Arc::clone(&self.settings),
+                Arc::clone(&self.state),
+                Arc::clone(&self.shutdown),
+                Arc::clone(&discovery),
+                client,
             ));
         }
 

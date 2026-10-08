@@ -190,6 +190,16 @@ async fn main() {
                                 data_types.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.display_label())));
                             }
                         }
+                        SimpleDataCollectionMode::PING_LATENCY => {
+                            for target in &engine.discovery().ping_targets {
+                                data_types.push(DataType::PING_N_RTT_MS((target.ping_index, target.host.clone())));
+                            }
+                        }
+                        SimpleDataCollectionMode::PING_LOSS => {
+                            for target in &engine.discovery().ping_targets {
+                                data_types.push(DataType::PING_N_LOSS_PCT((target.ping_index, target.host.clone())));
+                            }
+                        }
                         SimpleDataCollectionMode::CPU_USAGE_TOTAL => data_types.push(DataType::CPU_USAGE_TOTAL),
                         SimpleDataCollectionMode::CPU_USAGE_PER_CORE => data_types.push(DataType::CPU_USAGE_PER_CORE),
                         SimpleDataCollectionMode::SWAP_FREE => data_types.push(DataType::SWAP_FREE),
@@ -234,6 +244,7 @@ async fn main() {
                     column_labels,
                     max_buffer_size: buffer_capacity,
                     check_interval: settings.check_interval,
+                    warnings: engine.discovery().warnings.clone(),
                 };
                 buffer.set_metadata(metadata);
 

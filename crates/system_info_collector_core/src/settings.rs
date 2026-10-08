@@ -48,6 +48,12 @@ pub struct CollectSettings {
     pub disk_interval_secs: f32,
     /// Interval at which disk_io_worker samples the cumulative I/O counters.
     pub disk_io_interval_secs: f32,
+    /// Interval at which ping_worker sends an echo request to every target.
+    pub ping_interval_secs: f32,
+    /// How long ping_worker waits for a reply before counting the request as lost.
+    pub ping_timeout_secs: f32,
+    /// Hosts or IPs to ping; `gateway` stands for the current default gateway.
+    pub ping_targets: Vec<String>,
 
     pub convert: ConvertSettings,
     pub collection_mode: Vec<SimpleDataCollectionMode>,

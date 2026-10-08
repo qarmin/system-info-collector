@@ -12,7 +12,8 @@
             color: #e0e0e0;
         }
         .container {
-            max-width: 1200px;
+            --chart-scale: 1;
+            max-width: max(1200px, calc(900px * var(--chart-scale) + 80px));
             margin: 0 auto;
             background-color: #23272a;
             padding: 20px;
@@ -28,9 +29,29 @@
             box-shadow: none;
         }
         .container.full-width .chart-container,
-        .container.full-width .table-scroll {
+        .container.full-width .table-scroll,
+        .container.gallery .table-scroll {
             max-width: 100% !important;
             width: 100% !important;
+        }
+        .container.gallery {
+            max-width: none;
+            border-radius: 0;
+            box-shadow: none;
+        }
+        /* The 880px floor keeps two charts per row on a 1920px screen at close to their normal width. */
+        .container.gallery .charts {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(880px * var(--chart-scale))), 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+        .container.gallery .chart-container {
+            max-width: none;
+            width: auto;
+            min-width: 0;
+            margin: 0;
+            padding: 12px;
         }
         h1 {
             color: #fff;
@@ -153,6 +174,26 @@
             border-radius: 4px;
             margin: 10px 0;
         }
+        .warning-banner {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            color: #ffe082;
+            background-color: #3a3214;
+            border: 1px solid #8d7a2a;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .warning-banner span {
+            flex: 1;
+        }
+        .warning-banner button {
+            background: none;
+            color: #ffe082;
+            padding: 0 6px;
+            font-size: 1.2em;
+        }
         .hint {
             color: #b0b0b0;
             font-size: 0.85em;
@@ -195,7 +236,7 @@
         }
         .chart-container {
             width: 100%;
-            max-width: 900px;
+            max-width: calc(900px * var(--chart-scale));
             margin: 0 auto 30px auto;
             background: #23272a;
             border-radius: 8px;
@@ -216,7 +257,16 @@
 <body>
     <div class="container" id="mainContainer">
         <div style="text-align:right; margin-bottom:10px;">
-            <button id="toggleWidthBtn" onclick="toggleFullWidth()">Full Width</button>
+            <label>Layout:
+                <select id="layoutSelect" onchange="setLayout(this.value)">
+                    <option value="normal">Normal</option>
+                    <option value="full-width">Full width</option>
+                    <option value="gallery">Gallery</option>
+                </select>
+            </label>
+            <label style="margin-left:8px;" title="Full width always spans the whole screen, so the size does not apply there">Chart size:
+                <select id="chartScaleSelect" onchange="setChartScale(Number(this.value))"></select>
+            </label>
             <button id="recordBtn" onclick="showRecordPanel()" style="margin-left:8px;">Record processes</button>
             <button id="exportBtn" onclick="showExportPanel()" style="margin-left:8px;">Export</button>
         </div>
@@ -337,6 +387,8 @@
         </div>
         <h1>System Info Collector - Live Data</h1>
 
+        <div id="warnings"></div>
+
         <div class="system-info" id="systemInfo">
             <div class="system-info-header">
                 <h3>System Information</h3>
@@ -419,6 +471,7 @@
             <div class="loading">Loading stats...</div>
         </div>
 
+        <div class="charts">
         <div class="chart-container" id="cpuChartContainer" style="display:none;">
             <h3>CPU Usage [%]</h3>
             <canvas id="cpuChart" height="120"></canvas>
@@ -467,6 +520,15 @@
             <h3>Disk I/O [MB/s]</h3>
             <canvas id="diskIoChart" height="120"></canvas>
         </div>
+        <div class="chart-container" id="pingLatencyChartContainer" style="display:none;">
+            <h3>Ping RTT [ms]</h3>
+            <canvas id="pingLatencyChart" height="120"></canvas>
+        </div>
+        <div class="chart-container" id="pingLossChartContainer" style="display:none;">
+            <h3>Ping Loss [%]</h3>
+            <canvas id="pingLossChart" height="120"></canvas>
+        </div>
+        </div>
 
         <div id="error" class="error" style="display: none;"></div>
 
@@ -498,6 +560,8 @@
         const REDRAW_INTERVALS = [1, 2, 5, 10, 30, 60];
         const DEFAULT_REDRAW_SECONDS = 5;
         const TABLE_MAX_ROWS = 1000;
+        const LAYOUTS = ['normal', 'full-width', 'gallery'];
+        const CHART_SCALES = [0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
         let metadata = null;
         let socket = null;
@@ -511,7 +575,8 @@
             totalCount: 0,
             maxBufferSize: 0,
             showTable: false,
-            fullWidth: false,
+            layout: 'gallery',
+            chartScale: 1,
             /// Chart key → labels of the series hidden via the legend.
             hiddenSeries: {},
         };
@@ -535,7 +600,8 @@
                     rangeSeconds: state.rangeSeconds,
                     redrawSeconds: state.redrawSeconds,
                     showTable: state.showTable,
-                    fullWidth: state.fullWidth,
+                    layout: state.layout,
+                    chartScale: state.chartScale,
                     hiddenSeries: state.hiddenSeries,
                 }));
             } catch (e) {
@@ -555,7 +621,9 @@
             if (RANGES.some(([, seconds]) => seconds === saved.rangeSeconds)) state.rangeSeconds = saved.rangeSeconds;
             if (REDRAW_INTERVALS.includes(saved.redrawSeconds)) state.redrawSeconds = saved.redrawSeconds;
             state.showTable = !!saved.showTable;
-            state.fullWidth = !!saved.fullWidth;
+            if (LAYOUTS.includes(saved.layout)) state.layout = saved.layout;
+            else if (saved.fullWidth) state.layout = 'full-width';
+            if (CHART_SCALES.includes(saved.chartScale)) state.chartScale = saved.chartScale;
             if (saved.hiddenSeries && typeof saved.hiddenSeries === 'object') state.hiddenSeries = saved.hiddenSeries;
         }
 
@@ -621,6 +689,42 @@
             rebuildAll();
         }
 
+        // Keyed by the text, so a dismissed warning stays hidden but a different one still shows.
+        const DISMISSED_WARNING_PREFIX = 'system-info-collector-warning-dismissed:';
+
+        function isWarningDismissed(text) {
+            try {
+                return localStorage.getItem(DISMISSED_WARNING_PREFIX + text) === '1';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function renderWarnings(warnings) {
+            const container = document.getElementById('warnings');
+            container.replaceChildren();
+            for (const text of warnings || []) {
+                if (isWarningDismissed(text)) continue;
+                const banner = document.createElement('div');
+                banner.className = 'warning-banner';
+                const message = document.createElement('span');
+                message.textContent = text;
+                const close = document.createElement('button');
+                close.textContent = '\u00d7';
+                close.title = 'Dismiss';
+                close.onclick = () => {
+                    try {
+                        localStorage.setItem(DISMISSED_WARNING_PREFIX + text, '1');
+                    } catch (e) {
+                        // Without storage the warning just comes back on the next load.
+                    }
+                    banner.remove();
+                };
+                banner.append(message, close);
+                container.append(banner);
+            }
+        }
+
         // ── Data loading ──────────────────────────────────────────────────────
 
         const indexedList = labels =>
@@ -674,6 +778,7 @@
             document.getElementById('netLabels').textContent = indexedList(metadata.system_info.net_labels);
             document.getElementById('appVersion').textContent = metadata.system_info.app_version || 'N/A';
             document.getElementById('startTime').textContent = formatAbsoluteTimestamp(metadata.system_info.start_time);
+            renderWarnings(metadata.warnings);
         }
 
         /// Full refresh of the displayed window.  Only called on page load, when the
@@ -838,12 +943,13 @@
         // Mirrors device_color() in ploty_creator.rs.
         function deviceColor(header) {
             const h = header.toUpperCase();
-            const bases = { DISK: 205, GPU: 25, NET: 105 };
+            const bases = { DISK: 205, GPU: 25, NET: 105, PING: 320 };
             let base, idx, strong;
 
             const disk = h.match(/^DISK_(\d+)_(USED_GB|AVAIL_GB|BUSY_PCT|READ_MBPS|WRITE_MBPS)$/);
             const gpu = h.match(/^GPU_(\d+)_(UTIL|VRAM_MB|TEMP_C)$/);
             const net = h.match(/^NET_(\d+)_(RX|TX)_(BPS|TOTAL_MB)$/);
+            const ping = h.match(/^PING_(\d+)_(RTT_MS|LOSS_PCT)$/);
 
             if (disk) {
                 [base, idx, strong] = [bases.DISK, parseInt(disk[1], 10), disk[2] !== 'WRITE_MBPS'];
@@ -851,6 +957,8 @@
                 [base, idx, strong] = [bases.GPU, parseInt(gpu[1], 10), true];
             } else if (net) {
                 [base, idx, strong] = [bases.NET, parseInt(net[1], 10), net[2] === 'RX'];
+            } else if (ping) {
+                [base, idx, strong] = [bases.PING, parseInt(ping[1], 10), true];
             } else if (h === 'GPU_UTILIZATION' || h === 'GPU_MEMORY_USED' || h === 'GPU_TEMPERATURE') {
                 [base, idx, strong] = [bases.GPU, 0, true];
             } else if (h === 'NETWORK_RX_BYTES_PER_SEC' || h === 'NETWORK_TX_BYTES_PER_SEC') {
@@ -879,6 +987,8 @@
             const isDiskAvail = h => /^DISK_\d+_AVAIL_GB$/.test(h.toUpperCase());
             const isDiskBusy = h => /^DISK_\d+_BUSY_PCT$/.test(h.toUpperCase());
             const isDiskIo = h => /^DISK_\d+_(READ|WRITE)_MBPS$/.test(h.toUpperCase());
+            const isPingLatency = h => /^PING_\d+_RTT_MS$/.test(h.toUpperCase());
+            const isPingLoss = h => /^PING_\d+_LOSS_PCT$/.test(h.toUpperCase());
 
             const cpuColumns = indexed.filter(({ h }) => h.toLowerCase().includes('cpu') && !isGpuCol(h));
             const ramColumns = indexed.filter(({ h }) => (h.toLowerCase().includes('ram') || h.toLowerCase().includes('memory')) && !isGpuCol(h));
@@ -968,6 +1078,8 @@
                 { key: 'diskAvail', container: 'diskAvailChartContainer', canvas: 'diskAvailChart', yTitle: 'Available [GB]', yMin: 0, datasets: basicDatasets(isDiskAvail, 190) },
                 { key: 'diskBusy', container: 'diskBusyChartContainer', canvas: 'diskBusyChart', yTitle: 'Disk Busy [%]', yMin: 0, yMax: 100, datasets: basicDatasets(isDiskBusy, 15) },
                 { key: 'diskIo', container: 'diskIoChartContainer', canvas: 'diskIoChart', yTitle: 'Disk I/O [MB/s]', yMin: 0, datasets: basicDatasets(isDiskIo, 320) },
+                { key: 'pingLatency', container: 'pingLatencyChartContainer', canvas: 'pingLatencyChart', yTitle: 'RTT [ms]', yMin: 0, datasets: basicDatasets(isPingLatency, 320) },
+                { key: 'pingLoss', container: 'pingLossChartContainer', canvas: 'pingLossChart', yTitle: 'Loss [%]', yMin: 0, yMax: 100, datasets: basicDatasets(isPingLoss, 320) },
             ];
         }
 
@@ -1179,16 +1291,27 @@
             return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
         }
 
-        function applyFullWidth() {
-            document.getElementById('mainContainer').classList.toggle('full-width', state.fullWidth);
-            document.getElementById('toggleWidthBtn').textContent = state.fullWidth ? 'Normal Width' : 'Full Width';
-            document.querySelectorAll('.chart-container, .table-scroll')
-                .forEach(el => el.style.maxWidth = state.fullWidth ? '100%' : '');
+        function applyLayout() {
+            const container = document.getElementById('mainContainer');
+            LAYOUTS.forEach(layout => container.classList.toggle(layout, layout === state.layout));
+            document.getElementById('layoutSelect').value = state.layout;
+            document.getElementById('chartScaleSelect').disabled = state.layout === 'full-width';
         }
 
-        function toggleFullWidth() {
-            state.fullWidth = !state.fullWidth;
-            applyFullWidth();
+        function applyChartScale() {
+            document.getElementById('mainContainer').style.setProperty('--chart-scale', state.chartScale);
+            document.getElementById('chartScaleSelect').value = state.chartScale;
+        }
+
+        function setChartScale(scale) {
+            state.chartScale = scale;
+            applyChartScale();
+            saveUiState();
+        }
+
+        function setLayout(layout) {
+            state.layout = layout;
+            applyLayout();
             saveUiState();
         }
 
@@ -1621,7 +1744,10 @@
 
         document.addEventListener('DOMContentLoaded', async function () {
             loadUiState();
-            applyFullWidth();
+            document.getElementById('chartScaleSelect').innerHTML = CHART_SCALES
+                .map(scale => `<option value="${scale}">${Math.round(scale * 100)}%</option>`).join('');
+            applyLayout();
+            applyChartScale();
             applySystemInfoHidden(loadSystemInfoHidden());
             document.getElementById('showTable').checked = state.showTable;
 

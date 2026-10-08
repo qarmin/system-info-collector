@@ -44,6 +44,8 @@ pub struct SystemMetadata {
     pub column_labels: Vec<String>,
     pub max_buffer_size: usize,
     pub check_interval: f32,
+    /// Shown as dismissible banners, e.g. a requested metric that could not be collected.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,6 +125,7 @@ impl DataBuffer {
             column_labels: vec!["Timestamp".to_string()],
             max_buffer_size: self.max_size,
             check_interval: 1.0,
+            warnings: vec![],
         })
     }
 

@@ -1,3 +1,21 @@
+## Unreleased
+
+### Ping - new
+
+- New `ping-latency` (ms) and `ping-loss` (%) metrics, each with its own chart in the report and the live view
+- Pings `gateway`, `1.1.1.1` and `8.8.8.8` by default, `--ping-target` replaces the list; `gateway` follows the
+  current default route
+- `--ping-interval` (0.5 s) and `--ping-timeout` (2.0 s)
+- Uses an unprivileged ICMP socket when allowed, a raw one otherwise; when neither can be opened the ping columns are
+  left out and the live view shows a dismissible warning
+- The systemd unit and `session_caps` grant `CAP_NET_RAW`, and `ping-latency` is part of the default deploy metrics
+
+### Web UI
+
+- The Full Width button became a **Layout** select with a new **Gallery** mode - charts keep roughly their normal
+  size and are packed side by side, as many per row as the screen fits; Gallery is the default
+- New **Chart size** select (50%-200%) scaling the charts in the Normal and Gallery layouts, remembered across reloads
+
 ## Version 0.8.0 - 24.09.2026
 
 ### Process sessions - new

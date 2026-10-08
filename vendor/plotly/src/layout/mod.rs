@@ -361,6 +361,18 @@ pub struct LayoutFields {
     y_axis12: Option<Box<Axis>>,
     #[serde(rename = "zaxis12")]
     z_axis12: Option<Box<Axis>>,
+    #[serde(rename = "xaxis13")]
+    x_axis13: Option<Box<Axis>>,
+    #[serde(rename = "yaxis13")]
+    y_axis13: Option<Box<Axis>>,
+    #[serde(rename = "zaxis13")]
+    z_axis13: Option<Box<Axis>>,
+    #[serde(rename = "xaxis14")]
+    x_axis14: Option<Box<Axis>>,
+    #[serde(rename = "yaxis14")]
+    y_axis14: Option<Box<Axis>>,
+    #[serde(rename = "zaxis14")]
+    z_axis14: Option<Box<Axis>>,
     // ternary: Option<LayoutTernary>,
     scene: Option<LayoutScene>,
     geo: Option<LayoutGeo>,

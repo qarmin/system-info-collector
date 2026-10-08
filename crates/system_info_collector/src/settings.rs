@@ -57,6 +57,11 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         process::exit(1);
     }
 
+    if let Some(target) = args.ping_target.iter().find(|t| t.is_empty() || t.contains('=') || t.contains(',')) {
+        log::error!("\"{target}\" - a ping target must be non-empty and cannot contain '=' or ','");
+        process::exit(1);
+    }
+
     let check_interval = args.check_interval.max(0.1);
     let sysinfo_interval = args.sysinfo_interval.unwrap_or(check_interval).max(0.05);
 
@@ -67,6 +72,9 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         gpu_interval_secs: args.gpu_interval.max(0.05),
         disk_interval_secs: args.disk_interval.max(0.05),
         disk_io_interval_secs: args.disk_io_interval.max(0.05),
+        ping_interval_secs: args.ping_interval.max(0.1),
+        ping_timeout_secs: args.ping_timeout.max(0.1),
+        ping_targets: args.ping_target,
         convert: convert_settings,
         collection_mode: args.collection_mode,
         disable_instant_flushing: args.disable_instant_flushing,

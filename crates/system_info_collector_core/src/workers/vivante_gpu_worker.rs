@@ -32,11 +32,11 @@ unsafe impl Send for IdleRegister {}
 impl IdleRegister {
     fn open(register_base: u64) -> std::io::Result<Self> {
         let page_base = register_base & !(MAP_LEN as u64 - 1);
-        let offset = libc::off_t::try_from(page_base).map_err(std::io::Error::other)?;
+        let offset = libc::off64_t::try_from(page_base).map_err(std::io::Error::other)?;
         let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_SYNC).open("/dev/mem")?;
         // SAFETY: fresh shared read-only mapping of one page; validity is checked against MAP_FAILED.
         let map = unsafe {
-            libc::mmap(
+            libc::mmap64(
                 std::ptr::null_mut(),
                 MAP_LEN,
                 libc::PROT_READ,

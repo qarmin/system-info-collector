@@ -9,7 +9,15 @@ use std::time::{Duration, Instant, SystemTime};
 /// (and the decimal point itself when not needed).
 /// e.g. 0.0000 → "0", 17332.7700 → "17332.8", 1.01 → "1"
 fn fmt_f64(v: f64) -> String {
-    let s = format!("{v:.1}");
+    trim_decimals(format!("{v:.1}"))
+}
+
+/// Gateway round trips are often well below a millisecond, so RTT keeps a second decimal.
+fn fmt_rtt_ms(v: f64) -> String {
+    trim_decimals(format!("{v:.2}"))
+}
+
+fn trim_decimals(s: String) -> String {
     if s.contains('.') {
         let s = s.trim_end_matches('0');
         let s = s.trim_end_matches('.');
@@ -27,7 +35,7 @@ use sysinfo::{Disks, System};
 use crate::discovery::RuntimeDiscovery;
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
 use crate::settings::CollectSettings;
-use crate::shared_state::SharedState;
+use crate::shared_state::{PingWindow, SharedState};
 use crate::workers::sysinfo_worker::bytes_to_mb;
 
 /// Spawned as a tokio task.  Wakes every `check_interval` seconds, clones the
@@ -93,6 +101,13 @@ pub async fn run<F>(
                 guard.latest_disk_io.clone(),
                 guard.latest_processes.clone(),
             )
+        };
+        let ping_windows = if discovery.ping_targets.is_empty() {
+            Vec::new()
+        } else {
+            let mut guard = state.write().expect("SharedState RwLock poisoned");
+            let fresh = vec![PingWindow::default(); guard.ping_windows.len()];
+            std::mem::replace(&mut guard.ping_windows, fresh)
         };
 
         // Refresh disk stats at disk_interval_secs rate.
@@ -224,6 +239,16 @@ pub async fn run<F>(
                 SimpleDataCollectionMode::DISK_WRITE => {
                     for snap in &disk_io_snaps {
                         row.push(snap.as_ref().map_or("-1".to_string(), |d| fmt_f64(d.write_mb_per_sec)));
+                    }
+                }
+                SimpleDataCollectionMode::PING_LATENCY => {
+                    for window in &ping_windows {
+                        row.push(window.avg_rtt_ms().map_or("-1".to_string(), fmt_rtt_ms));
+                    }
+                }
+                SimpleDataCollectionMode::PING_LOSS => {
+                    for window in &ping_windows {
+                        row.push(window.loss_pct().map_or("-1".to_string(), fmt_f64));
                     }
                 }
             }
@@ -371,10 +396,16 @@ pub fn write_csv_header(
         })
         .collect();
 
+    let ping_meta: String = discovery
+        .ping_targets
+        .iter()
+        .map(|t| format!(",PING_{}={}", t.ping_index, t.host))
+        .collect();
+
     let mem_total = bytes_to_mb(sys.total_memory());
     let swap_total = bytes_to_mb(sys.total_swap());
     let general_info = format!(
-        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}{}{}",
+        "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}{}{}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
@@ -392,6 +423,7 @@ pub fn write_csv_header(
         gpu_vram_meta,
         gpu_driver_meta,
         disk_meta,
+        ping_meta,
     );
     // Column header line.
     // GPU/network modes expand to one column per discovered GPU/interface.
@@ -456,6 +488,16 @@ pub fn write_csv_header(
             SimpleDataCollectionMode::DISK_WRITE => {
                 for disk in disks {
                     columns.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::PING_LATENCY => {
+                for target in &discovery.ping_targets {
+                    columns.push(DataType::PING_N_RTT_MS((target.ping_index, target.host.clone())).column_name());
+                }
+            }
+            SimpleDataCollectionMode::PING_LOSS => {
+                for target in &discovery.ping_targets {
+                    columns.push(DataType::PING_N_LOSS_PCT((target.ping_index, target.host.clone())).column_name());
                 }
             }
             other => columns.push(other.to_string()),

@@ -4,10 +4,12 @@
 #   just full_send 192.168.1.50
 #   just full_send 192.168.1.50 "cpu-usage-total memory-used" "/"
 #   just full_send_arm 192.168.1.60 "cpu-usage-total memory-used" "" system-info-collector-arm.service
+#   just full_send_arm64 192.168.1.70
 #
 # Recipes are grouped - `just --groups` lists the groups, `just --list` shows them section by
 # section, `just --list --group <name>` shows one group on its own:
 #
+#   setup    checking and installing the tools the other recipes need
 #   build    compiling for this machine and for other targets
 #   dev      formatting, lints, dependency updates
 #   release  cargo install here, cargo publish to crates.io
@@ -31,6 +33,100 @@
 
 user := `whoami`
 
+zig_version := "0.16.0"
+
+# cargo-zigbuild writes missing glibc headers (arm-features.h for the .2.28 ARM target) into
+# zig's own lib dir, so a read-only zig such as the snap fails there. `just setup` puts a
+# writable one in ~/.cargo/bin, and it wins here even when another zig comes first in PATH.
+export CARGO_ZIGBUILD_ZIG_PATH := env("CARGO_ZIGBUILD_ZIG_PATH", if path_exists(home_directory() / ".cargo/bin/zig") == "true" { home_directory() / ".cargo/bin/zig" } else { "zig" })
+
+# ─── setup: checking and installing the tools the other recipes need ─────────
+
+# Read-only; exits non-zero when a required tool is missing. Never calls sudo - system
+# packages are printed as an install command instead.
+[doc('Checks that the tools the build and deploy recipes need are installed')]
+[group('setup')]
+doctor:
+    #!/usr/bin/env bash
+    set +e
+    fail=0
+    check() {
+        local name="$1"; shift
+        local out
+        if out="$("$@" 2>&1)"; then
+            printf "  [OK]   %-36s %s\n" "$name" "$(head -n1 <<<"$out")"
+        else
+            printf "  [BRAK] %s\n" "$name"
+            fail=$((fail + 1))
+        fi
+    }
+    info() {
+        local name="$1"; shift
+        local out
+        if out="$("$@" 2>&1)"; then
+            printf "  [OK]   %-36s %s\n" "$name" "$(head -n1 <<<"$out")"
+        else
+            printf "  [-]    %s (opcjonalne)\n" "$name"
+        fi
+    }
+    zig_lib_writable() {
+        local lib
+        lib="$("$CARGO_ZIGBUILD_ZIG_PATH" env | grep -oE 'lib_dir"?[ :=]+"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/')"
+        [ -n "$lib" ] && [ -w "$lib" ] && echo "$lib"
+    }
+
+    echo "Toolchain Rust:"
+    check "rustc"                                rustc --version
+    check "cargo"                                cargo --version
+    check "clippy"                               cargo clippy --version
+    check "rustfmt (nightly, do 'just fix')"     cargo +nightly fmt --version
+
+    echo ""
+    echo "Cross-kompilacja (cross_*, *_send, full_*):"
+    check "cargo-zigbuild"                       bash -c "command -v cargo-zigbuild"
+    check "zig ($CARGO_ZIGBUILD_ZIG_PATH)"       "$CARGO_ZIGBUILD_ZIG_PATH" version
+    check "zig lib zapisywalny"                  zig_lib_writable
+    check "target armv7-unknown-linux-gnueabihf" bash -c "rustup target list --installed | grep -qx armv7-unknown-linux-gnueabihf"
+    check "target aarch64-unknown-linux-gnu"     bash -c "rustup target list --installed | grep -qx aarch64-unknown-linux-gnu"
+    check "target x86_64-unknown-linux-gnu"      bash -c "rustup target list --installed | grep -qx x86_64-unknown-linux-gnu"
+
+    echo ""
+    echo "Narzędzia opcjonalne:"
+    info "cargo-edit (do 'just upgrade')"        cargo upgrade --version
+    info "samply (do 'just samplyrd')"           samply --version
+    info "setcap (do 'session_root', full_install)" bash -c "command -v setcap"
+
+    echo ""
+    if [ "$fail" -eq 0 ]; then
+        echo "Wszystko OK."
+    else
+        echo "$fail wymaganych narzędzi brakuje - uruchom 'just setup', żeby je zainstalować."
+        exit 1
+    fi
+
+# Only Rust-toolchain-level and user-local things; no sudo.
+[doc('Installs what `doctor` reports missing - rustup parts, cargo-zigbuild, zig into ~/.cargo')]
+[group('setup')]
+setup:
+    #!/usr/bin/env bash
+    set -e
+    rustup component add clippy
+    rustup toolchain install nightly --profile minimal --component rustfmt
+    rustup target add armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+    command -v cargo-zigbuild >/dev/null 2>&1 || cargo install cargo-zigbuild --locked
+
+    # Installed even when another zig exists, since that one may be read-only (snap);
+    # CARGO_ZIGBUILD_ZIG_PATH above picks this one. Pinned to x86_64-linux hosts.
+    zig_home="$HOME/.cargo/zig-x86_64-linux-{{ zig_version }}"
+    if [ ! -x "$zig_home/zig" ]; then
+        curl -fsSL "https://ziglang.org/download/{{ zig_version }}/zig-x86_64-linux-{{ zig_version }}.tar.xz" \
+            | tar -C "$HOME/.cargo" -xJf -
+    fi
+    mkdir -p "$HOME/.cargo/bin"
+    ln -sf "$zig_home/zig" "$HOME/.cargo/bin/zig"
+
+    echo "Gotowe - uruchom 'just doctor', żeby zweryfikować."
+
 # ─── build: compiling for this machine and for other targets ─────────────────
 
 [doc('Release + debug build, clippy and the test suite')]
@@ -45,6 +141,11 @@ build_all:
 [group('build')]
 cross_arm_32:
     RUSTFLAGS="" cargo zigbuild --target armv7-unknown-linux-gnueabihf -p system_info_collector
+
+[doc('Cross-compiles for 64-bit ARM (aarch64)')]
+[group('build')]
+cross_arm_64:
+    RUSTFLAGS="" cargo zigbuild --target aarch64-unknown-linux-gnu -p system_info_collector
 
 [doc('Cross-compiles for x86_64 against an older glibc')]
 [group('build')]
@@ -241,12 +342,15 @@ cleancsv:
 # These are xattrs on the binary, so they do not survive scp and the send recipes
 # reapply them after every deploy. They are also ignored on a filesystem mounted
 # nosuid and cannot be stored at all on one without xattr support.
-session_caps := "cap_dac_read_search,cap_sys_ptrace+ep"
+#
+# cap_net_raw is for the ping-latency/ping-loss metrics, which need a raw ICMP socket
+# wherever net.ipv4.ping_group_range does not allow unprivileged ones.
+session_caps := "cap_dac_read_search,cap_sys_ptrace,cap_net_raw+ep"
 
 # Defaults for the `metrics`/`disks` arguments on full_send_arm/full_send/full_install below.
 # memory-free is deliberately absent: on Linux it counts out page cache, so it reads far
 # lower than the memory actually obtainable - memory-available is the useful figure.
-default_metrics := "cpu-usage-total memory-used memory-available network-rx network-tx gpu-utilization gpu-memory-used disk-used disk-available disk-busy disk-read disk-write"
+default_metrics := "cpu-usage-total memory-used memory-available network-rx network-tx gpu-utilization gpu-memory-used disk-used disk-available disk-busy disk-read disk-write ping-latency"
 # Space-separated mount points/device names to pass as repeated --disk flags, e.g. "/ /home".
 # "all" means --all-disks (every real disk, discovered at service start); empty means no disk tracked.
 default_disks := "all"
@@ -278,16 +382,24 @@ stop_remote_x86_64 ip_address:
     ssh -t {{ user }}@{{ ip_address }} 'sudo systemctl stop system-info-collector' || true
     ssh {{ user }}@{{ ip_address }} 'pkill -f /home/{{ user }}/data_collector/system_info_collector' || true
 
-[doc('Builds for ARM and copies the binary over, without touching the service')]
+[doc('Builds for 32-bit ARM and copies the binary over, without touching the service')]
 [group('deploy')]
 arm_send ip_address:
+    just _arm_send armv7-unknown-linux-gnueabihf {{ ip_address }}
+
+[doc('Builds for 64-bit ARM and copies the binary over, without touching the service')]
+[group('deploy')]
+arm64_send ip_address:
+    just _arm_send aarch64-unknown-linux-gnu {{ ip_address }}
+
+_arm_send target ip_address:
     # To avoid glibc version issues, using zigbuild
-    RUSTFLAGS="" cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.28 -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --release --target {{ target }}.2.28 -p system_info_collector
     ssh root@{{ ip_address }} 'mkdir -p /home/root/data_collector'
     just stop_remote {{ ip_address }}
     # Removing the old binary, because scp into a still running one fails with "Text file busy"
     ssh root@{{ ip_address }} 'rm -f /home/root/data_collector/system_info_collector' || true
-    scp -O target/armv7-unknown-linux-gnueabihf/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
+    scp -O target/{{ target }}/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
 
 [doc('Builds for x86_64 and copies the binary over, without touching the service')]
 [group('deploy')]
@@ -299,14 +411,22 @@ x86_64_send ip_address:
     scp -O target/x86_64-unknown-linux-gnu/release/system_info_collector {{ user }}@{{ ip_address }}:/home/{{ user }}/data_collector/system_info_collector.new
     ssh {{ user }}@{{ ip_address }} 'mv -f /home/{{ user }}/data_collector/system_info_collector.new /home/{{ user }}/data_collector/system_info_collector'
 
-# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
+# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write ping-latency ping-loss
 # disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
-[doc('Builds, ships and starts the service on an ARM perimeter device (root)')]
+[doc('Builds, ships and starts the service on a 32-bit ARM perimeter device (root)')]
 [group('deploy')]
 full_send_arm ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes=arm_processes:
+    just _full_send_arm armv7-unknown-linux-gnueabihf {{ ip_address }} '{{ metrics }}' '{{ disks }}' '{{ service_file }}' '{{ processes }}'
+
+[doc('Builds, ships and starts the service on a 64-bit ARM perimeter device (root)')]
+[group('deploy')]
+full_send_arm64 ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes=arm_processes:
+    just _full_send_arm aarch64-unknown-linux-gnu {{ ip_address }} '{{ metrics }}' '{{ disks }}' '{{ service_file }}' '{{ processes }}'
+
+_full_send_arm target ip_address metrics disks service_file processes:
     ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
     just stop_remote {{ ip_address }}
-    just arm_send {{ ip_address }}
+    just _arm_send {{ target }} {{ ip_address }}
     if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     processes='{{ processes }}'; \
@@ -325,7 +445,7 @@ full_send_arm ip_address metrics=default_metrics disks=default_disks service_fil
 # Unlike full_send_arm (root, perimeter device), this targets a normal x86_64 machine reachable as the local $USER account,
 # so the service file's __USER__ placeholder is filled in with that username instead of root before it's shipped over.
 # All sudo steps are bundled into a single `ssh -t` call so the remote password is only asked once.
-# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
+# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write ping-latency ping-loss
 # disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
 [doc('Builds, ships and starts the service on an x86_64 machine ($USER + sudo)')]
 [group('deploy')]
@@ -341,7 +461,7 @@ full_send ip_address metrics=default_metrics disks=default_disks service_file="s
 
 # Local equivalent of full_send: builds, installs, and starts the systemd service on this machine, no ssh involved.
 # Uses cargo zigbuild against the same older glibc target as full_send/x86_64_send, so it's the exact same binary either way ships.
-# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write
+# metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write ping-latency ping-loss
 # disks: defaults to "all" (--all-disks, every real disk discovered at service start); pass
 # space-separated mount points/devices instead, e.g. disks="/ /home", to pick them by hand
 [doc('Builds, installs and starts the service on this machine, no ssh involved')]

@@ -176,11 +176,12 @@ fn parse_header(
     let custom_names: HashMap<usize, String> = indexed_meta(hashmap_data, "CUSTOM_").into_iter().collect();
     let iface_names: HashMap<usize, String> = labeled_meta(hashmap_data, "NET_", "NET_LABEL_").into_iter().collect();
     let disk_names: HashMap<usize, String> = labeled_meta(hashmap_data, "DISK_", "DISK_LABEL_").into_iter().collect();
+    let ping_names: HashMap<usize, String> = indexed_meta(hashmap_data, "PING_").into_iter().collect();
 
     let collected_data_names: Vec<DataType> = header_line
         .split(',')
         .map(|item| {
-            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names, &disk_names).ok_or_else(|| {
+            DataType::from_column_name(item, &gpu_names, &iface_names, &custom_names, &disk_names, &ping_names).ok_or_else(|| {
                 Error::msg(format!(
                     "Unknown column \"{item}\" in data file (allowed: {})",
                     DataType::get_allowed_values()
@@ -227,6 +228,12 @@ fn parse_header(
     }
     if collected_data_names.iter().any(|e| e.is_disk_io()) {
         collected_groups.push(GeneralInfoGroup::DISK_IO);
+    }
+    if collected_data_names.iter().any(|e| e.is_ping_latency()) {
+        collected_groups.push(GeneralInfoGroup::PING_LATENCY);
+    }
+    if collected_data_names.iter().any(|e| e.is_ping_loss()) {
+        collected_groups.push(GeneralInfoGroup::PING_LOSS);
     }
 
     Ok((collected_data_names, collected_groups))

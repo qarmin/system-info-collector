@@ -53,7 +53,8 @@ just full_install "cpu-usage-total memory-used memory-available" "/ /home"
 To remove it again: `sudo systemctl disable --now system-info-collector`.
 
 Installing on *another* Linux machine works the same way over ssh - `just full_send 192.168.1.50` for a normal x86_64
-machine, `just full_send_arm 192.168.1.60` for an ARM device reachable as root.
+machine, `just full_send_arm 192.168.1.60` for a 32-bit ARM device reachable as root
+(`just full_send_arm64 192.168.1.60` for a 64-bit one).
 
 ### Just the binary
 
@@ -114,6 +115,8 @@ Pick metrics with `-m`. The default is `cpu-usage-total memory-used`.
 | `disk-busy` | % | iostat's `%util`. Linux only. On NVMe it reaches 100% long before the drive is saturated - read it next to the throughput columns |
 | `disk-read`, `disk-write` | MiB/s | Linux only |
 | `gpu-utilization`, `gpu-memory-used`, `gpu-temperature` | %, MiB, °C | NVIDIA via NVML, AMD and Intel via sysfs. Multiple GPUs supported |
+| `ping-latency` | ms | Average ICMP round trip per `--ping-target` within one row. Linux only. Empty when nothing came back |
+| `ping-loss` | % | Share of echo requests with no reply within `--ping-timeout`. Linux only |
 
 A named process can be tracked too - its CPU and memory land in their own columns:
 
@@ -137,6 +140,23 @@ available before deciding:
 
 Charts and tables label each one with what it actually is - `/home (nvme1n1 915 GB)`, `wlan0 (WiFi - Wi-Fi 6 AX201)` -
 not `DISK_0` and `NET_0`.
+
+### Pinging
+
+`ping-latency` and `ping-loss` ping `gateway 1.1.1.1 8.8.8.8` by default. `gateway` is the current default gateway,
+re-read every 10 s, so a slow LAN or Wi-Fi can be told apart from a slow internet connection. Pass `--ping-target`
+to replace the list:
+
+```
+./system_info_collector collect -m ping-latency ping-loss --ping-target gateway 1.1.1.1 my-server.local
+```
+
+A request goes out every `--ping-interval` seconds (0.5) and counts as lost after `--ping-timeout` (2.0). Each row
+holds the requests answered or timed out since the previous one, so with `-c 1` the loss moves in 50% steps.
+
+Pinging needs an ICMP socket: either `net.ipv4.ping_group_range` covering your group (the default on most desktop
+distributions) or `CAP_NET_RAW` (root, or `sudo setcap cap_net_raw+ep ./system_info_collector`). Without either the
+ping columns are left out of the file and the live dashboard shows a warning.
 
 ## Live dashboard
 

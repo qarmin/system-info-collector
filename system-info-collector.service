@@ -15,7 +15,10 @@ User=__USER__
 # Granting them here rather than relying on setcap keeps it working across
 # deploys: file capabilities are extended attributes and do not survive scp.
 # Unknown to systemd before v229, which warns and otherwise carries on.
-AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+#
+# CAP_NET_RAW lets ping-latency/ping-loss open a raw ICMP socket when
+# net.ipv4.ping_group_range does not allow unprivileged ones.
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_RAW
 WorkingDirectory=/home/__USER__/data_collector
 ExecStart=/home/__USER__/data_collector/system_info_collector collect -d /home/__USER__/data_collector/data.csv -m __METRICS__ --all-networks __DISKS__ __PROCESSES__ -c 1.0 -s
 Restart=on-failure

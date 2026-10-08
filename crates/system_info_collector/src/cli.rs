@@ -211,6 +211,31 @@ pub struct CollectArgs {
     )]
     pub disk_io_interval: f32,
 
+    #[arg(
+        long,
+        default_value = "0.5",
+        value_name = "PING_INTERVAL",
+        help = "Interval (seconds) at which an ICMP echo request is sent to every --ping-target."
+    )]
+    pub ping_interval: f32,
+
+    #[arg(
+        long,
+        default_value = "2.0",
+        value_name = "PING_TIMEOUT",
+        help = "Seconds to wait for an ICMP echo reply before counting the request as lost."
+    )]
+    pub ping_timeout: f32,
+
+    #[arg(
+        long,
+        num_args = 1..,
+        default_values = &["gateway", "1.1.1.1", "8.8.8.8"],
+        value_name = "HOST",
+        help = "Host or IP pinged by ping-latency / ping-loss. 'gateway' is the current default gateway, re-read every 10 s. Repeatable, replaces the defaults."
+    )]
+    pub ping_target: Vec<String>,
+
     // ── HTTP server ───────────────────────────────────────────────────────────
     #[arg(
         short = 's',
