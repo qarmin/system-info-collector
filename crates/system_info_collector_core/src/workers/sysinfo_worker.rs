@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};

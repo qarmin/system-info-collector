@@ -160,9 +160,7 @@ impl DiscoveredDisk {
 
 /// `/dev/nvme0n1p6` → `nvme0n1p6`, leaving names like `overlay` untouched.
 fn short_device_name(device: &str) -> String {
-    std::path::Path::new(device)
-        .file_name()
-        .map_or_else(|| device.to_string(), |name| name.to_string_lossy().into_owned())
+    device.rsplit('/').next().unwrap_or(device).to_string()
 }
 
 /// Everything discovered at startup.  Workers receive an `Arc` of this so
@@ -453,6 +451,7 @@ fn resolve_pci_device_name(device_path: &std::path::Path) -> Option<String> {
 }
 
 pub const GALCORE_DEBUGFS: &str = "/sys/kernel/debug/gc";
+#[cfg(target_os = "linux")]
 const GALCORE_REGISTER_BASE: &str = "/sys/module/galcore/parameters/registerMemBase";
 
 /// Only the 3D core is tracked: on i.MX6 the 2D (GC320) and VG (GC355) cores sit idle under Qt Quick.

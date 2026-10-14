@@ -1,12 +1,20 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, RwLock};
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 use log::info;
 
-use crate::discovery::{DiscoveredGpu, GpuVendor};
+use crate::discovery::DiscoveredGpu;
+#[cfg(target_os = "linux")]
+use crate::discovery::GpuVendor;
 use crate::settings::CollectSettings;
-use crate::shared_state::{GpuSnapshot, SharedState};
+use crate::shared_state::SharedState;
+#[cfg(target_os = "linux")]
+use crate::shared_state::GpuSnapshot;
 
 /// Polls AMD and Intel GPUs on Linux via sysfs.
 /// Each GPU's snapshot is written to `state.latest_gpus[gpu.gpu_index]`.

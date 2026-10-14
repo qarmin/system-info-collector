@@ -90,6 +90,7 @@ fn mounted_device_name(_mount_point: &str) -> Option<String> {
     None
 }
 
+#[cfg(target_os = "linux")]
 /// glibc's `gnu_dev_major`/`gnu_dev_minor` encoding of `st_dev`.
 fn split_dev(dev: u64) -> (u64, u64) {
     let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
@@ -97,6 +98,7 @@ fn split_dev(dev: u64) -> (u64, u64) {
     (major, minor)
 }
 
+#[cfg(target_os = "linux")]
 /// Field layout per line: `major minor name reads rd_merged rd_sectors rd_ms writes
 /// wr_merged wr_sectors wr_ms in_flight io_ticks …` - newer kernels append discard
 /// and flush counters, which are ignored.
@@ -126,6 +128,7 @@ fn parse_counters(content: &str) -> HashMap<String, DiskCounters> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn splits_device_numbers_like_glibc() {
         assert_eq!(split_dev(0x0801), (8, 1));
@@ -133,6 +136,7 @@ mod tests {
         assert_eq!(split_dev(0xb300), (179, 0));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn parses_diskstats_lines() {
         let content = "\

@@ -53,6 +53,7 @@ pub const MAX_SESSION_TICKS: usize = 36_000;
 /// is the most expensive thing here.
 const FD_RESCAN_SECS: f64 = 1.0;
 const FD_MAX_PROCESSES_PER_TICK: usize = 10;
+#[cfg(target_os = "linux")]
 const FD_MAX_PATHS_PER_PROCESS: usize = 64;
 
 /// How often `/proc/<pid>/status` is re-read per process - see `Tracked::extras`.
