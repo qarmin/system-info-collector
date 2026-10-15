@@ -452,7 +452,9 @@ fn resolve_pci_device_name(device_path: &std::path::Path) -> Option<String> {
 
 pub const GALCORE_DEBUGFS: &str = "/sys/kernel/debug/gc";
 #[cfg(target_os = "linux")]
-const GALCORE_REGISTER_BASE: &str = "/sys/module/galcore/parameters/registerMemBase";
+const GALCORE_REGISTER_BASES: &str = "/sys/module/galcore/parameters/registerBases";
+#[cfg(target_os = "linux")]
+const GALCORE_REGISTER_MEM_BASE: &str = "/sys/module/galcore/parameters/registerMemBase";
 
 /// Only the 3D core is tracked: on i.MX6 the 2D (GC320) and VG (GC355) cores sit idle under Qt Quick.
 #[cfg(target_os = "linux")]
@@ -464,11 +466,16 @@ fn discover_vivante_gpu(gpus: &mut Vec<DiscoveredGpu>) {
         warn!("galcore: no 3D core in {GALCORE_DEBUGFS}/info, skipping");
         return;
     };
-    let Some(register_base) = std::fs::read_to_string(GALCORE_REGISTER_BASE)
+    let Some(register_base) = std::fs::read_to_string(GALCORE_REGISTER_BASES)
         .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
+        .and_then(|s| parse_galcore_core_register_base(&s))
+        .or_else(|| {
+            std::fs::read_to_string(GALCORE_REGISTER_MEM_BASE)
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok())
+        })
     else {
-        warn!("galcore: cannot read {GALCORE_REGISTER_BASE}, skipping");
+        warn!("galcore: cannot read {GALCORE_REGISTER_BASES}, skipping");
         return;
     };
     let vram_total_mb = std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/meminfo"))
@@ -488,6 +495,12 @@ fn discover_vivante_gpu(gpus: &mut Vec<DiscoveredGpu>) {
             .and_then(|s| parse_galcore_version(&s))
             .unwrap_or_default(),
     });
+}
+
+/// `registerBases` lists one base per core, 3D first, e.g. `939524096,944766976,0,...`. The scalar
+/// `registerMemBase` is a module default (0x80000000 = RAM) that platform-device probing never updates.
+pub fn parse_galcore_core_register_base(register_bases: &str) -> Option<u64> {
+    register_bases.trim().split(',').next()?.trim().parse().ok().filter(|&base| base != 0)
 }
 
 /// First line of `gc/version` is `6.4.3.p2.336687 built at <hash>`.
@@ -1038,6 +1051,14 @@ mod tests {
             Some("galcore 6.4.3.p2.336687")
         );
         assert_eq!(parse_galcore_version(""), None);
+    }
+
+    #[test]
+    fn galcore_register_base_is_the_first_core() {
+        assert_eq!(parse_galcore_core_register_base("939524096,944766976,0,0\n"), Some(0x3800_0000));
+        assert_eq!(parse_galcore_core_register_base("1245184,0,0"), Some(0x13_0000));
+        assert_eq!(parse_galcore_core_register_base("0,0,0"), None);
+        assert_eq!(parse_galcore_core_register_base(""), None);
     }
 
     #[test]

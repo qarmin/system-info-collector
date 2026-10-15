@@ -485,3 +485,50 @@ full_install metrics=default_metrics disks=default_disks service_file="system-in
     sudo systemctl enable system-info-collector
     sudo systemctl restart system-info-collector
     sudo systemctl status --no-pager system-info-collector
+
+# ─── access: ssh key for reaching a device without a password ────────────────
+
+claude_key := "tmp/claude_tmp_key"
+
+[doc('Creates an ed25519 ssh key in tmp/ unless one is already there')]
+[group('access')]
+generate_key:
+    mkdir -p tmp
+    [ -f {{ claude_key }} ] || ssh-keygen -t ed25519 -N "" -C "claude-tmp" -f {{ claude_key }}
+    cat {{ claude_key }}.pub
+
+# sshd on older devices rejects the `expiry-time` option, so expiry is a root crontab entry on the device that
+# checks every minute and deletes the key (and itself) once the deadline passes. Needs a running crond and `crontab`
+# (busybox has both). Re-running replaces the previous key line and deadline.
+[doc('Installs the tmp/ public key on a device (root by default), auto-removed after `lifetime` (a `date -d` span, e.g. "30 days" or "1 minute")')]
+[group('access')]
+send_key ip_address remote_user="root" lifetime="30 days": generate_key
+    #!/usr/bin/env bash
+    set -e
+    deadline="$(date -d '+{{ lifetime }}' +%s)"
+    blob="$(cut -d' ' -f2 {{ claude_key }}.pub)"
+    key="$(cat {{ claude_key }}.pub)"
+    cron_line="* * * * * [ \$(date +\%s) -ge $deadline ] && sed -i \"\\\\,$blob,d\" \$HOME/.ssh/authorized_keys && (crontab -l | grep -v claude-tmp-expiry | crontab -) # claude-tmp-expiry"
+    ssh {{ remote_user }}@{{ ip_address }} 'sh -s' <<EOF
+    mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+    sed -i '\\|$blob|d' ~/.ssh/authorized_keys
+    echo '$key' >> ~/.ssh/authorized_keys
+    (crontab -l 2>/dev/null | grep -v claude-tmp-expiry; echo '$cron_line') | crontab -
+    crontab -l | grep claude-tmp-expiry
+    EOF
+    echo "key valid until $(date -d @$deadline)"
+    ssh -i {{ claude_key }} -o IdentitiesOnly=yes -o BatchMode=yes {{ remote_user }}@{{ ip_address }} true \
+        && echo "key login works: ssh -i {{ claude_key }} {{ remote_user }}@{{ ip_address }}" \
+        || echo "key login failed"
+
+[doc('Removes the tmp/ public key and its expiry job from a device')]
+[group('access')]
+revoke_key ip_address remote_user="root":
+    #!/usr/bin/env bash
+    set -e
+    blob="$(cut -d' ' -f2 {{ claude_key }}.pub)"
+    ssh {{ remote_user }}@{{ ip_address }} 'sh -s' <<EOF
+    sed -i '\\|$blob|d' ~/.ssh/authorized_keys
+    (crontab -l 2>/dev/null | grep -v claude-tmp-expiry) | crontab -
+    echo key removed
+    EOF
