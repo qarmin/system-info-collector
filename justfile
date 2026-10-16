@@ -4,7 +4,6 @@
 #   just full_send 192.168.1.50
 #   just full_send 192.168.1.50 "cpu-usage-total memory-used" "/"
 #   just full_send_arm 192.168.1.60 "cpu-usage-total memory-used" "" system-info-collector-arm.service
-#   just full_send_arm64 192.168.1.70
 #
 # Recipes are grouped - `just --groups` lists the groups, `just --list` shows them section by
 # section, `just --list --group <name>` shows one group on its own:
@@ -382,24 +381,31 @@ stop_remote_x86_64 ip_address:
     ssh -t {{ user }}@{{ ip_address }} 'sudo systemctl stop system-info-collector' || true
     ssh {{ user }}@{{ ip_address }} 'pkill -f /home/{{ user }}/data_collector/system_info_collector' || true
 
-[doc('Builds for 32-bit ARM and copies the binary over, without touching the service')]
+[doc('Builds for the ARM device (32/64-bit detected over ssh) and copies the binary over, without touching the service')]
 [group('deploy')]
 arm_send ip_address:
-    just _arm_send armv7-unknown-linux-gnueabihf {{ ip_address }}
-
-[doc('Builds for 64-bit ARM and copies the binary over, without touching the service')]
-[group('deploy')]
-arm64_send ip_address:
-    just _arm_send aarch64-unknown-linux-gnu {{ ip_address }}
-
-_arm_send target ip_address:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target=$(just _arm_target {{ ip_address }})
+    echo "Detected $target on {{ ip_address }}"
     # To avoid glibc version issues, using zigbuild
-    RUSTFLAGS="" cargo zigbuild --release --target {{ target }}.2.28 -p system_info_collector
+    RUSTFLAGS="" cargo zigbuild --release --target "$target.2.28" -p system_info_collector
     ssh root@{{ ip_address }} 'mkdir -p /home/root/data_collector'
     just stop_remote {{ ip_address }}
     # Removing the old binary, because scp into a still running one fails with "Text file busy"
     ssh root@{{ ip_address }} 'rm -f /home/root/data_collector/system_info_collector' || true
-    scp -O target/{{ target }}/release/system_info_collector root@{{ ip_address }}:/home/root/data_collector/system_info_collector
+    scp -O "target/$target/release/system_info_collector" root@{{ ip_address }}:/home/root/data_collector/system_info_collector
+
+# Checks the glibc loader rather than `uname -m`, because a 64-bit kernel can run a 32-bit userland
+_arm_target ip_address:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    arch=$(ssh root@{{ ip_address }} 'if [ -e /lib/ld-linux-aarch64.so.1 ]; then echo aarch64; elif [ -e /lib/ld-linux-armhf.so.3 ]; then echo armhf; else uname -m; fi')
+    case "$arch" in
+        aarch64) echo aarch64-unknown-linux-gnu ;;
+        armhf|armv7l) echo armv7-unknown-linux-gnueabihf ;;
+        *) echo "Unsupported architecture on {{ ip_address }}: $arch" >&2; exit 1 ;;
+    esac
 
 [doc('Builds for x86_64 and copies the binary over, without touching the service')]
 [group('deploy')]
@@ -413,20 +419,12 @@ x86_64_send ip_address:
 
 # metrics values: cpu-usage-total cpu-usage-per-core swap-free swap-used memory-used memory-free memory-available network-rx network-tx network-total gpu-utilization gpu-memory-used gpu-temperature disk-used disk-available disk-busy disk-read disk-write ping-latency ping-loss
 # disks: space-separated mount points/devices for --disk, e.g. disks="/ /home" - only matters if metrics includes a disk-* metric
-[doc('Builds, ships and starts the service on a 32-bit ARM perimeter device (root)')]
+[doc('Builds, ships and starts the service on an ARM perimeter device (root, 32/64-bit detected over ssh)')]
 [group('deploy')]
 full_send_arm ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes=arm_processes:
-    just _full_send_arm armv7-unknown-linux-gnueabihf {{ ip_address }} '{{ metrics }}' '{{ disks }}' '{{ service_file }}' '{{ processes }}'
-
-[doc('Builds, ships and starts the service on a 64-bit ARM perimeter device (root)')]
-[group('deploy')]
-full_send_arm64 ip_address metrics=default_metrics disks=default_disks service_file="system-info-collector.service" processes=arm_processes:
-    just _full_send_arm aarch64-unknown-linux-gnu {{ ip_address }} '{{ metrics }}' '{{ disks }}' '{{ service_file }}' '{{ processes }}'
-
-_full_send_arm target ip_address metrics disks service_file processes:
     ssh root@{{ ip_address }} 'systemctl disable system-info-collector' || true
     just stop_remote {{ ip_address }}
-    just _arm_send {{ target }} {{ ip_address }}
+    just arm_send {{ ip_address }}
     if [ "{{ disks }}" = "all" ]; then disk_flags="--all-disks"; \
     else disk_flags=""; for d in {{ disks }}; do disk_flags="$disk_flags --disk $d"; done; fi; \
     processes='{{ processes }}'; \
@@ -436,11 +434,7 @@ _full_send_arm target ip_address metrics disks service_file processes:
     # for running `session` by hand as a non-root user there, and squashfs/jffs2 roots
     # have no xattrs to store capabilities in, hence the tolerated failure.
     ssh root@{{ ip_address }} 'setcap {{ session_caps }} /home/root/data_collector/system_info_collector && getcap /home/root/data_collector/system_info_collector' || echo "setcap unavailable on this target - the service runs as root anyway"
-    ssh root@{{ ip_address }} 'systemctl daemon-reload'
-    ssh root@{{ ip_address }} 'systemctl enable system-info-collector'
-    ssh root@{{ ip_address }} 'systemctl restart system-info-collector'
-    ssh root@{{ ip_address }} 'cat /home/root/data_collector/data.csv' || true
-    ssh root@{{ ip_address }} 'systemctl status system-info-collector' || true
+    ssh root@{{ ip_address }} 'systemctl daemon-reload && systemctl enable system-info-collector && systemctl restart system-info-collector || exit 1; cat /home/root/data_collector/data.csv; systemctl status --no-pager system-info-collector; true'
 
 # Unlike full_send_arm (root, perimeter device), this targets a normal x86_64 machine reachable as the local $USER account,
 # so the service file's __USER__ placeholder is filled in with that username instead of root before it's shipped over.

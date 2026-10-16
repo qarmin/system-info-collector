@@ -53,8 +53,8 @@ just full_install "cpu-usage-total memory-used memory-available" "/ /home"
 To remove it again: `sudo systemctl disable --now system-info-collector`.
 
 Installing on *another* Linux machine works the same way over ssh - `just full_send 192.168.1.50` for a normal x86_64
-machine, `just full_send_arm 192.168.1.60` for a 32-bit ARM device reachable as root
-(`just full_send_arm64 192.168.1.60` for a 64-bit one).
+machine, `just full_send_arm 192.168.1.60` for an ARM device reachable as root (32 or 64-bit is
+detected over ssh).
 
 ### Just the binary
 
