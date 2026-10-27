@@ -1,0 +1,44 @@
+[package]
+name = "system_info_probe"
+description = "Sampling of processes, CPU, memory, disks, network, GPUs and ping - blocking and tokio"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sysinfo = { version = "0.39", default-features = false, features = ["system", "user"] }
+thiserror = "2.0"
+log = "0.4"
+serde = { version = "1.0", features = ["derive", "rc"], optional = true }
+tokio = { version = "1.53", features = ["rt", "time", "process", "sync", "net", "macros"], optional = true }
+nvml-wrapper = { version = "0.13", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+amdgpu-sysfs = { version = "0.21", optional = true }
+socket2 = { version = "0.6", features = ["all"], optional = true }
+
+[features]
+default = ["disk", "network"]
+disk = ["sysinfo/disk"]
+network = ["sysinfo/network"]
+gpu-nvidia = ["dep:nvml-wrapper"]
+gpu-amd = ["dep:amdgpu-sysfs"]
+gpu-intel = []
+gpu-vivante = []
+ping = ["dep:socket2"]
+tokio = ["dep:tokio"]
+serde = ["dep:serde"]
+full = ["disk", "network", "gpu-nvidia", "gpu-amd", "gpu-intel", "gpu-vivante", "ping", "tokio", "serde"]
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "process", "sync"] }

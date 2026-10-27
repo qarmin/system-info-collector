@@ -1290,6 +1290,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-open-directory"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb82bed227edf5201dfedf072bba4015a33d3d4a98519837295a90f0a23f676d"
+dependencies = [
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-quartz-core"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1955,6 +1966,7 @@ dependencies = [
  "ntapi",
  "objc2-core-foundation",
  "objc2-io-kit",
+ "objc2-open-directory",
  "windows",
 ]
 
@@ -2000,6 +2012,21 @@ dependencies = [
  "strum",
  "surge-ping",
  "sysinfo",
+ "tokio",
+]
+
+[[package]]
+name = "system_info_probe"
+version = "0.8.0"
+dependencies = [
+ "amdgpu-sysfs",
+ "libc",
+ "log",
+ "nvml-wrapper",
+ "serde",
+ "socket2",
+ "sysinfo",
+ "thiserror 2.0.21",
  "tokio",
 ]
 

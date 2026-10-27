@@ -2,6 +2,7 @@
 members = [
     "crates/system_info_collector_core",
     "crates/system_info_collector",
+    "crates/system_info_probe",
 ]
 resolver = "2"
 
