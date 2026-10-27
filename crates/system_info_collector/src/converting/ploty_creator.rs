@@ -673,3 +673,83 @@ fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {
         _ => layout,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::{Map, Value};
+    use system_info_collector_core::settings::ConvertSettings;
+
+    use super::build_report_html;
+    use crate::converting::csv_file_loader::load_csv_results;
+
+    fn fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    }
+
+    /// The figure plotly is handed, and the note lines under it.
+    fn normalized(html: &str) -> Value {
+        let start = html.find("Plotly.newPlot(graph_div, ").expect("plot call") + "Plotly.newPlot(graph_div, ".len();
+        let mut stream = serde_json::Deserializer::from_str(html.get(start..).expect("in bounds")).into_iter::<Value>();
+        let figure = stream.next().expect("figure").expect("valid JSON");
+
+        let traces: Vec<Value> = figure["data"]
+            .as_array()
+            .expect("data")
+            .iter()
+            .map(|trace| {
+                let y: Vec<Value> = trace["y"]
+                    .as_array()
+                    .expect("y")
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(s) if s.is_empty() => Value::Null,
+                        Value::String(s) => s.parse::<f64>().map_or(Value::Null, Value::from),
+                        other => other.clone(),
+                    })
+                    .collect();
+                let mut out = Map::new();
+                for key in ["name", "x", "xaxis", "yaxis"] {
+                    out.insert(key.to_string(), trace[key].clone());
+                }
+                out.insert("y".to_string(), Value::Array(y));
+                out.insert("color".to_string(), trace["line"]["color"].clone());
+                Value::Object(out)
+            })
+            .collect();
+
+        let notes: Vec<Value> = html
+            .split("<div style=\"text-align: center;\">")
+            .skip(1)
+            .filter_map(|part| part.split_once("</div>").map(|(note, _)| Value::from(note)))
+            .collect();
+
+        serde_json::json!({ "traces": traces, "layout": figure["layout"], "notes": notes })
+    }
+
+    /// Set `UPDATE_PLOT_SNAPSHOT=1` to accept an intended change, then review the diff.
+    #[test]
+    fn report_matches_the_snapshot() {
+        for (white, snapshot) in [(false, "all_metrics.dark.json"), (true, "all_metrics.white.json")] {
+            let settings = ConvertSettings {
+                data_path: fixture("all_metrics.csv").to_string_lossy().into_owned(),
+                plot_width: 1700,
+                plot_height: 800,
+                white_plot_mode: white,
+                ..ConvertSettings::default()
+            };
+            let model = load_csv_results(&settings).expect("fixture loads");
+            let actual = normalized(&build_report_html(&model, &settings, 0).expect("report builds"));
+            let path = fixture(snapshot);
+            if std::env::var_os("UPDATE_PLOT_SNAPSHOT").is_some() {
+                std::fs::write(&path, serde_json::to_string_pretty(&actual).expect("serializes")).expect("snapshot written");
+            }
+            let expected: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("snapshot exists")).expect("valid snapshot");
+            assert!(
+                actual == expected,
+                "{snapshot} differs - rerun with UPDATE_PLOT_SNAPSHOT=1 and review the diff"
+            );
+        }
+    }
+}
