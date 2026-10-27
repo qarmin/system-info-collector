@@ -2031,6 +2031,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_info_report"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "system_info_probe",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
