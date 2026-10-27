@@ -17,7 +17,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system", "u
 thiserror = "2.0"
 log = "0.4"
 serde = { version = "1.0", features = ["derive", "rc"], optional = true }
-tokio = { version = "1.53", features = ["rt", "time", "process", "sync", "net", "macros"], optional = true }
+tokio = { version = "1.54", features = ["rt", "time", "process", "sync", "net", "macros"], optional = true }
 nvml-wrapper = { version = "0.13", optional = true }
 
 [target.'cfg(unix)'.dependencies]

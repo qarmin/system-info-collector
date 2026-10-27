@@ -18,7 +18,7 @@ system_info_report = { path = "../system_info_report", version = "0.8.0", defaul
 
 time = "0.3"
 ctrlc = { version = "3.5", features = ["termination"] }
-sysinfo = { version ="0.39", default-features = false, features = ["component", "network", "system"] }
+system_info_probe = { path = "../system_info_probe", version = "0.8.0" }
 tokio = { version = "1.53", features = ["full"] }
 handsome_logger = "0.9"
 log = "0.4"

@@ -1,6 +1,7 @@
 //! ICMP echo latency and loss.  The blocking and tokio pingers share everything here and differ
 //! only in how they wait for the socket.
 
+#[cfg(target_os = "linux")]
 pub(crate) mod icmp;
 
 use std::net::{IpAddr, Ipv4Addr};
@@ -94,16 +95,19 @@ pub fn parse_default_gateway(route_table: &str) -> Option<Ipv4Addr> {
         .map(|(_, gateway)| gateway)
 }
 
+/// From `/proc/net/route`, so `None` outside Linux.
 pub fn default_gateway() -> Option<IpAddr> {
     parse_default_gateway(&std::fs::read_to_string("/proc/net/route").ok()?).map(IpAddr::V4)
 }
 
 /// IPv4 is preferred when a name has both, as most networks route it more reliably.
+#[cfg(target_os = "linux")]
 pub(crate) fn prefer_ipv4(addresses: impl IntoIterator<Item = IpAddr>) -> Option<IpAddr> {
     let all: Vec<IpAddr> = addresses.into_iter().collect();
     all.iter().find(|a| a.is_ipv4()).or(all.first()).copied()
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn socket_error_hint(e: &std::io::Error) -> String {
     format!(
         "could not open an ICMP socket ({}). Grant CAP_NET_RAW (`setcap cap_net_raw+ep <binary>`) or allow unprivileged ICMP \
@@ -157,6 +161,7 @@ mod tests {
         assert_eq!(window.loss_percent(), Some(50.0));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn prefers_ipv4() {
         let v6: IpAddr = "::1".parse().expect("valid");

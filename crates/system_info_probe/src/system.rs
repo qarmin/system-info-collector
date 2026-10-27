@@ -122,7 +122,7 @@ impl SystemSample {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MachineInfo {
     pub hostname: Option<String>,
-    /// Distribution and release, e.g. `Ubuntu 24.04.3 LTS`.
+    /// Distribution and release, e.g. `Ubuntu 24.04`.
     pub os_name: Option<String>,
     pub kernel_version: Option<String>,
     pub cpu_model: Option<String>,
@@ -139,7 +139,12 @@ impl MachineInfo {
         sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
         Self {
             hostname: sysinfo::System::host_name(),
-            os_name: sysinfo::System::long_os_version(),
+            // `long_os_version` spells this "Linux (Ubuntu 24.04)", which reads oddly in a panel.
+            os_name: match (sysinfo::System::name(), sysinfo::System::os_version()) {
+                (Some(name), Some(version)) => Some(format!("{name} {version}")),
+                (Some(name), None) => Some(name),
+                _ => sysinfo::System::long_os_version(),
+            },
             kernel_version: sysinfo::System::kernel_version(),
             cpu_model: sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|b| !b.is_empty()),
             logical_cores: sys.cpus().len().max(1),

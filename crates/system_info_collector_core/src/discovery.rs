@@ -1,170 +1,110 @@
-use std::path::PathBuf;
-
 use log::{info, warn};
 use serde::Serialize;
-use sysinfo::{Disks, Networks};
+use system_info_probe::disk::{self, DiskNote, DiskQuery, Filesystem, TrackedDisk};
+use system_info_probe::gpu::{self, Gpu, GpuDiscovery};
+use system_info_probe::network::{self, Interface, InterfaceQuery};
 
-use crate::disk_stats::device_stat_name;
-
-/// Which GPU technology backs this device.
-#[derive(Debug, Clone)]
-pub enum GpuVendor {
-    /// NVIDIA GPU managed via NVML.
-    Nvidia {
-        /// Index to pass to `nvml.device_by_index()`.
-        nvml_index: u32,
-        name: String,
-    },
-    /// AMD GPU on Linux, monitored via `amdgpu-sysfs` (`/sys/class/drm/cardN/device/`).
-    AmdLinux {
-        handle: amdgpu_sysfs::gpu_handle::GpuHandle,
-        name: String,
-    },
-    /// Intel GPU on Linux, monitored via `/sys/class/drm/cardN/`.
-    IntelLinux { card_device_path: PathBuf, name: String },
-    /// Vivante GPU behind NXP's `galcore` driver (i.MX), monitored via its idle register and debugfs.
-    Vivante { register_base: u64, name: String },
-}
-
-/// A single discovered GPU entry.
+/// A GPU being tracked, at its column index.
 #[derive(Debug, Clone)]
 pub struct DiscoveredGpu {
-    /// Slot index in `SharedState.latest_gpus`.
     pub gpu_index: usize,
-    pub vendor: GpuVendor,
-    /// Total VRAM in megabytes (0 if unknown).
-    pub vram_total_mb: u64,
-    /// Kernel or vendor driver and its version, e.g. `galcore 6.4.3.p2.336687` (empty if unknown).
-    pub driver_version: String,
+    pub gpu: Gpu,
 }
 
 impl DiscoveredGpu {
     pub fn display_name(&self) -> &str {
-        match &self.vendor {
-            GpuVendor::Nvidia { name, .. }
-            | GpuVendor::AmdLinux { name, .. }
-            | GpuVendor::IntelLinux { name, .. }
-            | GpuVendor::Vivante { name, .. } => name,
-        }
+        &self.gpu.name
+    }
+
+    pub fn vendor_kind(&self) -> &'static str {
+        self.gpu.kind.vendor()
+    }
+
+    /// 0 when unknown.
+    pub fn vram_total_mb(&self) -> u64 {
+        self.gpu.vram_total_bytes.map_or(0, |b| b / 1024 / 1024)
+    }
+
+    /// Empty when unknown.
+    pub fn driver_version(&self) -> &str {
+        self.gpu.driver_version.as_deref().unwrap_or_default()
     }
 }
 
-/// A discovered network interface that we want to track.
+/// A network interface being tracked, at its column index.
 #[derive(Debug, Clone)]
 pub struct DiscoveredInterface {
-    /// Slot index in `SharedState.latest_networks`.
     pub iface_index: usize,
-    pub name: String,
-    /// Connection type: "WiFi", "Ethernet" or "Virtual" - "Unknown" outside Linux.
-    pub kind: String,
-    /// Adapter model from the PCI database, or the kernel driver name as a fallback.
-    pub model: Option<String>,
-    /// Negotiated link speed in Mb/s, when the driver reports one.
-    pub speed_mbps: Option<u64>,
+    pub interface: Interface,
 }
 
 impl DiscoveredInterface {
+    pub fn name(&self) -> &str {
+        &self.interface.name
+    }
+
     /// Label for charts and the live view, e.g. `wlan0 (WiFi - Wi-Fi 6 AX201)`.
     pub fn display_label(&self) -> String {
-        let mut details = vec![self.kind.clone()];
-        if let Some(model) = &self.model {
+        let interface = &self.interface;
+        let mut details = vec![interface.kind.label().to_string()];
+        if let Some(model) = &interface.model {
             details.push(model.clone());
         }
-        if let Some(speed) = self.speed_mbps {
+        if let Some(speed) = interface.speed_mbps {
             details.push(format!("{speed} Mb/s"));
         }
-        sanitize_label(&format!("{} ({})", self.name, details.join(" - ")))
+        sanitize_label(&format!("{} ({})", interface.name, details.join(" - ")))
     }
 }
 
-/// Labels end up in the comma-separated CSV metadata line, so they must not
-/// contain commas themselves.
+/// Labels end up in the comma-separated CSV metadata line, so they must not contain commas.
 fn sanitize_label(label: &str) -> String {
     label.replace(',', " ")
 }
 
-/// Filesystem types considered virtual/pseudo — excluded from disk tracking.
-const VIRTUAL_FS_TYPES: &[&str] = &[
-    "tmpfs",
-    "devtmpfs",
-    "proc",
-    "sysfs",
-    "cgroup",
-    "cgroup2",
-    "debugfs",
-    "securityfs",
-    "tracefs",
-    "pstore",
-    "hugetlbfs",
-    "mqueue",
-    "autofs",
-    "fusectl",
-    "efivarfs",
-    "bpf",
-    "ramfs",
-    "overlay",
-    "squashfs",
-    "devpts",
-    "configfs",
-];
-
-/// Mount points left out of `--all-disks`: boot, EFI and recovery partitions are tiny,
-/// never change and are not what anyone watches disk usage for.  `--disk /boot` still works.
-/// Patterns are lowercase, matched case-insensitively - recovery volumes are spelled
-/// `Recovery` on macOS and Windows.
-const AUTO_SKIPPED_MOUNTS: &[&str] = &["/boot", "/efi", "/recovery", "/volumes/recovery", "/system/volumes/recovery"];
-
-/// True when `mount_point` is `pattern` itself or sits below it.
-fn mount_matches(mount_point: &str, pattern: &str) -> bool {
-    mount_point == pattern || mount_point.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
-}
-
-/// The `AUTO_SKIPPED_MOUNTS` entry covering this mount point, if any.
-/// Windows mount points (`D:\Recovery`) are folded into the unix shape first.
-fn auto_skipped_by(mount_point: &str) -> Option<&'static str> {
-    let mut normalized = mount_point.replace('\\', "/").to_lowercase();
-    if normalized.chars().nth(1) == Some(':') {
-        normalized.drain(..2);
-    }
-    AUTO_SKIPPED_MOUNTS.iter().copied().find(|pattern| mount_matches(&normalized, pattern))
-}
-
-/// A single disk mount point the user wants to track.
+/// A disk mount point being tracked, at its column index.
 #[derive(Debug, Clone)]
 pub struct DiscoveredDisk {
-    /// Slot index used for column naming (DISK_N_USED_MB / DISK_N_AVAIL_MB).
     pub disk_index: usize,
-    /// Mount point path string, e.g. "/" or "/home/rafal/Projekty".
-    pub mount_point: String,
-    /// Device path as reported by sysinfo, e.g. "/dev/nvme0n1p6".
-    pub device: String,
-    /// Kernel device name to look up in `/proc/diskstats`, e.g. "nvme0n1p6".
-    /// `None` when the device has no I/O counters, which disables its I/O metrics.
-    pub io_stat_name: Option<String>,
-    /// Total filesystem size in GB (0 when unknown).
-    pub total_gb: u64,
+    pub tracked: TrackedDisk,
 }
 
 impl DiscoveredDisk {
+    pub fn mount_point(&self) -> &str {
+        &self.tracked.filesystem.mount_point
+    }
+
+    pub fn device(&self) -> &str {
+        &self.tracked.filesystem.device
+    }
+
+    pub fn total_gb(&self) -> u64 {
+        self.tracked.filesystem.total_bytes / 1_073_741_824
+    }
+
     /// Label for charts and the live view, e.g. `/home (nvme1n1 916 GB)`.
     pub fn display_label(&self) -> String {
-        let device = self.io_stat_name.clone().unwrap_or_else(|| short_device_name(&self.device));
-        let label = if self.total_gb > 0 {
-            format!("{} ({device} {} GB)", self.mount_point, self.total_gb)
-        } else {
-            format!("{} ({device})", self.mount_point)
+        let device = self
+            .tracked
+            .stat_name
+            .clone()
+            .unwrap_or_else(|| disk::short_device_name(self.device()).to_string());
+        let label = match self.total_gb() {
+            0 => format!("{} ({device})", self.mount_point()),
+            total => format!("{} ({device} {total} GB)", self.mount_point()),
         };
         sanitize_label(&label)
     }
 }
 
-/// `/dev/nvme0n1p6` → `nvme0n1p6`, leaving names like `overlay` untouched.
-fn short_device_name(device: &str) -> String {
-    device.rsplit('/').next().unwrap_or(device).to_string()
+#[derive(Debug, Clone)]
+pub struct DiscoveredPingTarget {
+    pub ping_index: usize,
+    /// Host name, IP, or `gateway`.
+    pub host: String,
 }
 
-/// Everything discovered at startup.  Workers receive an `Arc` of this so
-/// they know which GPUs / interfaces to poll.
+/// Everything discovered at startup.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeDiscovery {
     pub gpus: Vec<DiscoveredGpu>,
@@ -174,14 +114,6 @@ pub struct RuntimeDiscovery {
     pub ping_targets: Vec<DiscoveredPingTarget>,
     /// Problems worth showing to the user, e.g. a requested metric that cannot be collected.
     pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DiscoveredPingTarget {
-    /// Slot index in `SharedState.ping_windows`.
-    pub ping_index: usize,
-    /// Host name, IP, or `gateway`.
-    pub host: String,
 }
 
 impl RuntimeDiscovery {
@@ -196,424 +128,32 @@ impl RuntimeDiscovery {
     }
 }
 
-// ─── GPU discovery ────────────────────────────────────────────────────────────
-
-/// Discover all supported GPUs: first NVIDIA (via NVML), then AMD/Intel (Linux sysfs).
+/// Reading the Vivante idle register through /dev/mem while galcore has the GPU power-gated hangs
+/// the whole SoC, so Vivante GPUs are not looked for.
 pub fn discover_gpus() -> Vec<DiscoveredGpu> {
-    let mut gpus: Vec<DiscoveredGpu> = Vec::new();
-
-    discover_nvidia_gpus(&mut gpus);
-
-    #[cfg(target_os = "linux")]
-    discover_amd_intel_gpus_linux(&mut gpus);
-
-    #[cfg(target_os = "linux")]
-    if VIVANTE_MONITORING_ENABLED {
-        discover_vivante_gpu(&mut gpus);
-    }
-
+    let gpus: Vec<DiscoveredGpu> = gpu::discover(GpuDiscovery {
+        allow_vivante_register_reads: false,
+    })
+    .into_iter()
+    .enumerate()
+    .map(|(gpu_index, gpu)| DiscoveredGpu { gpu_index, gpu })
+    .collect();
     if gpus.is_empty() {
         info!("No supported GPUs discovered");
-    } else {
-        for gpu in &gpus {
-            info!(
-                "Discovered GPU {}: {} ({:?}), driver {}",
-                gpu.gpu_index,
-                gpu.display_name(),
-                gpu.vendor_kind(),
-                gpu.driver_version
-            );
-        }
     }
-
+    for gpu in &gpus {
+        info!(
+            "Discovered GPU {}: {} ({}), driver {}",
+            gpu.gpu_index,
+            gpu.display_name(),
+            gpu.vendor_kind(),
+            gpu.driver_version()
+        );
+    }
     gpus
 }
 
-fn discover_nvidia_gpus(gpus: &mut Vec<DiscoveredGpu>) {
-    let nvml = match nvml_wrapper::Nvml::init() {
-        Ok(n) => n,
-        Err(e) => {
-            info!("NVML unavailable ({e}), skipping NVIDIA GPU discovery");
-            return;
-        }
-    };
-
-    let driver_version = nvml.sys_driver_version().map(|v| format!("NVIDIA {v}")).unwrap_or_default();
-
-    let count = match nvml.device_count() {
-        Ok(n) => n,
-        Err(e) => {
-            warn!("Failed to query NVIDIA device count: {e}");
-            return;
-        }
-    };
-
-    for i in 0..count {
-        match nvml.device_by_index(i) {
-            Ok(device) => {
-                let name = device.name().unwrap_or_else(|_| format!("NVIDIA GPU {i}"));
-                let vram_total_mb = device.memory_info().map_or(0, |m| m.total / 1024 / 1024);
-                let gpu_index = gpus.len();
-                gpus.push(DiscoveredGpu {
-                    gpu_index,
-                    vendor: GpuVendor::Nvidia { nvml_index: i, name },
-                    vram_total_mb,
-                    driver_version: driver_version.clone(),
-                });
-            }
-            Err(e) => warn!("Failed to access NVIDIA GPU {i}: {e}"),
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn discover_amd_intel_gpus_linux(gpus: &mut Vec<DiscoveredGpu>) {
-    use std::fs;
-
-    let drm_path = std::path::Path::new("/sys/class/drm");
-    let Ok(entries) = fs::read_dir(drm_path) else {
-        return;
-    };
-
-    // Collect and sort card paths for deterministic ordering.
-    let mut card_paths: Vec<PathBuf> = entries
-        .flatten()
-        .filter(|e| {
-            let n = e.file_name();
-            let n = n.to_string_lossy();
-            // Only "cardN" — not "cardN-HDMI-A-1" connectors or "renderDN".
-            n.starts_with("card") && n.chars().skip(4).all(|c| c.is_ascii_digit())
-        })
-        .map(|e| e.path())
-        .collect();
-    card_paths.sort();
-
-    for card_path in card_paths {
-        let device_path = card_path.join("device");
-        if !device_path.exists() {
-            continue;
-        }
-
-        let vendor_str = match fs::read_to_string(device_path.join("vendor")) {
-            Ok(s) => s.trim().to_lowercase(),
-            Err(_) => continue,
-        };
-
-        // Skip NVIDIA — handled by NVML.
-        if vendor_str == "0x10de" {
-            continue;
-        }
-
-        let card_name = card_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-
-        match vendor_str.as_str() {
-            "0x1002" => {
-                // AMD
-                let handle = match amdgpu_sysfs::gpu_handle::GpuHandle::new_from_path(device_path.clone()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        info!("AMD card {card_name}: failed to open sysfs handle ({e}), skipping");
-                        continue;
-                    }
-                };
-                if handle.get_busy_percent().is_err() {
-                    info!("AMD card {card_name}: gpu_busy_percent not available, skipping");
-                    continue;
-                }
-                let name = resolve_gpu_name(&device_path, &format!("AMD GPU ({card_name})"));
-                let vram_total_mb = handle.get_total_vram().unwrap_or(0) / 1024 / 1024;
-                let gpu_index = gpus.len();
-                gpus.push(DiscoveredGpu {
-                    gpu_index,
-                    driver_version: kernel_driver_version(&device_path),
-                    vendor: GpuVendor::AmdLinux { handle, name },
-                    vram_total_mb,
-                });
-            }
-            "0x8086" => {
-                // Intel
-                let name = resolve_gpu_name(&device_path, &format!("Intel GPU ({card_name})"));
-                let gpu_index = gpus.len();
-                gpus.push(DiscoveredGpu {
-                    gpu_index,
-                    driver_version: kernel_driver_version(&device_path),
-                    vendor: GpuVendor::IntelLinux {
-                        card_device_path: device_path,
-                        name,
-                    },
-                    vram_total_mb: 0,
-                });
-            }
-            _ => {} // Unknown vendor
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn read_pci_label(device_path: &std::path::Path) -> Option<String> {
-    let label_path = device_path.join("label");
-    if let Ok(s) = std::fs::read_to_string(&label_path) {
-        let s = s.trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
-    }
-    None
-}
-
-/// Try to look up the GPU name from the system PCI IDs database.
-/// Reads vendor/device/subsystem IDs from sysfs and searches `/usr/share/hwdata/pci.ids`.
-#[cfg(target_os = "linux")]
-fn lookup_pci_name(device_path: &std::path::Path) -> Option<String> {
-    let vendor_raw = std::fs::read_to_string(device_path.join("vendor")).ok()?;
-    let device_raw = std::fs::read_to_string(device_path.join("device")).ok()?;
-
-    let vendor_id = vendor_raw.trim().trim_start_matches("0x").to_lowercase();
-    let device_id = device_raw.trim().trim_start_matches("0x").to_lowercase();
-
-    let sub_vendor = std::fs::read_to_string(device_path.join("subsystem_vendor"))
-        .map(|s| s.trim().trim_start_matches("0x").to_lowercase())
-        .unwrap_or_default();
-    let sub_device = std::fs::read_to_string(device_path.join("subsystem_device"))
-        .map(|s| s.trim().trim_start_matches("0x").to_lowercase())
-        .unwrap_or_default();
-
-    for pci_ids_path in &["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"] {
-        if let Ok(content) = std::fs::read_to_string(pci_ids_path)
-            && let Some(name) = search_pci_ids(&content, &vendor_id, &device_id, &sub_vendor, &sub_device)
-        {
-            return Some(name);
-        }
-    }
-    None
-}
-
-/// Parse the PCI IDs database file to find the most specific GPU name.
-/// Format: vendor lines (no indent), device lines (\t), subsystem lines (\t\t).
-#[cfg(target_os = "linux")]
-fn search_pci_ids(content: &str, vendor: &str, device: &str, sub_vendor: &str, sub_device: &str) -> Option<String> {
-    let mut in_vendor = false;
-    let mut device_name: Option<String> = None;
-    let mut past_device = false;
-
-    for line in content.lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-
-        if !line.starts_with('\t') {
-            // Vendor line
-            if in_vendor && past_device {
-                // We've moved past our vendor, return the device name
-                return device_name;
-            }
-            if in_vendor && !past_device {
-                // Different vendor — stop
-                return None;
-            }
-            let id = line.split_whitespace().next().unwrap_or("");
-            in_vendor = id.eq_ignore_ascii_case(vendor);
-        } else if in_vendor && !line.starts_with("\t\t") {
-            // Device line under our vendor
-            if past_device {
-                // Moved to a different device — return device name (no subsystem match)
-                return device_name;
-            }
-            let trimmed = line.trim_start_matches('\t');
-            let id = trimmed.split_whitespace().next().unwrap_or("");
-            if id.eq_ignore_ascii_case(device) {
-                #[expect(clippy::string_slice)]
-                let rest = trimmed[id.len()..].trim();
-                device_name = Some(rest.to_string());
-                past_device = true;
-            }
-        } else if in_vendor && past_device && line.starts_with("\t\t") {
-            // Subsystem line: "\t\tsubvend subdev  name"
-            if sub_vendor.is_empty() || sub_device.is_empty() {
-                continue;
-            }
-            let trimmed = line.trim_start_matches('\t');
-            let mut parts = trimmed.split_whitespace();
-            let sv = parts.next().unwrap_or("");
-            let sd = parts.next().unwrap_or("");
-            if sv.eq_ignore_ascii_case(sub_vendor) && sd.eq_ignore_ascii_case(sub_device) {
-                let rest: Vec<_> = parts.collect();
-                return Some(rest.join(" "));
-            }
-        }
-    }
-
-    device_name
-}
-
-/// Best-effort name of any PCI device: sysfs label file → pci.ids database.
-#[cfg(target_os = "linux")]
-fn resolve_pci_device_name(device_path: &std::path::Path) -> Option<String> {
-    read_pci_label(device_path).or_else(|| lookup_pci_name(device_path))
-}
-
-pub const GALCORE_DEBUGFS: &str = "/sys/kernel/debug/gc";
-#[cfg(target_os = "linux")]
-const GALCORE_REGISTER_BASES: &str = "/sys/module/galcore/parameters/registerBases";
-#[cfg(target_os = "linux")]
-const GALCORE_REGISTER_MEM_BASE: &str = "/sys/module/galcore/parameters/registerMemBase";
-
-/// Reading the idle register via /dev/mem while galcore has the GPU power-gated hangs the whole SoC.
-#[cfg(target_os = "linux")]
-const VIVANTE_MONITORING_ENABLED: bool = false;
-
-/// Only the 3D core is tracked: on i.MX6 the 2D (GC320) and VG (GC355) cores sit idle under Qt Quick.
-#[cfg(target_os = "linux")]
-fn discover_vivante_gpu(gpus: &mut Vec<DiscoveredGpu>) {
-    let Ok(info) = std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/info")) else {
-        return;
-    };
-    let Some(model) = parse_vivante_model(&info) else {
-        warn!("galcore: no 3D core in {GALCORE_DEBUGFS}/info, skipping");
-        return;
-    };
-    let Some(register_base) = std::fs::read_to_string(GALCORE_REGISTER_BASES)
-        .ok()
-        .and_then(|s| parse_galcore_core_register_base(&s))
-        .or_else(|| {
-            std::fs::read_to_string(GALCORE_REGISTER_MEM_BASE)
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok())
-        })
-    else {
-        warn!("galcore: cannot read {GALCORE_REGISTER_BASES}, skipping");
-        return;
-    };
-    let vram_total_mb = std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/meminfo"))
-        .ok()
-        .and_then(|s| parse_vivante_meminfo(&s))
-        .map_or(0, |m| m.total_bytes / 1024 / 1024);
-    let gpu_index = gpus.len();
-    gpus.push(DiscoveredGpu {
-        gpu_index,
-        vendor: GpuVendor::Vivante {
-            register_base,
-            name: format!("Vivante GC{model}"),
-        },
-        vram_total_mb,
-        driver_version: std::fs::read_to_string(format!("{GALCORE_DEBUGFS}/version"))
-            .ok()
-            .and_then(|s| parse_galcore_version(&s))
-            .unwrap_or_default(),
-    });
-}
-
-/// `registerBases` lists one base per core, 3D first, e.g. `939524096,944766976,0,...`. The scalar
-/// `registerMemBase` is a module default (0x80000000 = RAM) that platform-device probing never updates.
-pub fn parse_galcore_core_register_base(register_bases: &str) -> Option<u64> {
-    register_bases.trim().split(',').next()?.trim().parse().ok().filter(|&base| base != 0)
-}
-
-/// First line of `gc/version` is `6.4.3.p2.336687 built at <hash>`.
-pub fn parse_galcore_version(version: &str) -> Option<String> {
-    let first_word = version.split_whitespace().next()?;
-    Some(format!("galcore {first_word}"))
-}
-
-/// In-tree drivers (amdgpu, i915, xe) carry no version of their own - they ship with the kernel.
-#[cfg(target_os = "linux")]
-fn kernel_driver_version(device_path: &std::path::Path) -> String {
-    let Some(driver) = std::fs::read_link(device_path.join("driver"))
-        .ok()
-        .and_then(|link| link.file_name().map(|n| n.to_string_lossy().to_string()))
-    else {
-        return String::new();
-    };
-    let module_version = std::fs::read_to_string(format!("/sys/module/{driver}/version")).ok();
-    let kernel_version = sysinfo::System::kernel_version();
-    match (module_version, kernel_version) {
-        (Some(version), _) => format!("{driver} {}", version.trim()),
-        (None, Some(kernel)) => format!("{driver} (kernel {kernel})"),
-        (None, None) => driver,
-    }
-}
-
-/// Model of the `gpu : 0` block (the 3D core), e.g. `2000` for GC2000.
-pub fn parse_vivante_model(info: &str) -> Option<String> {
-    let mut in_core_0 = false;
-    for line in info.lines() {
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        match key.trim() {
-            "gpu" => in_core_0 = value.trim() == "0",
-            "model" if in_core_0 => return Some(value.trim().to_string()),
-            _ => {}
-        }
-    }
-    None
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VivanteMemInfo {
-    /// Sum of `Used` over every pool (contiguous SYSTEM + MMU-mapped VIRTUAL).
-    pub used_bytes: u64,
-    /// `Total` of the contiguous SYSTEM pool, the only pool with a fixed size.
-    pub total_bytes: u64,
-}
-
-pub fn parse_vivante_meminfo(meminfo: &str) -> Option<VivanteMemInfo> {
-    let mut used_bytes = 0;
-    let mut total_bytes = 0;
-    let mut found = false;
-    for line in meminfo.lines() {
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let Some(bytes) = value.trim().strip_suffix('B').and_then(|v| v.trim().parse::<u64>().ok()) else {
-            continue;
-        };
-        match key.trim() {
-            "Used" => {
-                used_bytes += bytes;
-                found = true;
-            }
-            "Total" => total_bytes = total_bytes.max(bytes),
-            _ => {}
-        }
-    }
-    found.then_some(VivanteMemInfo { used_bytes, total_bytes })
-}
-
-#[cfg(target_os = "linux")]
-fn resolve_gpu_name(device_path: &std::path::Path, fallback: &str) -> String {
-    resolve_pci_device_name(device_path).unwrap_or_else(|| fallback.to_string())
-}
-
-impl DiscoveredGpu {
-    pub fn vendor_kind(&self) -> &'static str {
-        match &self.vendor {
-            GpuVendor::Nvidia { .. } => "NVIDIA",
-            GpuVendor::AmdLinux { .. } => "AMD (Linux sysfs)",
-            GpuVendor::IntelLinux { .. } => "Intel (Linux sysfs)",
-            GpuVendor::Vivante { .. } => "Vivante (galcore)",
-        }
-    }
-}
-
-// ─── Network interface discovery ─────────────────────────────────────────────
-
-/// Interface name prefixes considered "virtual" / container-related.
-const VIRTUAL_PREFIXES: &[&str] = &["docker", "veth", "br-", "virbr", "tun", "tap", "dummy", "lo"];
-
-// ─── Disk discovery ───────────────────────────────────────────────────────────
-
-/// A mounted filesystem as reported by sysinfo.
-struct MountedDisk {
-    device: String,
-    mount_point: String,
-    file_system: String,
-    total_bytes: u64,
-    total_gb: u64,
-}
-
-/// A mounted filesystem as shown in the live view, regardless of whether its
-/// usage is tracked.
+/// A mounted filesystem as shown in the live view, regardless of whether its usage is tracked.
 #[derive(Debug, Clone, Serialize)]
 pub struct MountedFilesystem {
     pub mount_point: String,
@@ -621,8 +161,8 @@ pub struct MountedFilesystem {
     /// Filesystem type as reported by the OS, e.g. `ext4`, `btrfs`, `ntfs`.
     pub file_system: String,
     pub total_bytes: u64,
-    /// Hardware model of the drive the filesystem sits on, e.g.
-    /// `Samsung SSD 980 1TB` - Linux only, and absent for LVM/RAID mappings.
+    /// Hardware model of the drive, e.g. `Samsung SSD 980 1TB` - Linux only, and absent for
+    /// LVM/RAID mappings.
     pub model: Option<String>,
     /// `DISK_N` index when this filesystem is tracked, `None` when it is only listed.
     pub tracked_index: Option<usize>,
@@ -637,46 +177,26 @@ impl MountedFilesystem {
             "{} - {size} {}, {}{model}",
             self.mount_point,
             self.file_system,
-            short_device_name(&self.device)
+            disk::short_device_name(&self.device)
         )
     }
 }
 
-/// Returns all real (non-virtual) mounted filesystems.
-fn real_disks(disks: &Disks) -> Vec<MountedDisk> {
-    disks
-        .iter()
-        .filter(|d| {
-            let fs = d.file_system().to_string_lossy().to_lowercase();
-            !VIRTUAL_FS_TYPES.contains(&fs.as_str())
-        })
-        .map(|d| MountedDisk {
-            device: d.name().to_string_lossy().to_string(),
-            mount_point: d.mount_point().to_string_lossy().to_string(),
-            file_system: d.file_system().to_string_lossy().to_string(),
-            total_bytes: d.total_space(),
-            total_gb: d.total_space() / 1_073_741_824,
-        })
-        .collect()
-}
-
-/// Every attached filesystem, one entry per device, sorted by mount point, with the
-/// `DISK_N` index of the ones `tracked` covers.  Unlike `discover_disks` this ignores
-/// the tracking flags - boot partitions and excluded mounts are attached all the same.
+/// Every attached filesystem, one entry per device, sorted by mount point, with the `DISK_N` index
+/// of the tracked ones.  Boot partitions and excluded mounts are listed all the same.
 pub fn mounted_filesystems(tracked: &[DiscoveredDisk]) -> Vec<MountedFilesystem> {
-    let disks = Disks::new_with_refreshed_list();
-    let mounts = real_disks(&disks);
-    let mut listed: Vec<MountedFilesystem> = unique_devices(&mounts.iter().collect::<Vec<_>>())
+    let all = disk::filesystems();
+    let mut listed: Vec<MountedFilesystem> = disk::unique_devices(&all)
         .into_iter()
-        .map(|m| MountedFilesystem {
-            mount_point: m.mount_point.clone(),
-            device: m.device.clone(),
-            file_system: m.file_system.clone(),
-            total_bytes: m.total_bytes,
-            model: device_model(&m.device),
+        .map(|fs| MountedFilesystem {
+            mount_point: fs.mount_point.clone(),
+            device: fs.device.clone(),
+            file_system: fs.file_system.clone(),
+            total_bytes: fs.total_bytes,
+            model: disk::device_model(&fs.device),
             tracked_index: tracked
                 .iter()
-                .find(|d| d.device == m.device || d.mount_point == m.mount_point)
+                .find(|d| d.device() == fs.device || d.mount_point() == fs.mount_point)
                 .map(|d| d.disk_index),
         })
         .collect();
@@ -684,301 +204,144 @@ pub fn mounted_filesystems(tracked: &[DiscoveredDisk]) -> Vec<MountedFilesystem>
     listed
 }
 
-/// Hardware model of the drive backing `device`, from sysfs.  Partitions carry no
-/// model of their own, so the parent block device is the one asked.
-#[cfg(target_os = "linux")]
-fn device_model(device: &str) -> Option<String> {
-    let block = std::fs::canonicalize(std::path::Path::new("/sys/class/block").join(short_device_name(device))).ok()?;
-    let drive = if block.join("partition").exists() {
-        block.parent()?.to_path_buf()
-    } else {
-        block
-    };
-
-    let read = |file: &str| {
-        std::fs::read_to_string(drive.join("device").join(file))
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    };
-
-    let model = read("model")?;
-    // SATA drives report the controller protocol as their vendor, which says nothing
-    // about the drive; USB enclosures and SCSI disks report a real manufacturer.
-    match read("vendor").filter(|v| v != "ATA" && !model.starts_with(v.as_str())) {
-        Some(vendor) => Some(format!("{vendor} {model}")),
-        None => Some(model),
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn device_model(_device: &str) -> Option<String> {
-    None
-}
-
-/// Whether `--all-disks` should track this filesystem, i.e. it is neither a boot/EFI/recovery
-/// partition nor excluded by `--exclude-disk`.
-fn is_auto_tracked(mount: &MountedDisk, excluded: &[String]) -> bool {
-    let skipped_by = auto_skipped_by(&mount.mount_point).map(ToString::to_string).or_else(|| {
-        excluded
-            .iter()
-            .find(|pattern| mount_matches(&mount.mount_point, pattern) || &mount.device == *pattern)
-            .cloned()
-    });
-
-    match skipped_by {
-        Some(pattern) => {
-            info!("Skipping disk {} ({}) - excluded by \"{pattern}\"", mount.mount_point, mount.device);
-            false
-        }
-        None => true,
-    }
-}
-
-/// One entry per device, keeping its shortest mount point - bind mounts and btrfs subvolumes
-/// otherwise report the same physical disk under a dozen different mount points.
-fn unique_devices<'a>(mounts: &[&'a MountedDisk]) -> Vec<&'a MountedDisk> {
-    let mut unique: Vec<&'a MountedDisk> = Vec::new();
-    for mount in mounts.iter().copied() {
-        match unique.iter_mut().find(|kept| kept.device == mount.device) {
-            Some(kept) => {
-                if mount.mount_point.len() < kept.mount_point.len() {
-                    *kept = mount;
-                }
-            }
-            None => unique.push(mount),
-        }
-    }
-    unique
+fn describe_filesystem(fs: &Filesystem) -> String {
+    format!(
+        "device: {}  mount: {}  size: {} GB  fs: {}",
+        fs.device,
+        fs.mount_point,
+        fs.total_bytes / 1_073_741_824,
+        fs.file_system
+    )
 }
 
 /// Print available disks to the log (used by --list-disks).
 pub fn list_real_disks(excluded: &[String]) {
-    let disks = Disks::new_with_refreshed_list();
-    let mounts = real_disks(&disks);
-    if mounts.is_empty() {
+    let all = disk::filesystems();
+    if all.is_empty() {
         info!("No real disks found");
         return;
     }
     info!("Available disks:");
-    for mount in &mounts {
-        info!(
-            "  device: {}  mount: {}  size: {} GB  fs: {}",
-            mount.device, mount.mount_point, mount.total_gb, mount.file_system
-        );
+    for fs in &all {
+        info!("  {}", describe_filesystem(fs));
     }
-    let auto_tracked: Vec<&MountedDisk> = mounts.iter().filter(|m| is_auto_tracked(m, excluded)).collect();
     info!("Disks tracked by --all-disks:");
-    for mount in unique_devices(&auto_tracked) {
-        info!(
-            "  device: {}  mount: {}  size: {} GB  fs: {}",
-            mount.device, mount.mount_point, mount.total_gb, mount.file_system
-        );
+    let (tracked, notes) = disk::select(&all, &DiskQuery::All { excluded: excluded.to_vec() });
+    log_disk_notes(&notes);
+    for disk in tracked {
+        info!("  {}", describe_filesystem(&disk.filesystem));
     }
 }
 
-/// Discover disks to track.
-///
-/// If `all_disks` is true, tracks every real (non-virtual) disk once per device,
-/// minus boot/EFI/recovery partitions and anything listed in `excluded`.
-/// Otherwise each entry in `requested` is matched against either the device
-/// name (e.g. `/dev/sda1`) or the mount point (e.g. `/home`) - an explicitly
-/// requested disk is always tracked, exclusions only apply to `all_disks`.
+fn log_disk_notes(notes: &[DiskNote]) {
+    for note in notes {
+        match note {
+            DiskNote::Skipped {
+                mount_point,
+                device,
+                because,
+            } => info!("Skipping disk {mount_point} ({device}) - excluded by \"{because}\""),
+            DiskNote::NotFound { requested } => warn!("Requested disk \"{requested}\" not found"),
+        }
+    }
+}
+
+/// Disks to track: with `all_disks` every real disk once per device, minus boot/EFI/recovery
+/// partitions and `excluded`; otherwise each entry of `requested` matched against a mount point
+/// or device name - an explicitly requested disk is always tracked.
 pub fn discover_disks(requested: &[String], all_disks: bool, excluded: &[String]) -> Vec<DiscoveredDisk> {
     if !all_disks && requested.is_empty() {
         return vec![];
     }
-
-    let sysinfo_disks = Disks::new_with_refreshed_list();
-    let mounts = real_disks(&sysinfo_disks);
-
-    let available_display: Vec<String> = mounts.iter().map(|m| format!("{} ({})", m.device, m.mount_point)).collect();
-    info!("Available disks: {}", available_display.join(", "));
-
-    let mut discovered: Vec<DiscoveredDisk> = Vec::new();
-
-    if all_disks {
-        let auto_tracked: Vec<&MountedDisk> = mounts.iter().filter(|m| is_auto_tracked(m, excluded)).collect();
-        for mount in unique_devices(&auto_tracked) {
-            discovered.push(track_disk(discovered.len(), mount));
-        }
+    let all = disk::filesystems();
+    info!(
+        "Available disks: {}",
+        all.iter()
+            .map(|fs| format!("{} ({})", fs.device, fs.mount_point))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let query = if all_disks {
+        DiskQuery::All { excluded: excluded.to_vec() }
     } else {
-        for req in requested {
-            // Match by mount point OR device name.
-            match mounts.iter().find(|m| &m.mount_point == req || &m.device == req) {
-                Some(mount) => discovered.push(track_disk(discovered.len(), mount)),
-                None => {
-                    warn!("Requested disk \"{req}\" not found (available: {})", available_display.join(", "));
-                }
-            }
+        DiskQuery::Requested(requested.to_vec())
+    };
+    let (tracked, notes) = disk::select(&all, &query);
+    log_disk_notes(&notes);
+    let disks: Vec<DiscoveredDisk> = tracked
+        .into_iter()
+        .enumerate()
+        .map(|(disk_index, tracked)| DiscoveredDisk { disk_index, tracked })
+        .collect();
+    for disk in &disks {
+        match &disk.tracked.stat_name {
+            Some(name) => info!("Tracking disk {}: {} (I/O counters from {name})", disk.disk_index, disk.display_label()),
+            None => info!("Tracking disk {}: {} (no I/O counters available)", disk.disk_index, disk.display_label()),
         }
     }
-
-    discovered
+    disks
 }
-
-fn track_disk(disk_index: usize, mount: &MountedDisk) -> DiscoveredDisk {
-    let disk = DiscoveredDisk {
-        disk_index,
-        mount_point: mount.mount_point.clone(),
-        device: mount.device.clone(),
-        io_stat_name: device_stat_name(&mount.device, &mount.mount_point),
-        total_gb: mount.total_gb,
-    };
-    match &disk.io_stat_name {
-        Some(name) => info!("Tracking disk {disk_index}: {} (I/O counters from {name})", disk.display_label()),
-        None => info!("Tracking disk {disk_index}: {} (no I/O counters available)", disk.display_label()),
-    }
-    disk
-}
-
-// ─── Network interface discovery ─────────────────────────────────────────────
 
 /// Print available real network interfaces to the log (used by --list-networks).
 pub fn list_real_interfaces(excluded: &[String]) {
-    let networks = Networks::new_with_refreshed_list();
-    let mut names: Vec<&str> = networks
-        .iter()
-        .filter(|(name, _)| is_real_interface(name))
-        .map(|(name, _)| name.as_str())
-        .collect();
-    names.sort_unstable();
-    if names.is_empty() {
+    let (interfaces, _) = network::select(&InterfaceQuery::All { excluded: Vec::new() });
+    if interfaces.is_empty() {
         info!("No real network interfaces found");
         return;
     }
     info!("Available network interfaces:");
-    for name in names {
-        let excluded_note = if excluded.iter().any(|e| e == name) { " - excluded" } else { "" };
-        info!("  {}{excluded_note}", describe_interface(0, name).display_label());
+    for interface in interfaces {
+        let note = if excluded.contains(&interface.name) { " - excluded" } else { "" };
+        let label = DiscoveredInterface { iface_index: 0, interface }.display_label();
+        info!("  {label}{note}");
     }
 }
 
-/// Connection type, adapter model and link speed of one interface.
-/// Everything but the name is best-effort and only available on Linux.
-fn describe_interface(iface_index: usize, name: &str) -> DiscoveredInterface {
-    #[cfg(target_os = "linux")]
-    let (kind, model, speed_mbps) = interface_details_linux(name);
-    #[cfg(not(target_os = "linux"))]
-    let (kind, model, speed_mbps) = ("Unknown".to_string(), None, None);
-
-    DiscoveredInterface {
-        iface_index,
-        name: name.to_string(),
-        kind,
-        model,
-        speed_mbps,
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn interface_details_linux(name: &str) -> (String, Option<String>, Option<u64>) {
-    let sys_path = std::path::Path::new("/sys/class/net").join(name);
-    let device_path = sys_path.join("device");
-
-    // Wireless cards are ARPHRD_ETHER like wired ones, so the wireless directories
-    // are what tells them apart.
-    let kind = if sys_path.join("wireless").exists() || sys_path.join("phy80211").exists() {
-        "WiFi"
-    } else if device_path.exists() {
-        "Ethernet"
-    } else {
-        "Virtual"
-    };
-
-    let model = resolve_pci_device_name(&device_path).or_else(|| driver_name(&device_path));
-    // The speed file reads -1 (or fails) while the link is down.
-    let speed_mbps = std::fs::read_to_string(sys_path.join("speed"))
-        .ok()
-        .and_then(|s| s.trim().parse::<i64>().ok())
-        .filter(|&speed| speed > 0)
-        .map(|speed| speed as u64);
-
-    (kind.to_string(), model, speed_mbps)
-}
-
-/// Kernel module bound to the device, e.g. `iwlwifi` or `r8169`.
-#[cfg(target_os = "linux")]
-fn driver_name(device_path: &std::path::Path) -> Option<String> {
-    let driver = std::fs::read_link(device_path.join("driver")).ok()?;
-    Some(driver.file_name()?.to_string_lossy().into_owned())
-}
-
-/// Discover network interfaces to track.
-///
-/// If `all_networks` is true: discovers all real (non-virtual) interfaces, minus
-/// the ones listed in `excluded`.
-/// If `all_networks` is false and `requested` is non-empty: discovers only the
-/// interfaces whose names are in `requested`, warning about any not found.
-/// If `all_networks` is false and `requested` is empty: returns nothing.
+/// Interfaces to track, sorted by name: every real one minus `excluded` with `all_networks`,
+/// otherwise the `requested` ones that exist.
 pub fn discover_interfaces(requested: &[String], all_networks: bool, excluded: &[String]) -> Vec<DiscoveredInterface> {
     if !all_networks && requested.is_empty() {
         return vec![];
     }
-
-    let networks = Networks::new_with_refreshed_list();
-
-    let mut names: Vec<String> = if all_networks {
-        networks
-            .iter()
-            .filter(|(name, _)| is_real_interface(name))
-            .filter(|(name, _)| {
-                let keep = !excluded.contains(name);
-                if !keep {
-                    info!("Skipping network interface {name} - excluded");
-                }
-                keep
-            })
-            .map(|(name, _)| name.clone())
-            .collect()
+    let query = if all_networks {
+        InterfaceQuery::All { excluded: excluded.to_vec() }
     } else {
-        let mut result = Vec::new();
-        let available: Vec<&str> = networks
-            .iter()
-            .filter(|(name, _)| is_real_interface(name))
-            .map(|(name, _)| name.as_str())
-            .collect();
-        for req in requested {
-            if available.contains(&req.as_str()) {
-                result.push(req.clone());
-            } else {
-                warn!("Requested network interface \"{req}\" not found (available: {})", available.join(", "));
-            }
-        }
-        result
+        InterfaceQuery::Requested(requested.to_vec())
     };
-
-    // Sort by name for deterministic column ordering, then index in that order.
-    names.sort_unstable();
-    let interfaces: Vec<DiscoveredInterface> = names.iter().enumerate().map(|(index, name)| describe_interface(index, name)).collect();
-
-    for iface in &interfaces {
-        info!("Discovered network interface {}: {}", iface.iface_index, iface.display_label());
+    let (found, missing) = network::select(&query);
+    for name in missing {
+        warn!("Requested network interface \"{name}\" not found");
     }
-
+    let interfaces: Vec<DiscoveredInterface> = found
+        .into_iter()
+        .enumerate()
+        .map(|(iface_index, interface)| DiscoveredInterface { iface_index, interface })
+        .collect();
+    for interface in &interfaces {
+        info!("Discovered network interface {}: {}", interface.iface_index, interface.display_label());
+    }
     interfaces
-}
-
-fn is_real_interface(name: &str) -> bool {
-    for prefix in VIRTUAL_PREFIXES {
-        if name == *prefix || name.starts_with(prefix) {
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(test)]
 mod tests {
+    use system_info_probe::network::InterfaceKind;
+
     use super::*;
 
     fn disk(mount_point: &str, device: &str, total_gb: u64) -> DiscoveredDisk {
         DiscoveredDisk {
             disk_index: 0,
-            mount_point: mount_point.to_string(),
-            device: device.to_string(),
-            io_stat_name: None,
-            total_gb,
+            tracked: TrackedDisk {
+                filesystem: Filesystem {
+                    mount_point: mount_point.to_string(),
+                    device: device.to_string(),
+                    file_system: "ext4".to_string(),
+                    total_bytes: total_gb * 1_073_741_824,
+                },
+                stat_name: None,
+                model: None,
+            },
         }
     }
 
@@ -989,99 +352,25 @@ mod tests {
         assert_eq!(disk("/mnt/share", "//server/share", 0).display_label(), "/mnt/share (share)");
     }
 
-    fn mounted(mount_point: &str, device: &str) -> MountedDisk {
-        MountedDisk {
-            device: device.to_string(),
-            mount_point: mount_point.to_string(),
-            file_system: "ext4".to_string(),
-            total_bytes: 100 * 1_073_741_824,
-            total_gb: 100,
-        }
-    }
-
-    #[test]
-    fn keeps_boot_partitions_out_of_all_disks() {
-        assert!(!is_auto_tracked(&mounted("/boot", "/dev/nvme0n1p2"), &[]));
-        assert!(!is_auto_tracked(&mounted("/boot/efi", "/dev/nvme0n1p1"), &[]));
-        assert!(is_auto_tracked(&mounted("/", "/dev/nvme0n1p3"), &[]));
-        // A path that merely starts with the same letters is a different mount.
-        assert!(is_auto_tracked(&mounted("/bootcamp", "/dev/sda1"), &[]));
-    }
-
-    #[test]
-    fn keeps_recovery_partitions_out_of_all_disks() {
-        assert!(!is_auto_tracked(&mounted("/recovery", "/dev/sda3"), &[]));
-        assert!(!is_auto_tracked(&mounted("/Volumes/Recovery", "/dev/disk1s3"), &[]));
-        assert!(!is_auto_tracked(&mounted("D:\\Recovery", "\\\\?\\Volume{1}"), &[]));
-        assert!(is_auto_tracked(&mounted("/mnt/recovery-images", "/dev/sdb1"), &[]));
-    }
-
-    #[test]
-    fn honours_user_exclusions() {
-        let excluded = vec!["/mnt/backup".to_string(), "/dev/sdb1".to_string()];
-        assert!(!is_auto_tracked(&mounted("/mnt/backup", "/dev/sdc1"), &excluded));
-        assert!(!is_auto_tracked(&mounted("/mnt/backup/old", "/dev/sdc1"), &excluded));
-        assert!(!is_auto_tracked(&mounted("/data", "/dev/sdb1"), &excluded));
-        assert!(is_auto_tracked(&mounted("/mnt/media", "/dev/sdd1"), &excluded));
-    }
-
     #[test]
     fn labels_interfaces_with_what_is_known() {
-        let wifi = DiscoveredInterface {
+        let interface = |name: &str, kind, model: Option<&str>, speed_mbps| DiscoveredInterface {
             iface_index: 0,
-            name: "wlan0".to_string(),
-            kind: "WiFi".to_string(),
-            // Commas would break the CSV metadata line they are written to.
-            model: Some("Wi-Fi 6 AX201, 160MHz".to_string()),
-            speed_mbps: None,
+            interface: Interface {
+                name: name.to_string(),
+                kind,
+                model: model.map(ToString::to_string),
+                speed_mbps,
+            },
         };
-        assert_eq!(wifi.display_label(), "wlan0 (WiFi - Wi-Fi 6 AX201  160MHz)");
-
-        let wired = DiscoveredInterface {
-            iface_index: 1,
-            name: "eth0".to_string(),
-            kind: "Ethernet".to_string(),
-            model: None,
-            speed_mbps: Some(1000),
-        };
-        assert_eq!(wired.display_label(), "eth0 (Ethernet - 1000 Mb/s)");
-    }
-
-    const GALCORE_INFO: &str = "gpu      : 0\nmodel    : 2000\nrevision : ffff5450\nproduct  :    0\neco      :    0\n\ngpu      : 8\nmodel    :  320\nrevision : 5303\n\ngpu      : 9\nmodel    :  355\n";
-    const GALCORE_MEMINFO: &str = "VIDEO MEMORY:\n  POOL SYSTEM:\n    Free :     112002796 B\n    Used :      22214932 B\n    MinFree :  107759308 B\n    MaxUsed :   26458420 B\n    Total :    134217728 B\n  POOL VIRTUAL:\n    Used :      21549056 B\n    MaxUsed :   21549056 B\n";
-
-    #[test]
-    fn galcore_version_drops_build_hash() {
+        // Commas would break the CSV metadata line they are written to.
         assert_eq!(
-            parse_galcore_version("6.4.3.p2.336687 built at 7f42315f44fc\nPlatform path: drivers/mxc/gpu-viv\n").as_deref(),
-            Some("galcore 6.4.3.p2.336687")
+            interface("wlan0", InterfaceKind::Wifi, Some("Wi-Fi 6 AX201, 160MHz"), None).display_label(),
+            "wlan0 (WiFi - Wi-Fi 6 AX201  160MHz)"
         );
-        assert_eq!(parse_galcore_version(""), None);
-    }
-
-    #[test]
-    fn galcore_register_base_is_the_first_core() {
-        assert_eq!(parse_galcore_core_register_base("939524096,944766976,0,0\n"), Some(0x3800_0000));
-        assert_eq!(parse_galcore_core_register_base("1245184,0,0"), Some(0x13_0000));
-        assert_eq!(parse_galcore_core_register_base("0,0,0"), None);
-        assert_eq!(parse_galcore_core_register_base(""), None);
-    }
-
-    #[test]
-    fn vivante_model_is_the_3d_core() {
-        assert_eq!(parse_vivante_model(GALCORE_INFO).as_deref(), Some("2000"));
-        assert_eq!(parse_vivante_model("gpu      : 8\nmodel    :  320\n"), None);
-    }
-
-    #[test]
-    fn vivante_meminfo_sums_used_over_pools() {
         assert_eq!(
-            parse_vivante_meminfo(GALCORE_MEMINFO),
-            Some(VivanteMemInfo {
-                used_bytes: 22_214_932 + 21_549_056,
-                total_bytes: 134_217_728,
-            })
+            interface("eth0", InterfaceKind::Ethernet, None, Some(1000)).display_label(),
+            "eth0 (Ethernet - 1000 Mb/s)"
         );
-        assert_eq!(parse_vivante_meminfo("VIDEO MEMORY:\n"), None);
     }
 }

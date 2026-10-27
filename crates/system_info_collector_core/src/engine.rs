@@ -3,20 +3,15 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Error;
 use log::{info, warn};
-use sysinfo::{ProcessesToUpdate, System};
+use system_info_probe::system::MachineInfo;
 use tokio::task::JoinSet;
 
-use crate::discovery::{GpuVendor, RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
+use crate::discovery::{RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
-use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker, system_worker};
-
-#[cfg(target_os = "linux")]
-use crate::workers::amd_intel_gpu_worker;
 #[cfg(target_os = "linux")]
 use crate::workers::ping_worker;
-#[cfg(target_os = "linux")]
-use crate::workers::vivante_gpu_worker;
+use crate::workers::{disk_io_worker, file_writer, gpu_worker, network_worker, system_worker};
 
 /// The central collection engine.
 ///
@@ -28,8 +23,6 @@ pub struct CollectorEngine {
     state: Arc<RwLock<SharedState>>,
     shutdown: Arc<AtomicBool>,
     discovery: Arc<RuntimeDiscovery>,
-    #[cfg(target_os = "linux")]
-    ping_client: Option<surge_ping::Client>,
 }
 
 impl CollectorEngine {
@@ -50,13 +43,10 @@ impl CollectorEngine {
         let mut warnings = Vec::new();
         #[cfg_attr(not(target_os = "linux"), expect(unused_mut))]
         let mut ping_targets = Vec::new();
-        #[cfg(target_os = "linux")]
-        let mut ping_client = None;
         if settings.collection_mode.iter().any(|m| m.is_ping()) {
             #[cfg(target_os = "linux")]
-            match ping_worker::open_client() {
-                Ok(client) => {
-                    ping_client = Some(client);
+            match ping_worker::check_permission() {
+                Ok(()) => {
                     ping_targets = settings
                         .ping_targets
                         .iter()
@@ -98,8 +88,6 @@ impl CollectorEngine {
             state: Arc::new(RwLock::new(state)),
             shutdown: Arc::new(AtomicBool::new(false)),
             discovery,
-            #[cfg(target_os = "linux")]
-            ping_client,
         }
     }
 
@@ -131,19 +119,10 @@ impl CollectorEngine {
 
         let discovery = Arc::clone(&self.discovery);
 
-        // Initial System refresh — used only to read metadata for the CSV header.
-        let mut sys = System::new_all();
-        sys.refresh_memory();
-        sys.refresh_cpu_all();
-        if self.settings.need_to_refresh_processes {
-            sys.refresh_processes(ProcessesToUpdate::All, true);
-        }
-
         // Rotate old backups and open the data file.
         file_writer::backup_old_file(&self.settings)?;
         let mut data_file = file_writer::open_data_file(&self.settings)?;
-        let csv_header = file_writer::write_csv_header(&mut data_file, &sys, &self.settings, &discovery, app_version)?;
-        drop(sys); // no longer needed; workers create their own System instances
+        let csv_header = file_writer::write_csv_header(&mut data_file, &MachineInfo::read(), &self.settings, &discovery, app_version)?;
 
         let on_row = Arc::new(on_row);
 
@@ -177,62 +156,22 @@ impl CollectorEngine {
         }
 
         #[cfg(target_os = "linux")]
-        if let Some(client) = self.ping_client.clone()
-            && !discovery.ping_targets.is_empty()
-        {
+        if !discovery.ping_targets.is_empty() {
             join_set.spawn(ping_worker::run(
                 Arc::clone(&self.settings),
                 Arc::clone(&self.state),
                 Arc::clone(&self.shutdown),
                 Arc::clone(&discovery),
-                client,
             ));
         }
 
         if needs_gpu && !discovery.gpus.is_empty() {
-            // NVIDIA worker — handles all discovered NVIDIA GPUs
-            let nvidia_gpus: Vec<_> = discovery
-                .gpus
-                .iter()
-                .filter(|g| matches!(g.vendor, GpuVendor::Nvidia { .. }))
-                .cloned()
-                .collect();
-            if !nvidia_gpus.is_empty() {
-                join_set.spawn(nvidia_worker::run(
-                    Arc::clone(&self.settings),
-                    Arc::clone(&self.state),
-                    Arc::clone(&self.shutdown),
-                    Arc::new(nvidia_gpus),
-                ));
-            }
-
-            // AMD/Intel GPU worker — Linux only
-            #[cfg(target_os = "linux")]
-            {
-                let amd_intel_gpus: Vec<_> = discovery
-                    .gpus
-                    .iter()
-                    .filter(|g| matches!(g.vendor, GpuVendor::AmdLinux { .. } | GpuVendor::IntelLinux { .. }))
-                    .cloned()
-                    .collect();
-                if !amd_intel_gpus.is_empty() {
-                    join_set.spawn(amd_intel_gpu_worker::run(
-                        Arc::clone(&self.settings),
-                        Arc::clone(&self.state),
-                        Arc::clone(&self.shutdown),
-                        Arc::new(amd_intel_gpus),
-                    ));
-                }
-
-                if let Some(gpu) = discovery.gpus.iter().find(|g| matches!(g.vendor, GpuVendor::Vivante { .. })) {
-                    join_set.spawn(vivante_gpu_worker::run(
-                        Arc::clone(&self.settings),
-                        Arc::clone(&self.state),
-                        Arc::clone(&self.shutdown),
-                        gpu.clone(),
-                    ));
-                }
-            }
+            join_set.spawn(gpu_worker::run(
+                Arc::clone(&self.settings),
+                Arc::clone(&self.state),
+                Arc::clone(&self.shutdown),
+                Arc::clone(&discovery),
+            ));
         }
 
         // file_writer — the "coordinator" that aggregates snapshots into CSV rows

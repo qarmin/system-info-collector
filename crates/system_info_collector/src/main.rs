@@ -14,13 +14,13 @@ use std::{env, process};
 
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
-use sysinfo::System;
-use system_info_collector_core::discovery::{DiscoveredInterface, list_real_disks, list_real_interfaces, mounted_filesystems};
+use system_info_collector_core::discovery::{DiscoveredGpu, DiscoveredInterface, list_real_disks, list_real_interfaces, mounted_filesystems};
 use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
 use system_info_collector_core::session_recorder::{SessionConfig, SessionProgress};
 use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
 use system_info_collector_core::workers::system_worker::bytes_to_mb;
+use system_info_probe::system::MachineInfo;
 
 use crate::cli::{Commands, parse_cli};
 use crate::converting::ploty_creator::load_results_and_save_plot;
@@ -64,24 +64,15 @@ async fn main() {
             let convert_after = settings.convert_after;
 
             // Always collect and log system hardware info.
-            let mut meta_sys = System::new();
-            meta_sys.refresh_memory();
-            meta_sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
-
-            let cpu_logical_cores = meta_sys.cpus().len();
-            let cpu_physical_cores = sysinfo::System::physical_core_count().unwrap_or(0);
-            let cpu_model = meta_sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
-            let total_memory_mb = bytes_to_mb(meta_sys.total_memory());
-            let total_swap_mb = bytes_to_mb(meta_sys.total_swap());
-
-            // `long_os_version` spells this "Linux (Ubuntu 24.04)", which reads oddly in a panel.
-            let os_name = match (System::name(), System::os_version()) {
-                (Some(name), Some(version)) => format!("{name} {version}"),
-                (Some(name), None) => name,
-                _ => System::long_os_version().unwrap_or_else(|| "Unknown".to_string()),
-            };
-            let kernel_version = System::kernel_version().unwrap_or_default();
-            let hostname = System::host_name().unwrap_or_default();
+            let machine = MachineInfo::read();
+            let cpu_logical_cores = machine.logical_cores;
+            let cpu_physical_cores = machine.physical_cores.unwrap_or(0);
+            let cpu_model = machine.cpu_model.unwrap_or_default();
+            let total_memory_mb = bytes_to_mb(machine.total_memory_bytes);
+            let total_swap_mb = bytes_to_mb(machine.total_swap_bytes);
+            let os_name = machine.os_name.unwrap_or_else(|| "Unknown".to_string());
+            let kernel_version = machine.kernel_version.unwrap_or_default();
+            let hostname = machine.hostname.unwrap_or_default();
 
             info!("OS: {os_name}, kernel {kernel_version}, host {hostname}");
             info!("CPU: {cpu_model}, {cpu_physical_cores} physical cores / {cpu_logical_cores} threads");
@@ -99,8 +90,8 @@ async fn main() {
             }
 
             let gpu_names: Vec<String> = engine.discovery().gpus.iter().map(|g| g.display_name().to_string()).collect();
-            let gpu_vram_mb: Vec<u64> = engine.discovery().gpus.iter().map(|g| g.vram_total_mb).collect();
-            let gpu_driver_versions: Vec<String> = engine.discovery().gpus.iter().map(|g| g.driver_version.clone()).collect();
+            let gpu_vram_mb: Vec<u64> = engine.discovery().gpus.iter().map(DiscoveredGpu::vram_total_mb).collect();
+            let gpu_driver_versions: Vec<String> = engine.discovery().gpus.iter().map(|g| g.driver_version().to_string()).collect();
             if gpu_names.is_empty() {
                 info!("GPU: none detected");
             } else {

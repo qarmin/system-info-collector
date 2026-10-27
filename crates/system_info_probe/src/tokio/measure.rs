@@ -87,9 +87,11 @@ impl ExitWatch {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
-            let readiness = child
-                .pidfd()
-                .and_then(|fd| tokio::io::unix::AsyncFd::with_interest(fd.as_raw_fd(), tokio::io::Interest::READABLE).ok());
+            let readiness = child.pidfd().and_then(|fd| {
+                // SAFETY: the pidfd belongs to `child`, which is declared after `readiness` and so
+                // outlives the registration.
+                unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd.as_raw_fd(), tokio::io::Interest::READABLE) }.ok()
+            });
             Self { readiness, child }
         }
         #[cfg(not(target_os = "linux"))]

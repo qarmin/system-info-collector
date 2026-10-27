@@ -143,22 +143,28 @@ impl Echoes {
         self.pending.is_empty()
     }
 
+    /// Targets still waiting for a reply, emptying the list.
+    pub fn take_unanswered(&mut self) -> Vec<usize> {
+        let mut indices: Vec<usize> = self.pending.drain().map(|(_, (index, _))| index).collect();
+        indices.sort_unstable();
+        indices
+    }
+
     pub fn clear(&mut self) {
         self.pending.clear();
     }
 }
 
 /// Reads every queued packet without blocking.
-pub fn drain(socket: &Socket, family: Family, kind: SocketKind, echoes: &mut Echoes, results: &mut [Option<Duration>]) {
+pub fn drain(socket: &Socket, family: Family, kind: SocketKind, echoes: &mut Echoes, on_reply: &mut impl FnMut(usize, Duration)) {
     let mut buffer = [MaybeUninit::<u8>::uninit(); 128 + PACKET_LEN];
     while let Ok(length) = socket.recv_with_flags(&mut buffer, libc::MSG_DONTWAIT) {
         // SAFETY: recv initialized the first `length` bytes.
         let packet = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), length) };
         if let Some((sequence, token)) = decode_reply(family, kind, packet)
             && let Some((index, rtt)) = echoes.receive(sequence, token, Instant::now())
-            && let Some(slot) = results.get_mut(index)
         {
-            *slot = Some(rtt);
+            on_reply(index, rtt);
         }
     }
 }

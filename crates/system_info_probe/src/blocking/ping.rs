@@ -31,10 +31,18 @@ impl Pinger {
     /// so the call takes at most `timeout` however many addresses there are.
     pub fn ping_all(&mut self, addresses: &[IpAddr], timeout: Duration) -> Vec<Option<Duration>> {
         let mut results = vec![None; addresses.len()];
+        self.ping_each(addresses, timeout, |index, rtt| results[index] = rtt);
+        results
+    }
+
+    /// Like [`Self::ping_all`], but hands over each result as soon as it is known - a reply the
+    /// moment it arrives, a loss at the timeout - so a slow target does not delay the rest.
+    pub fn ping_each(&mut self, addresses: &[IpAddr], timeout: Duration, mut on_result: impl FnMut(usize, Option<Duration>)) {
         self.echoes.clear();
         for (index, address) in addresses.iter().enumerate() {
             let family = Family::of(*address);
             let Some((socket, _)) = socket_for(&self.v4, &mut self.v6, family) else {
+                on_result(index, None);
                 continue;
             };
             let sequence = self.echoes.send(index, Instant::now());
@@ -72,10 +80,12 @@ impl Pinger {
                 } else {
                     continue;
                 };
-                icmp::drain(socket, family, kind, &mut self.echoes, &mut results);
+                icmp::drain(socket, family, kind, &mut self.echoes, &mut |index, rtt| on_result(index, Some(rtt)));
             }
         }
-        results
+        for index in self.echoes.take_unanswered() {
+            on_result(index, None);
+        }
     }
 
     pub fn ping(&mut self, address: IpAddr, timeout: Duration) -> Option<Duration> {

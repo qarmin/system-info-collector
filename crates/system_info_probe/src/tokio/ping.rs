@@ -18,10 +18,9 @@ impl IcmpSocket {
     fn open(family: Family) -> std::io::Result<Self> {
         let (socket, kind) = icmp::open(family)?;
         socket.set_nonblocking(true)?;
-        Ok(Self {
-            fd: AsyncFd::new(socket)?,
-            kind,
-        })
+        // SAFETY: the AsyncFd owns the socket, so its descriptor stays open as long as it is registered.
+        let fd = unsafe { AsyncFd::register_with_interest(socket, tokio::io::Interest::READABLE) }?;
+        Ok(Self { fd, kind })
     }
 }
 
@@ -47,6 +46,13 @@ impl AsyncPinger {
     /// Round trip per address, `None` for no reply within `timeout`; takes at most `timeout`.
     pub async fn ping_all(&mut self, addresses: &[IpAddr], timeout: Duration) -> Vec<Option<Duration>> {
         let mut results = vec![None; addresses.len()];
+        self.ping_each(addresses, timeout, |index, rtt| results[index] = rtt).await;
+        results
+    }
+
+    /// Like [`Self::ping_all`], but hands over each result as soon as it is known - a reply the
+    /// moment it arrives, a loss at the timeout - so a slow target does not delay the rest.
+    pub async fn ping_each(&mut self, addresses: &[IpAddr], timeout: Duration, mut on_result: impl FnMut(usize, Option<Duration>)) {
         self.echoes.clear();
         for (index, address) in addresses.iter().enumerate() {
             let family = Family::of(*address);
@@ -58,7 +64,10 @@ impl AsyncPinger {
                             .inspect_err(|e| log::warn!("Could not open an ICMPv6 socket ({e}), IPv6 targets will show as lost"))
                             .map_err(|e| e.to_string())
                     });
-                    let Ok(socket) = opened.as_ref() else { continue };
+                    let Ok(socket) = opened.as_ref() else {
+                        on_result(index, None);
+                        continue;
+                    };
                     socket
                 }
             };
@@ -71,22 +80,25 @@ impl AsyncPinger {
 
         let deadline = Instant::now() + timeout;
         let v6 = self.v6.as_ref().and_then(|v6| v6.as_ref().ok());
+        let mut on_reply = |index: usize, rtt: Duration| on_result(index, Some(rtt));
         while !self.echoes.is_empty() {
             tokio::select! {
                 ready = self.v4.fd.readable() => {
                     let Ok(mut guard) = ready else { break };
-                    icmp::drain(self.v4.fd.get_ref(), Family::V4, self.v4.kind, &mut self.echoes, &mut results);
+                    icmp::drain(self.v4.fd.get_ref(), Family::V4, self.v4.kind, &mut self.echoes, &mut on_reply);
                     guard.clear_ready();
                 }
                 ready = readable(v6) => {
                     let (Ok(mut guard), Some(socket)) = (ready, v6) else { break };
-                    icmp::drain(socket.fd.get_ref(), Family::V6, socket.kind, &mut self.echoes, &mut results);
+                    icmp::drain(socket.fd.get_ref(), Family::V6, socket.kind, &mut self.echoes, &mut on_reply);
                     guard.clear_ready();
                 }
                 () = tokio::time::sleep_until(deadline) => break,
             }
         }
-        results
+        for index in self.echoes.take_unanswered() {
+            on_result(index, None);
+        }
     }
 
     pub async fn ping(&mut self, address: IpAddr, timeout: Duration) -> Option<Duration> {
@@ -131,6 +143,23 @@ mod tests {
         assert!(rtts[0].is_some() && rtts[2].is_some(), "{rtts:?}");
         assert_eq!(rtts[1], None);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn each_reply_is_handed_over_without_waiting_for_slow_targets() {
+        let Ok(mut pinger) = AsyncPinger::new() else { return };
+        let started = std::time::Instant::now();
+        let mut arrivals: Vec<(usize, bool, Duration)> = Vec::new();
+        let addresses = ["192.0.2.1".parse().expect("valid"), "127.0.0.1".parse().expect("valid")];
+        pinger
+            .ping_each(&addresses, Duration::from_millis(800), |index, rtt| {
+                arrivals.push((index, rtt.is_some(), started.elapsed()))
+            })
+            .await;
+        assert_eq!(arrivals.len(), 2, "{arrivals:?}");
+        assert_eq!((arrivals[0].0, arrivals[0].1), (1, true), "localhost first");
+        assert!(arrivals[0].2 < Duration::from_millis(400), "{arrivals:?}");
+        assert_eq!((arrivals[1].0, arrivals[1].1), (0, false), "the unroutable one at the timeout");
     }
 
     #[tokio::test]

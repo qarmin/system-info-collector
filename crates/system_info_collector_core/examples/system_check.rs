@@ -1,210 +1,110 @@
-#![allow(clippy::print_stdout)]
+#![expect(clippy::print_stdout, reason = "prints a report for a person")]
 
 use std::thread::sleep;
 use std::time::Duration;
 
-use sysinfo::{CpuRefreshKind, Disks, Networks, System};
-use system_info_collector_core::discovery::{GpuVendor, discover_disks, discover_gpus};
-use system_info_collector_core::disk_stats::{rates, read_counters};
-use system_info_collector_core::workers::system_worker::bytes_to_mb;
+use system_info_probe::disk::{DiskMetrics, DiskQuery, DiskSampler};
+use system_info_probe::gpu::{GpuDiscovery, GpuSampler};
+use system_info_probe::network::{InterfaceQuery, NetworkSampler};
+use system_info_probe::system::{MachineInfo, SystemSampler};
+
+const MIB: f64 = 1_048_576.0;
+const GIB: f64 = 1_073_741_824.0;
+const WINDOW: Duration = Duration::from_secs(1);
 
 fn main() {
-    print_cpu();
-    print_memory();
-    print_disks();
-    print_disk_io();
-    print_network();
-    print_gpus();
-}
-
-fn print_cpu() {
-    let mut sys = System::new();
-    sys.refresh_cpu_list(CpuRefreshKind::nothing());
-
-    let logical = sys.cpus().len();
-    let physical = System::physical_core_count().unwrap_or(0);
-    let model = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
-
+    let machine = MachineInfo::read();
     println!("== CPU ==");
-    println!("{model} ({physical} physical / {logical} logical cores)\n");
-}
-
-fn print_memory() {
-    let mut sys = System::new();
-    sys.refresh_memory();
+    println!(
+        "{} ({} physical / {} logical cores)\n",
+        machine.cpu_model.unwrap_or_default(),
+        machine.physical_cores.unwrap_or(0),
+        machine.logical_cores
+    );
 
     println!("== Memory ==");
-    println!(
-        "RAM:  {:.0} MB total, {:.0} MB used",
-        bytes_to_mb(sys.total_memory()),
-        bytes_to_mb(sys.used_memory())
-    );
-    println!(
-        "Swap: {:.0} MB total, {:.0} MB used\n",
-        bytes_to_mb(sys.total_swap()),
-        bytes_to_mb(sys.used_swap())
-    );
-}
+    if let Ok(sample) = SystemSampler::new().and_then(|mut s| s.sample()) {
+        let m = sample.memory;
+        println!(
+            "RAM:  {:.0} MB total, {:.0} MB used",
+            m.total_bytes as f64 / MIB,
+            m.used_bytes as f64 / MIB
+        );
+        println!(
+            "Swap: {:.0} MB total, {:.0} MB used\n",
+            m.swap_total_bytes as f64 / MIB,
+            m.swap_used_bytes() as f64 / MIB
+        );
+    }
 
-fn print_disks() {
     println!("== Disks ==");
-    let disks = Disks::new_with_refreshed_list();
-    if disks.is_empty() {
-        println!("none found");
-    }
-    for disk in &disks {
-        let total_gb = disk.total_space() as f64 / 1024.0 / 1024.0 / 1024.0;
-        let avail_gb = disk.available_space() as f64 / 1024.0 / 1024.0 / 1024.0;
+    let filesystems = system_info_probe::disk::filesystems();
+    for fs in &filesystems {
+        let space = system_info_probe::disk::space(&fs.mount_point);
         println!(
-            "{:<20} {:<30} {:<10} {total_gb:>8.1} GB total, {avail_gb:>8.1} GB free",
-            disk.name().to_string_lossy(),
-            disk.mount_point().display(),
-            disk.file_system().to_string_lossy(),
+            "{:<20} {:<30} {:<10} {:>8.1} GB total, {:>8.1} GB free",
+            fs.device,
+            fs.mount_point,
+            fs.file_system,
+            fs.total_bytes as f64 / GIB,
+            space.map_or(0.0, |s| s.available_bytes as f64 / GIB)
         );
     }
-    println!();
-}
-
-fn print_disk_io() {
-    let sample = Duration::from_millis(500);
-    println!("== Disk I/O (over a {}ms sample) ==", sample.as_millis());
-
-    let disks = discover_disks(&[], true, &[]);
-    let before = read_counters();
-    if before.is_empty() {
-        println!("no I/O counters available on this platform\n");
-        return;
-    }
-
-    sleep(sample);
-    let after = read_counters();
-
-    for disk in &disks {
-        let Some(stat_name) = disk.io_stat_name.as_deref() else {
-            println!("{:<30} {:<14} no I/O counters", disk.mount_point, disk.device);
-            continue;
-        };
-        match rates(stat_name, &after, &before, sample.as_secs_f64()) {
-            Some(io) => println!(
-                "{:<30} {stat_name:<14} busy={:>6.1} %  read={:>8.1} MB/s  write={:>8.1} MB/s",
-                disk.mount_point, io.busy_pct, io.read_mb_per_sec, io.write_mb_per_sec
+    let (tracked, _) = system_info_probe::disk::select(&filesystems, &DiskQuery::All { excluded: Vec::new() });
+    let mut disks = DiskSampler::new(tracked, DiskMetrics::Io);
+    let before = disks.sample();
+    sleep(WINDOW);
+    let after = disks.sample();
+    println!("\n== Disk I/O over {WINDOW:?} ==");
+    for (disk, rates) in disks.disks().iter().zip(after.io_since(&before)) {
+        match rates {
+            Some(r) => println!(
+                "{:<30} busy {:>5.1}%  read {:>7.2} MB/s  write {:>7.2} MB/s",
+                disk.filesystem.mount_point,
+                r.busy_percent,
+                r.read_bytes_per_sec / MIB,
+                r.write_bytes_per_sec / MIB
             ),
-            None => println!("{:<30} {stat_name:<14} counters disappeared mid-sample", disk.mount_point),
+            None => println!("{:<30} no I/O counters", disk.filesystem.mount_point),
         }
     }
-    println!();
-}
 
-fn print_network() {
-    println!("== Network interfaces ==");
-    let mut networks = Networks::new_with_refreshed_list();
-    let mut names: Vec<String> = networks.keys().cloned().collect();
-    names.sort_unstable();
-    if names.is_empty() {
-        println!("none found");
-        return;
-    }
-
-    let before: Vec<(u64, u64)> = names
-        .iter()
-        .map(|name| {
-            networks
-                .get(name.as_str())
-                .map_or((0, 0), |n| (n.total_received(), n.total_transmitted()))
-        })
-        .collect();
-
-    let sample = Duration::from_millis(300);
-    sleep(sample);
-    networks.refresh(true);
-    let elapsed = sample.as_secs_f64();
-
-    for (name, &(prev_rx, prev_tx)) in names.iter().zip(before.iter()) {
-        let (total_rx, total_tx) = networks
-            .get(name.as_str())
-            .map_or((prev_rx, prev_tx), |n| (n.total_received(), n.total_transmitted()));
-        let rx_kbps = total_rx.saturating_sub(prev_rx) as f64 / elapsed / 1024.0;
-        let tx_kbps = total_tx.saturating_sub(prev_tx) as f64 / elapsed / 1024.0;
+    println!("\n== Network over {WINDOW:?} ==");
+    let (interfaces, _) = system_info_probe::network::select(&InterfaceQuery::All { excluded: Vec::new() });
+    let mut network = NetworkSampler::new(interfaces);
+    let before = network.sample();
+    sleep(WINDOW);
+    let after = network.sample();
+    for (interface, rates) in network.interfaces().iter().zip(after.rates_since(&before)) {
+        let (rx, tx) = rates.map_or((0.0, 0.0), |r| (r.rx_bytes_per_sec / MIB, r.tx_bytes_per_sec / MIB));
         println!(
-            "{name:<16} rx={rx_kbps:>8.1} KB/s  tx={tx_kbps:>8.1} KB/s  (total rx={:.1} MB, tx={:.1} MB)",
-            total_rx as f64 / 1024.0 / 1024.0,
-            total_tx as f64 / 1024.0 / 1024.0
+            "{:<16} {:<10} rx {rx:>7.2} MB/s  tx {tx:>7.2} MB/s",
+            interface.name,
+            interface.kind.label()
         );
     }
-    println!();
-}
 
-fn print_gpus() {
-    println!("== GPU ==");
-    let gpus = discover_gpus();
+    println!("\n== GPUs ==");
+    let gpus = system_info_probe::gpu::discover(GpuDiscovery::default());
     if gpus.is_empty() {
-        println!("none detected");
-        return;
+        println!("none found");
     }
-
-    for gpu in &gpus {
-        println!("[{}] {} - {}", gpu.gpu_index, gpu.display_name(), gpu.vendor_kind());
-        match &gpu.vendor {
-            GpuVendor::Nvidia { nvml_index, .. } => print_nvidia_sample(*nvml_index),
-            GpuVendor::AmdLinux { handle, .. } => print_amd_sample(handle),
-            GpuVendor::IntelLinux { card_device_path, .. } => print_intel_sample(card_device_path),
-            GpuVendor::Vivante { register_base, .. } => println!("    idle register at {register_base:#x}"),
-        }
+    let mut sampler = GpuSampler::new(gpus);
+    sampler.sample();
+    sleep(WINDOW);
+    let readings = sampler.sample().readings;
+    for (gpu, reading) in sampler.gpus().iter().zip(readings) {
+        let reading = reading.unwrap_or_default();
+        let show = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
+        println!(
+            "{} ({}, driver {}): util {}%, VRAM {} / {} MB, {} °C",
+            gpu.name,
+            gpu.kind.vendor(),
+            gpu.driver_version.as_deref().unwrap_or("unknown"),
+            show(reading.utilization_percent.map(|v| v.to_string())),
+            show(reading.memory_used_bytes.map(|b| (b / 1024 / 1024).to_string())),
+            show(reading.memory_total_bytes.map(|b| (b / 1024 / 1024).to_string())),
+            show(reading.temperature_celsius.map(|v| v.to_string())),
+        );
     }
-}
-
-fn print_nvidia_sample(nvml_index: u32) {
-    use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
-
-    let Ok(nvml) = nvml_wrapper::Nvml::init() else {
-        println!("    NVML unavailable for live sample");
-        return;
-    };
-    let Ok(device) = nvml.device_by_index(nvml_index) else {
-        println!("    failed to open NVML device");
-        return;
-    };
-
-    let utilization = device.utilization_rates().map_or(0, |u| u.gpu);
-    let (used_mb, total_mb) = device.memory_info().map_or((0, 0), |m| (m.used / 1024 / 1024, m.total / 1024 / 1024));
-    let temp = device.temperature(TemperatureSensor::Gpu).unwrap_or(0);
-
-    println!("    utilization={utilization}%  memory={used_mb}/{total_mb} MB  temp={temp} C");
-}
-
-fn print_amd_sample(handle: &amdgpu_sysfs::gpu_handle::GpuHandle) {
-    let utilization = handle.get_busy_percent().unwrap_or(0);
-    let used_mb = handle.get_used_vram().unwrap_or(0) / 1024 / 1024;
-    let total_mb = handle.get_total_vram().unwrap_or(0) / 1024 / 1024;
-    let temp = handle.hw_monitors.first().and_then(|mon| {
-        let temps = mon.get_temps();
-        temps.get("edge").or_else(|| temps.values().next()).and_then(|t| t.current)
-    });
-
-    match temp {
-        Some(t) => println!("    utilization={utilization}%  memory={used_mb}/{total_mb} MB  temp={t:.0} C"),
-        None => println!("    utilization={utilization}%  memory={used_mb}/{total_mb} MB  temp=n/a"),
-    }
-}
-
-// Intel exposes no instantaneous busy% in sysfs, only cumulative RC6 (idle) residency,
-// so utilization has to be derived from a short before/after sample.
-fn print_intel_sample(card_device_path: &std::path::Path) {
-    let rc6_path = card_device_path.join("gt/gt0/rc6_residency_ms");
-    let read_rc6 = || std::fs::read_to_string(&rc6_path).ok()?.trim().parse::<u64>().ok();
-
-    let Some(start) = read_rc6() else {
-        println!("    rc6_residency_ms not available");
-        return;
-    };
-    let sample = Duration::from_millis(200);
-    sleep(sample);
-    let Some(end) = read_rc6() else {
-        println!("    rc6_residency_ms not available");
-        return;
-    };
-
-    let rc6_delta = end.saturating_sub(start);
-    let busy = (1.0 - rc6_delta as f64 / sample.as_millis() as f64).clamp(0.0, 1.0) * 100.0;
-    println!("    utilization~={busy:.0}% (approximated over a {}ms sample)", sample.as_millis());
 }

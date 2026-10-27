@@ -30,12 +30,13 @@ fn trim_decimals(s: String) -> String {
 use anyhow::{Context, Error};
 use chrono::Utc;
 use log::{error, info};
-use sysinfo::{Disks, System};
+use system_info_probe::disk::{self, DiskSpace};
+use system_info_probe::system::MachineInfo;
 
 use crate::discovery::RuntimeDiscovery;
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
 use crate::settings::CollectSettings;
-use crate::shared_state::{PingWindow, SharedState};
+use crate::shared_state::SharedState;
 use crate::workers::system_worker::bytes_to_mb;
 
 /// Spawned as a tokio task.  Wakes every `check_interval` seconds, clones the
@@ -60,13 +61,8 @@ pub async fn run<F>(
 
     let disks = &discovery.disks;
 
-    // Initialize disk monitor if any disks are requested and disk space modes are active.
     let has_disk_space_modes = settings.collection_mode.iter().any(|m| m.is_disk_space());
-    let mut sysinfo_disks = if disks.is_empty() || !has_disk_space_modes {
-        None
-    } else {
-        Some(Disks::new_with_refreshed_list())
-    };
+    let mut disk_space: Vec<Option<DiskSpace>> = vec![None; disks.len()];
 
     let mut collected_bytes: usize = 0;
 
@@ -106,17 +102,14 @@ pub async fn run<F>(
             Vec::new()
         } else {
             let mut guard = state.write().expect("SharedState RwLock poisoned");
-            let fresh = vec![PingWindow::default(); guard.ping_windows.len()];
+            let fresh = vec![system_info_probe::ping::PingWindow::default(); guard.ping_windows.len()];
             std::mem::replace(&mut guard.ping_windows, fresh)
         };
 
-        // Refresh disk stats at disk_interval_secs rate.
-        if let Some(ref mut sd) = sysinfo_disks {
-            let should_refresh = last_disk_refresh.is_none_or(|t: Instant| t.elapsed().as_millis() >= disk_interval_ms);
-            if should_refresh {
-                sd.refresh(false);
-                last_disk_refresh = Some(Instant::now());
-            }
+        // One statvfs per tracked disk, at disk_interval_secs rate.
+        if has_disk_space_modes && last_disk_refresh.is_none_or(|t: Instant| t.elapsed().as_millis() >= disk_interval_ms) {
+            disk_space = disks.iter().map(|d| disk::space(d.mount_point())).collect();
+            last_disk_refresh = Some(Instant::now());
         }
 
         // Build the CSV row in the same column order as the header.
@@ -186,43 +179,28 @@ pub async fn run<F>(
                 // GPU modes expand to one column per discovered GPU.
                 SimpleDataCollectionMode::GPU_UTILIZATION => {
                     for snap in &gpu_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |g| g.utilization_gpu.to_string()));
+                        row.push(snap.as_ref().and_then(|g| g.utilization_gpu).map_or("-1".to_string(), |v| v.to_string()));
                     }
                 }
                 SimpleDataCollectionMode::GPU_MEMORY_USED => {
                     for snap in &gpu_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |g| g.memory_used_mb.to_string()));
+                        row.push(snap.as_ref().and_then(|g| g.memory_used_mb).map_or("-1".to_string(), |v| v.to_string()));
                     }
                 }
                 SimpleDataCollectionMode::GPU_TEMPERATURE => {
                     for snap in &gpu_snaps {
-                        row.push(snap.as_ref().map_or("-1".to_string(), |g| g.temperature.to_string()));
+                        row.push(snap.as_ref().and_then(|g| g.temperature).map_or("-1".to_string(), |v| v.to_string()));
                     }
                 }
                 // Disk modes expand to one column per tracked disk.
                 SimpleDataCollectionMode::DISK_USED => {
-                    for disk_entry in disks {
-                        let val = sysinfo_disks
-                            .as_ref()
-                            .and_then(|sd| sd.iter().find(|d| d.mount_point().to_string_lossy() == disk_entry.mount_point.as_str()));
-                        match val {
-                            Some(d) => {
-                                let used = d.total_space().saturating_sub(d.available_space());
-                                row.push((used / 1_073_741_824).to_string());
-                            }
-                            None => row.push("-1".to_string()),
-                        }
+                    for space in &disk_space {
+                        row.push(space.map_or("-1".to_string(), |s| (s.used_bytes() / 1_073_741_824).to_string()));
                     }
                 }
                 SimpleDataCollectionMode::DISK_AVAILABLE => {
-                    for disk_entry in disks {
-                        let val = sysinfo_disks
-                            .as_ref()
-                            .and_then(|sd| sd.iter().find(|d| d.mount_point().to_string_lossy() == disk_entry.mount_point.as_str()));
-                        match val {
-                            Some(d) => row.push((d.available_space() / 1_073_741_824).to_string()),
-                            None => row.push("-1".to_string()),
-                        }
+                    for space in &disk_space {
+                        row.push(space.map_or("-1".to_string(), |s| (s.available_bytes / 1_073_741_824).to_string()));
                     }
                 }
                 // Disk I/O modes expand to one column per tracked disk, fed by disk_io_worker.
@@ -243,12 +221,16 @@ pub async fn run<F>(
                 }
                 SimpleDataCollectionMode::PING_LATENCY => {
                     for window in &ping_windows {
-                        row.push(window.avg_rtt_ms().map_or("-1".to_string(), fmt_rtt_ms));
+                        row.push(
+                            window
+                                .average_rtt()
+                                .map_or("-1".to_string(), |rtt| fmt_rtt_ms(rtt.as_secs_f64() * 1000.0)),
+                        );
                     }
                 }
                 SimpleDataCollectionMode::PING_LOSS => {
                     for window in &ping_windows {
-                        row.push(window.loss_pct().map_or("-1".to_string(), fmt_f64));
+                        row.push(window.loss_percent().map_or("-1".to_string(), fmt_f64));
                     }
                 }
             }
@@ -330,7 +312,7 @@ pub async fn run<F>(
 /// Returns the header content so it can be reused when rotating files.
 pub fn write_csv_header(
     data_file: &mut BufWriter<File>,
-    sys: &System,
+    machine: &MachineInfo,
     settings: &CollectSettings,
     discovery: &RuntimeDiscovery,
     app_version: &str,
@@ -355,22 +337,22 @@ pub fn write_csv_header(
     let gpu_vram_meta: String = discovery
         .gpus
         .iter()
-        .filter(|g| g.vram_total_mb > 0)
-        .map(|g| format!(",GPU_VRAM_{}={}", g.gpu_index, g.vram_total_mb))
+        .filter(|g| g.vram_total_mb() > 0)
+        .map(|g| format!(",GPU_VRAM_{}={}", g.gpu_index, g.vram_total_mb()))
         .collect();
 
     let gpu_driver_meta: String = discovery
         .gpus
         .iter()
-        .filter(|g| !g.driver_version.is_empty())
-        .map(|g| format!(",GPU_DRIVER_{}={}", g.gpu_index, g.driver_version.replace(',', " ")))
+        .filter(|g| !g.driver_version().is_empty())
+        .map(|g| format!(",GPU_DRIVER_{}={}", g.gpu_index, g.driver_version().replace(',', " ")))
         .collect();
 
     // CPU model from first CPU (commas replaced to avoid breaking the CSV metadata line).
-    let cpu_model_meta = sys
-        .cpus()
-        .first()
-        .map(|c| format!(",CPU_MODEL={}", c.brand().replace(',', " ")))
+    let cpu_model_meta = machine
+        .cpu_model
+        .as_ref()
+        .map(|model| format!(",CPU_MODEL={}", model.replace(',', " ")))
         .unwrap_or_default();
 
     // Network interface metadata entries: NET_0=eth0, NET_1=wlan0, …
@@ -378,7 +360,7 @@ pub fn write_csv_header(
     let net_meta: String = discovery
         .interfaces
         .iter()
-        .map(|i| format!(",NET_{}={},NET_LABEL_{}={}", i.iface_index, i.name, i.iface_index, i.display_label()))
+        .map(|i| format!(",NET_{}={},NET_LABEL_{}={}", i.iface_index, i.name(), i.iface_index, i.display_label()))
         .collect();
 
     // Disk metadata entries: DISK_0=/,DISK_1=/home,… plus the readable
@@ -389,7 +371,7 @@ pub fn write_csv_header(
             format!(
                 ",DISK_{}={},DISK_LABEL_{}={}",
                 d.disk_index,
-                d.mount_point,
+                d.mount_point(),
                 d.disk_index,
                 d.display_label()
             )
@@ -402,14 +384,14 @@ pub fn write_csv_header(
         .map(|t| format!(",PING_{}={}", t.ping_index, t.host))
         .collect();
 
-    let mem_total = bytes_to_mb(sys.total_memory());
-    let swap_total = bytes_to_mb(sys.total_swap());
+    let mem_total = bytes_to_mb(machine.total_memory_bytes);
+    let swap_total = bytes_to_mb(machine.total_swap_bytes);
     let general_info = format!(
         "{}={},{}={},{}={mem_total:.2},{}={swap_total:.2},{}={},{}={}{}{}{}{}{}{}{}{}",
         HeaderValues::INTERVAL_SECONDS,
         settings.check_interval,
         HeaderValues::CPU_CORE_COUNT,
-        sys.cpus().len(),
+        machine.logical_cores,
         HeaderValues::MEMORY_TOTAL,
         HeaderValues::SWAP_TOTAL,
         HeaderValues::UNIX_TIMESTAMP_START_TIME,
@@ -438,7 +420,7 @@ pub fn write_csv_header(
             SimpleDataCollectionMode::NETWORK_RX_BYTES_PER_SEC | SimpleDataCollectionMode::NETWORK_TX_BYTES_PER_SEC => {
                 if !network_rate_emitted {
                     network_rate_emitted = true;
-                    let interfaces = discovery.interfaces.iter().map(|iface| (iface.iface_index, iface.name.clone()));
+                    let interfaces = discovery.interfaces.iter().map(|iface| (iface.iface_index, iface.name().to_string()));
                     for column in network_rate_columns(has_rx, has_tx, interfaces) {
                         columns.push(column.column_name());
                     }
@@ -446,8 +428,8 @@ pub fn write_csv_header(
             }
             SimpleDataCollectionMode::NETWORK_TOTAL => {
                 for iface in &discovery.interfaces {
-                    columns.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.name.clone())).column_name());
-                    columns.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.name.clone())).column_name());
+                    columns.push(DataType::NET_N_RX_TOTAL_MB((iface.iface_index, iface.name().to_string())).column_name());
+                    columns.push(DataType::NET_N_TX_TOTAL_MB((iface.iface_index, iface.name().to_string())).column_name());
                 }
             }
             SimpleDataCollectionMode::GPU_UTILIZATION => {
@@ -467,27 +449,27 @@ pub fn write_csv_header(
             }
             SimpleDataCollectionMode::DISK_USED => {
                 for disk in disks {
-                    columns.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                    columns.push(DataType::DISK_N_USED_GB((disk.disk_index, disk.mount_point().to_string())).column_name());
                 }
             }
             SimpleDataCollectionMode::DISK_AVAILABLE => {
                 for disk in disks {
-                    columns.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point.clone())).column_name());
+                    columns.push(DataType::DISK_N_AVAIL_GB((disk.disk_index, disk.mount_point().to_string())).column_name());
                 }
             }
             SimpleDataCollectionMode::DISK_BUSY => {
                 for disk in disks {
-                    columns.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.mount_point.clone())).column_name());
+                    columns.push(DataType::DISK_N_BUSY_PCT((disk.disk_index, disk.mount_point().to_string())).column_name());
                 }
             }
             SimpleDataCollectionMode::DISK_READ => {
                 for disk in disks {
-                    columns.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
+                    columns.push(DataType::DISK_N_READ_MBPS((disk.disk_index, disk.mount_point().to_string())).column_name());
                 }
             }
             SimpleDataCollectionMode::DISK_WRITE => {
                 for disk in disks {
-                    columns.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point.clone())).column_name());
+                    columns.push(DataType::DISK_N_WRITE_MBPS((disk.disk_index, disk.mount_point().to_string())).column_name());
                 }
             }
             SimpleDataCollectionMode::PING_LATENCY => {

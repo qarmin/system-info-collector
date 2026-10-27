@@ -56,7 +56,7 @@ pub mod measure;
 pub mod network;
 #[cfg(all(target_os = "linux", any(feature = "network", feature = "gpu-amd", feature = "gpu-intel")))]
 mod pci;
-#[cfg(all(target_os = "linux", feature = "ping"))]
+#[cfg(feature = "ping")]
 pub mod ping;
 pub mod process;
 pub mod recording;

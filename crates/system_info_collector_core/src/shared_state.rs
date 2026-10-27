@@ -13,15 +13,13 @@ pub struct SysinfoSnapshot {
 /// Snapshot of a single GPU's metrics.  Produced by nvidia_worker or
 /// amd_intel_gpu_worker; indexed by `DiscoveredGpu::gpu_index`.
 #[derive(Debug, Clone, Default)]
+/// Fields are `None` where the vendor does not expose them, e.g. memory of an Intel iGPU.
 pub struct GpuSnapshot {
     /// GPU compute utilization in percent (0-100).
-    pub utilization_gpu: u32,
-    /// GPU memory used in megabytes.
-    pub memory_used_mb: u64,
-    /// GPU memory total in megabytes.
-    pub memory_total_mb: u64,
-    /// GPU core temperature in Celsius.
-    pub temperature: u32,
+    pub utilization_gpu: Option<u32>,
+    pub memory_used_mb: Option<u64>,
+    pub memory_total_mb: Option<u64>,
+    pub temperature: Option<u32>,
 }
 
 /// Snapshot of a single network interface's I/O metrics.
@@ -42,26 +40,6 @@ pub struct DiskIoSnapshot {
     pub busy_pct: f64,
     pub read_mb_per_sec: f64,
     pub write_mb_per_sec: f64,
-}
-
-/// Echo results for one ping target since the last CSV row.
-/// Indexed by `DiscoveredPingTarget::ping_index`.
-#[derive(Debug, Clone, Default)]
-pub struct PingWindow {
-    pub replies: u32,
-    pub lost: u32,
-    pub rtt_sum_ms: f64,
-}
-
-impl PingWindow {
-    pub fn avg_rtt_ms(&self) -> Option<f64> {
-        (self.replies > 0).then(|| self.rtt_sum_ms / f64::from(self.replies))
-    }
-
-    pub fn loss_pct(&self) -> Option<f64> {
-        let total = self.replies + self.lost;
-        (total > 0).then(|| f64::from(self.lost) * 100.0 / f64::from(total))
-    }
 }
 
 /// Per-process metrics for a single tracked process.
@@ -92,7 +70,7 @@ pub struct SharedState {
     /// Sized to `RuntimeDiscovery::disk_count()` at engine startup.
     pub latest_disk_io: Vec<Option<DiskIoSnapshot>>,
     /// Ping results accumulated since the last row, drained by file_writer.
-    pub ping_windows: Vec<PingWindow>,
+    pub ping_windows: Vec<system_info_probe::ping::PingWindow>,
     /// Latest per-process snapshots, indexed by search-pattern slot.
     /// Written by system_worker alongside sysinfo data.
     pub latest_processes: Vec<Option<ProcessSnapshot>>,
