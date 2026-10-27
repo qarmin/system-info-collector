@@ -107,7 +107,11 @@ fn print_network() {
 
     let before: Vec<(u64, u64)> = names
         .iter()
-        .map(|name| networks.get(name.as_str()).map_or((0, 0), |n| (n.total_received(), n.total_transmitted())))
+        .map(|name| {
+            networks
+                .get(name.as_str())
+                .map_or((0, 0), |n| (n.total_received(), n.total_transmitted()))
+        })
         .collect();
 
     let sample = Duration::from_millis(300);
@@ -162,9 +166,7 @@ fn print_nvidia_sample(nvml_index: u32) {
     };
 
     let utilization = device.utilization_rates().map_or(0, |u| u.gpu);
-    let (used_mb, total_mb) = device
-        .memory_info()
-        .map_or((0, 0), |m| (m.used / 1024 / 1024, m.total / 1024 / 1024));
+    let (used_mb, total_mb) = device.memory_info().map_or((0, 0), |m| (m.used / 1024 / 1024, m.total / 1024 / 1024));
     let temp = device.temperature(TemperatureSensor::Gpu).unwrap_or(0);
 
     println!("    utilization={utilization}%  memory={used_mb}/{total_mb} MB  temp={temp} C");

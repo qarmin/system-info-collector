@@ -27,23 +27,26 @@ impl ProcessDetail {
 }
 
 /// How often the detail files are re-read.  A process counts as active in a sample when its CPU
-/// time or RSS moved or it is running or in disk wait; idle processes keep their last values.
-///
-/// Both files hold cumulative or peak values, so a skipped read loses nothing - whatever changed
-/// shows up in full at the next read.
+/// time or RSS moved or it is running or in disk wait.  Whatever is not re-read keeps its last
+/// value; both files hold cumulative or peak figures, so a skipped read loses nothing - what
+/// changed shows up in full at the next read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DetailRefresh {
-    /// `/proc/<pid>/status` is the largest file read per process and its fields barely move.
+    /// `/proc/<pid>/status` of an active process, the largest file read per process.
     pub status_every: Duration,
-    /// Re-read even without visible activity, for work too short to move the tick-granular CPU time.
-    pub idle_every: Duration,
+    /// I/O counters of an idle process - I/O too short to move the tick-granular CPU time
+    /// surfaces at this cadence.  Zero reads them in every sample.
+    pub idle_io_every: Duration,
+    /// Status of an idle process; `None` leaves it as last read.
+    pub idle_status_every: Option<Duration>,
 }
 
 impl Default for DetailRefresh {
     fn default() -> Self {
         Self {
             status_every: Duration::from_secs(1),
-            idle_every: Duration::from_secs(5),
+            idle_io_every: Duration::from_secs(5),
+            idle_status_every: Some(Duration::from_secs(5)),
         }
     }
 }
@@ -200,19 +203,16 @@ impl ProcessSampler {
                     || matches!(process.state, ProcessState::Running | ProcessState::DiskSleep);
                 let cache = &mut known.detail;
                 if detail.io() {
-                    if active || DetailCache::due(cache.io_read_at, taken_at, refresh.idle_every) {
+                    if active || DetailCache::due(cache.io_read_at, taken_at, refresh.idle_io_every) {
                         cache.io = self.backend.read_io(process.pid());
                         cache.io_read_at = Some(taken_at);
                     }
                     process.io = cache.io;
                 }
                 if detail.status() {
-                    let every = if active {
-                        refresh.status_every
-                    } else {
-                        refresh.idle_every.max(refresh.status_every)
-                    };
-                    if DetailCache::due(cache.status_read_at, taken_at, every) {
+                    let every = if active { Some(refresh.status_every) } else { refresh.idle_status_every };
+                    let first_read = cache.status_read_at.is_none();
+                    if first_read || every.is_some_and(|every| DetailCache::due(cache.status_read_at, taken_at, every)) {
                         cache.status = self.backend.read_status(process.pid());
                         cache.status_read_at = Some(taken_at);
                     }
@@ -581,7 +581,8 @@ mod tests {
             detail_scope: None,
             refresh: DetailRefresh {
                 status_every: Duration::ZERO,
-                idle_every: Duration::from_secs(3600),
+                idle_io_every: Duration::from_secs(3600),
+                idle_status_every: None,
             },
         });
         let first = sampler.sample().expect("sample");

@@ -12,9 +12,9 @@ use crate::discovery::DiscoveredGpu;
 #[cfg(target_os = "linux")]
 use crate::discovery::GpuVendor;
 use crate::settings::CollectSettings;
-use crate::shared_state::SharedState;
 #[cfg(target_os = "linux")]
 use crate::shared_state::GpuSnapshot;
+use crate::shared_state::SharedState;
 
 /// Polls AMD and Intel GPUs on Linux via sysfs.
 /// Each GPU's snapshot is written to `state.latest_gpus[gpu.gpu_index]`.

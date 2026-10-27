@@ -13,6 +13,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+system_info_probe = { path = "../system_info_probe", version = "0.8.0" }
 tokio = { version = "1.53", features = ["full"] }
 sysinfo = { version ="0.39", default-features = false, features = ["component", "disk", "network", "system"] }
 anyhow = "1.0"

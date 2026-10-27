@@ -339,10 +339,9 @@ frames behind skips to the newest data instead of replaying the backlog.
 <details>
 <summary>Session sampling rate, and what a recording cannot see</summary>
 
-The maximum rate is 4 Hz, and a higher `--hz` is rejected rather than accepted. `sysinfo` will not re-read `/proc/stat`
-more often than every 200 ms while still refreshing each process's counters, so a faster rate would divide per-process
-CPU by a stale denominator - numbers that stay plausible while being wrong. Sampling exactly at that floor is not safe
-either: the check is against the wall clock, so a 5 Hz tick clears it only about half the time.
+The maximum rate is 4 Hz, and a higher `--hz` is rejected rather than accepted. The kernel counts per-process CPU in
+clock ticks of 10 ms, so one sample can only resolve CPU in steps of 10 ms over its own length - 4% of a core at 4 Hz,
+10% at 10 Hz. A faster rate makes every figure coarser rather than more detailed.
 
 A process living less than one sampling interval is never observed directly. It is usually still visible, because Linux
 folds a reaped child's I/O into its parent - the bytes surface against whatever spawned it. Where the child *was*
