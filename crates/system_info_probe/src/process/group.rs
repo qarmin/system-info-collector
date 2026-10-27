@@ -99,13 +99,14 @@ impl GroupAccumulator {
             let child = &earlier.processes[key];
             let carried = self.pending.remove(key).map_or(Duration::ZERO, |(pending, _)| pending);
             let counted = child.cpu_time_with_reaped() + carried;
-            let Some(ancestor) = surviving_ancestor(child.ppid, earlier, &earlier_by_pid, &member_by_pid) else {
-                self.orphaned.insert(*key, counted);
-                continue;
-            };
-            let entry = self.pending.entry(ancestor).or_insert((Duration::ZERO, 0));
-            entry.0 += counted;
-            entry.1 = 0;
+            match surviving_ancestor(*key, earlier, &earlier_by_pid, &member_by_pid, &self.previous_members) {
+                Ancestor::Alive(ancestor) => {
+                    let entry = self.pending.entry(ancestor).or_insert((Duration::ZERO, 0));
+                    entry.0 += counted;
+                    entry.1 = 0;
+                }
+                Ancestor::TopExited(top) => *self.orphaned.entry(top).or_default() += counted,
+            }
         }
 
         self.pending
@@ -150,25 +151,35 @@ impl GroupAccumulator {
     }
 }
 
-/// The first process up the parent chain (as of `earlier`) that is a member alive now.
+enum Ancestor {
+    /// The nearest ancestor that is a member alive now.
+    Alive(ProcessKey),
+    /// No member up the chain survived; the highest member that exited, whose reaper outside
+    /// the group received everything below it.
+    TopExited(ProcessKey),
+}
+
 fn surviving_ancestor(
-    mut ppid: Option<u32>,
+    exited: ProcessKey,
     earlier: &ProcessSnapshot,
     earlier_by_pid: &HashMap<u32, ProcessKey>,
     member_by_pid: &HashMap<u32, ProcessKey>,
-) -> Option<ProcessKey> {
-    let mut hops = 0;
-    while let Some(pid) = ppid {
+    previous_members: &HashSet<ProcessKey>,
+) -> Ancestor {
+    let mut top = exited;
+    let mut ppid = earlier.processes[&exited].ppid;
+    for _ in 0..64 {
+        let Some(pid) = ppid else { break };
         if let Some(member) = member_by_pid.get(&pid) {
-            return Some(*member);
+            return Ancestor::Alive(*member);
         }
-        hops += 1;
-        if hops > 64 {
-            return None;
-        }
-        ppid = earlier_by_pid.get(&pid).and_then(|key| earlier.processes[key].ppid);
+        let Some(parent) = earlier_by_pid.get(&pid).filter(|key| previous_members.contains(key)) else {
+            break;
+        };
+        top = *parent;
+        ppid = earlier.processes[parent].ppid;
     }
-    None
+    Ancestor::TopExited(top)
 }
 
 #[cfg(test)]
@@ -286,6 +297,16 @@ mod tests {
         let second = snapshot(t + Duration::from_secs(1), vec![]);
         step(&mut acc, &first, &second);
         assert_eq!(acc.counted_for(10, None), Some(Duration::from_millis(350)));
+    }
+
+    #[test]
+    fn a_whole_tree_exiting_at_once_is_counted_at_its_root() {
+        let t = Instant::now();
+        let mut acc = GroupAccumulator::new();
+        let first = snapshot(t, vec![sample(10, 1, 100, 0), sample(11, 10, 50, 0), sample(12, 11, 2000, 0)]);
+        acc.add(&first, &first, &ProcessInterval::between(&first, &first), &keys(&first));
+        step(&mut acc, &first, &snapshot(t + Duration::from_secs(1), vec![]));
+        assert_eq!(acc.counted_for(10, None), Some(Duration::from_millis(2150)));
     }
 
     #[test]

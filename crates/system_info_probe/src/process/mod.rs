@@ -17,10 +17,43 @@ pub use selector::{MatchField, MatchMode, Pattern, Selection, Selector};
 /// `start` is opaque and only comparable between keys from the same backend - clock ticks
 /// since boot on Linux, unix seconds elsewhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProcessKey {
     pub pid: u32,
     pub start: u64,
+}
+
+impl std::fmt::Display for ProcessKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.pid, self.start)
+    }
+}
+
+impl std::str::FromStr for ProcessKey {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (pid, start) = s.split_once(':').ok_or_else(|| format!("{s:?} is not pid:start"))?;
+        Ok(Self {
+            pid: pid.parse().map_err(|_| format!("{pid:?} is not a pid"))?,
+            start: start.parse().map_err(|_| format!("{start:?} is not a start stamp"))?,
+        })
+    }
+}
+
+/// As `"pid:start"`, so maps keyed by process are plain JSON objects.
+#[cfg(feature = "serde")]
+impl serde::Serialize for ProcessKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ProcessKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
 }
 
 /// What does not change while a process lives, read once when it is first seen and again
@@ -180,5 +213,19 @@ impl ProcessSample {
     /// descendants have consumed.
     pub fn cpu_time_with_reaped(&self) -> Duration {
         self.cpu_time + self.reaped_children_cpu_time.unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_round_trip_through_text() {
+        let key = ProcessKey { pid: 42, start: 98_765 };
+        assert_eq!(key.to_string(), "42:98765");
+        assert_eq!("42:98765".parse::<ProcessKey>(), Ok(key));
+        "42".parse::<ProcessKey>().expect_err("no start stamp");
+        "x:1".parse::<ProcessKey>().expect_err("pid is not a number");
     }
 }

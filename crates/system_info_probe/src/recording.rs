@@ -14,7 +14,7 @@ use crate::process::{
     GroupAccumulator, GroupUsage, IoCounters, ProcessInfo, ProcessInterval, ProcessKey, ProcessSnapshot, ProcessState, Selection, Selector,
     StatusDetail,
 };
-use crate::snapshot::Snapshot;
+use crate::snapshot::{Snapshot, Sources};
 use crate::system::{CpuUsage, MemoryInfo};
 
 /// Which processes get their own series, beyond the group totals.
@@ -84,7 +84,101 @@ pub struct Tick {
     pub gpus: Vec<Option<GpuReading>>,
 }
 
+fn add_io(a: Option<IoCounters>, b: Option<IoCounters>) -> Option<IoCounters> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.saturating_add(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+fn add_duration(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a + b),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Time-weighted mean of two rates over intervals of `a_secs` and `b_secs`.
+fn weighted(a: f64, a_secs: f64, b: f64, b_secs: f64) -> f64 {
+    let total = a_secs + b_secs;
+    if total <= 0.0 { b } else { (a * a_secs + b * b_secs) / total }
+}
+
 impl Tick {
+    /// Folds the following tick into this one: amounts add up, rates are weighted by time,
+    /// levels (memory, process counts) come from the later tick.
+    pub fn absorb(&mut self, later: Self) {
+        let (a, b) = (self.elapsed.as_secs_f64(), later.elapsed.as_secs_f64());
+        self.cpu = match (self.cpu.take(), later.cpu) {
+            (Some(mut mine), Some(theirs)) => {
+                mine.total_percent = weighted(f64::from(mine.total_percent), a, f64::from(theirs.total_percent), b) as f32;
+                for (core, other) in mine.per_core_percent.iter_mut().zip(&theirs.per_core_percent) {
+                    *core = weighted(f64::from(*core), a, f64::from(*other), b) as f32;
+                }
+                Some(mine)
+            }
+            (mine, theirs) => theirs.or(mine),
+        };
+        self.memory = later.memory.or(self.memory);
+        for (mine, theirs) in self.groups.iter_mut().zip(later.groups) {
+            mine.cpu_time += theirs.cpu_time;
+            mine.reaped_cpu_time += theirs.reaped_cpu_time;
+            mine.io = add_io(mine.io, theirs.io);
+            mine.inherited_io = add_io(mine.inherited_io, theirs.inherited_io);
+            mine.peak_rss_bytes_sum = mine.peak_rss_bytes_sum.max(theirs.peak_rss_bytes_sum);
+            mine.started += theirs.started;
+            mine.exited += theirs.exited;
+            mine.rss_bytes = theirs.rss_bytes;
+            mine.threads = theirs.threads;
+            mine.processes = theirs.processes;
+        }
+        for (key, theirs) in later.processes {
+            match self.processes.get_mut(&key) {
+                Some(mine) => {
+                    mine.cpu_time += theirs.cpu_time;
+                    mine.reaped_children_cpu_time = add_duration(mine.reaped_children_cpu_time, theirs.reaped_children_cpu_time);
+                    mine.io = add_io(mine.io, theirs.io);
+                    mine.inherited_io = add_io(mine.inherited_io, theirs.inherited_io);
+                    mine.rss_bytes = theirs.rss_bytes;
+                    mine.state = theirs.state;
+                    mine.threads = theirs.threads;
+                    mine.status = theirs.status.or(mine.status);
+                }
+                None => {
+                    self.processes.insert(key, theirs);
+                }
+            }
+        }
+        #[cfg(feature = "disk")]
+        for (mine, theirs) in self.disks.iter_mut().zip(later.disks) {
+            mine.space = theirs.space.or(mine.space);
+            mine.io = match (mine.io, theirs.io) {
+                (Some(x), Some(y)) => Some(DiskIoRates {
+                    busy_percent: weighted(x.busy_percent, a, y.busy_percent, b),
+                    read_bytes_per_sec: weighted(x.read_bytes_per_sec, a, y.read_bytes_per_sec, b),
+                    write_bytes_per_sec: weighted(x.write_bytes_per_sec, a, y.write_bytes_per_sec, b),
+                }),
+                (x, y) => y.or(x),
+            };
+        }
+        #[cfg(feature = "network")]
+        for (mine, theirs) in self.networks.iter_mut().zip(later.networks) {
+            mine.totals = theirs.totals.or(mine.totals);
+            mine.rates = match (mine.rates, theirs.rates) {
+                (Some(x), Some(y)) => Some(NetworkRates {
+                    rx_bytes_per_sec: weighted(x.rx_bytes_per_sec, a, y.rx_bytes_per_sec, b),
+                    tx_bytes_per_sec: weighted(x.tx_bytes_per_sec, a, y.tx_bytes_per_sec, b),
+                }),
+                (x, y) => y.or(x),
+            };
+        }
+        if !later.gpus.is_empty() {
+            self.gpus = later.gpus;
+        }
+        self.offset = later.offset;
+        self.elapsed += later.elapsed;
+    }
+
     /// 100 means one core fully busy.
     pub fn cpu_percent_of_core(&self, cpu_time: Duration) -> f64 {
         let elapsed = self.elapsed.as_secs_f64();
@@ -109,6 +203,7 @@ pub struct Recording {
     pub start_unix: f64,
     pub logical_cores: usize,
     pub groups: Vec<String>,
+    pub sources: Sources,
     /// Every process that appears in some tick's `processes`.
     pub processes: BTreeMap<ProcessKey, RecordedProcess>,
     pub ticks: Vec<Tick>,
@@ -152,6 +247,25 @@ impl RecordingBuilder {
 
     pub fn recording(&self) -> &Recording {
         &self.recording
+    }
+
+    /// A last tick much shorter than the interval - the final sample right after a program
+    /// exited - turns small amounts into absurd rates, so it is folded into the tick before.
+    pub fn merge_short_last_tick(&mut self, shorter_than: Duration) {
+        let ticks = &mut self.recording.ticks;
+        if ticks.len() >= 2 && ticks.last().is_some_and(|t| t.elapsed < shorter_than) {
+            let last = ticks.pop().expect("checked above");
+            ticks.last_mut().expect("checked above").absorb(last);
+            let merged = ticks.len() - 1;
+            for process in self.recording.processes.values_mut() {
+                process.first_tick = process.first_tick.min(merged);
+                process.last_tick = process.last_tick.min(merged);
+            }
+        }
+    }
+
+    pub fn set_sources(&mut self, sources: Sources) {
+        self.recording.sources = sources;
     }
 
     /// The first snapshot only sets the baseline; every later one adds a tick, returned here.
@@ -398,5 +512,27 @@ mod tests {
         let root = recording.processes.values().find(|p| p.info.key.pid == 10).expect("root recorded");
         assert!(root.alive_at_end);
         assert_eq!(recording.duration(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_short_last_tick_is_folded_into_the_one_before() {
+        let t = Instant::now();
+        let s = |ms| t + Duration::from_millis(ms);
+        let mut builder = RecordingBuilder::new(RecordingConfig {
+            groups: vec![("app".to_string(), Selector::Tree(10))],
+            process_series: ProcessSeries::GroupMembers,
+        });
+        builder.push(snapshot(s(0), vec![process(10, 1, 0)]));
+        builder.push(snapshot(s(500), vec![process(10, 1, 100)]));
+        builder.push(snapshot(s(1000), vec![process(10, 1, 300)]));
+        builder.push(snapshot(s(1002), vec![process(10, 1, 310)]));
+        builder.merge_short_last_tick(Duration::from_millis(250));
+        let recording = builder.finish();
+        assert_eq!(recording.ticks.len(), 2);
+        let last = &recording.ticks[1];
+        assert_eq!(last.elapsed, Duration::from_millis(502));
+        assert_eq!(last.offset, Duration::from_millis(1002));
+        assert_eq!(last.groups[0].cpu_time, Duration::from_millis(210));
+        assert!(recording.processes.values().all(|p| p.last_tick == 1));
     }
 }

@@ -21,6 +21,17 @@ pub struct SamplerConfig {
     pub gpus: Vec<Gpu>,
 }
 
+/// What the per-device entries of samples and ticks refer to, in the same order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Sources {
+    #[cfg(feature = "disk")]
+    pub disks: Vec<TrackedDisk>,
+    #[cfg(feature = "network")]
+    pub interfaces: Vec<Interface>,
+    pub gpus: Vec<Gpu>,
+}
+
 /// Everything one [`Sampler::sample`] read; sources that are off are `None`.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -75,6 +86,16 @@ impl Sampler {
 
     pub fn gpus(&self) -> &[Gpu] {
         self.gpus.as_ref().map_or(&[], GpuSampler::gpus)
+    }
+
+    pub fn sources(&self) -> Sources {
+        Sources {
+            #[cfg(feature = "disk")]
+            disks: self.disks().to_vec(),
+            #[cfg(feature = "network")]
+            interfaces: self.interfaces().to_vec(),
+            gpus: self.gpus().to_vec(),
+        }
     }
 
     pub fn sample(&mut self) -> ProbeResult<Snapshot> {

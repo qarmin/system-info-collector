@@ -175,11 +175,13 @@ impl MeasureLoop {
 pub(crate) struct Stopped {
     pub builder: RecordingBuilder,
     pub ending: Ending,
+    pub interval: Duration,
 }
 
 impl Stopped {
     /// Credits what the command did after its last sample, which only its `wait4` totals show.
     pub fn into_measurement(mut self, pid: u32, exit: Option<ChildExit>) -> Measurement {
+        self.builder.merge_short_last_tick(self.interval / 2);
         if let Some(total) = exit.and_then(|e| e.cpu_time) {
             self.builder.credit_final_cpu(0, pid, total);
         }

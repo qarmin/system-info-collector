@@ -67,6 +67,7 @@ fn run(target: &mut Target<'_>, options: &MeasureOptions) -> ProbeResult<Stopped
         return Ok(Stopped {
             builder,
             ending: Ending::ExitedDuringWarmup,
+            interval: options.interval,
         });
     }
 
@@ -80,7 +81,11 @@ fn run(target: &mut Target<'_>, options: &MeasureOptions) -> ProbeResult<Stopped
             break ending;
         }
     };
-    Ok(Stopped { builder, ending })
+    Ok(Stopped {
+        builder,
+        ending,
+        interval: options.interval,
+    })
 }
 
 #[cfg(target_os = "linux")]

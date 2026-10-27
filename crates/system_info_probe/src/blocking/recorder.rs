@@ -95,6 +95,7 @@ fn run(
 ) -> ProbeResult<Recording> {
     let start = Instant::now();
     let end = options.max_duration.map(|d| start + d);
+    builder.set_sources(sampler.sources());
     builder.push(sampler.sample()?);
     let mut deadline = start;
     loop {

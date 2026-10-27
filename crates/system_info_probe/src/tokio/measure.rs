@@ -45,6 +45,7 @@ async fn run(mut child: Option<&mut ExitWatch>, pid: u32, options: &MeasureOptio
         return Ok(Stopped {
             builder,
             ending: Ending::ExitedDuringWarmup,
+            interval: options.interval,
         });
     }
     if child.is_none() {
@@ -67,7 +68,11 @@ async fn run(mut child: Option<&mut ExitWatch>, pid: u32, options: &MeasureOptio
             break ending;
         }
     };
-    Ok(Stopped { builder, ending })
+    Ok(Stopped {
+        builder,
+        ending,
+        interval: options.interval,
+    })
 }
 
 /// `readiness` is declared first so its registration is dropped before `child` closes the pidfd.

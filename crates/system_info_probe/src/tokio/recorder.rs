@@ -78,6 +78,9 @@ async fn run(
     count: Arc<AtomicUsize>,
 ) -> ProbeResult<Recording> {
     let start = Instant::now();
+    if let Some(inner) = sampler.sampler_mut() {
+        builder.set_sources(inner.sources());
+    }
     builder.push(sampler.sample().await?);
     let end = options.max_duration.map(|d| start + d);
     let mut interval = tokio::time::interval_at(start + options.interval, options.interval);
