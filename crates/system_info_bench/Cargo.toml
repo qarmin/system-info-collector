@@ -1,0 +1,25 @@
+[package]
+name = "system_info_bench"
+description = "Measure programs and compare them: CPU, memory and metrics from their output, as tables, CSV, JSON and SVG"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+system_info_probe = { path = "../system_info_probe", version = "0.8.0", default-features = false }
+system_info_report = { path = "../system_info_report", version = "0.8.0", default-features = false, features = ["json"] }
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = { version = "1.1", default-features = false, features = ["parse", "serde", "preserve_order"] }
+regex-lite = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

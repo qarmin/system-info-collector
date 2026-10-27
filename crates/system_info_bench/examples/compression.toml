@@ -1,0 +1,20 @@
+# Compares compressors at a few levels: `system_info_bench matrix examples/compression.toml`.
+# Every variant runs once per value of each matrix dimension it uses, `repeats` times each.
+
+repeats = 3
+until_exit = true
+timeout = "60s"
+interval = "100ms"
+
+[matrix]
+level = ["1", "6", "9"]
+
+[[variant]]
+name = "gzip"
+program = "sh"
+args = ["-c", "head -c 64000000 /dev/urandom | base64 | gzip -{level} > /dev/null"]
+
+[[variant]]
+name = "xz"
+program = "sh"
+args = ["-c", "head -c 64000000 /dev/urandom | base64 | xz -T1 -{level} > /dev/null"]

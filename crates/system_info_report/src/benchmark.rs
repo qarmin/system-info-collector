@@ -16,6 +16,7 @@ use crate::table::{Cell, Table};
 
 /// One program to run, plus labels that become table columns (e.g. `size=1024x768`, `mode=idle`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 pub struct Variant {
     pub name: String,
     pub dimensions: Vec<(String, String)>,
@@ -143,6 +144,7 @@ pub struct Benchmark {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 pub struct RunResult {
     pub repeat: usize,
     pub ending: Ending,
@@ -161,12 +163,14 @@ pub struct RunResult {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 pub struct VariantResult {
     pub variant: Variant,
     pub runs: Vec<RunResult>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 pub struct BenchmarkResult {
     /// Name and decimals of each custom metric.
     pub metrics: Vec<(String, u8)>,

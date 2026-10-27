@@ -57,6 +57,7 @@ impl Default for MeasureOptions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Ending {
     /// Ran for the whole [`RunLength::Fixed`] time.
     Completed,

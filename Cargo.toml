@@ -4,6 +4,7 @@ members = [
     "crates/system_info_collector",
     "crates/system_info_probe",
     "crates/system_info_report",
+    "crates/system_info_bench",
 ]
 resolver = "2"
 
