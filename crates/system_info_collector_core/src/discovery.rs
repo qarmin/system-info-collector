@@ -208,7 +208,9 @@ pub fn discover_gpus() -> Vec<DiscoveredGpu> {
     discover_amd_intel_gpus_linux(&mut gpus);
 
     #[cfg(target_os = "linux")]
-    discover_vivante_gpu(&mut gpus);
+    if VIVANTE_MONITORING_ENABLED {
+        discover_vivante_gpu(&mut gpus);
+    }
 
     if gpus.is_empty() {
         info!("No supported GPUs discovered");
@@ -455,6 +457,10 @@ pub const GALCORE_DEBUGFS: &str = "/sys/kernel/debug/gc";
 const GALCORE_REGISTER_BASES: &str = "/sys/module/galcore/parameters/registerBases";
 #[cfg(target_os = "linux")]
 const GALCORE_REGISTER_MEM_BASE: &str = "/sys/module/galcore/parameters/registerMemBase";
+
+/// Reading the idle register via /dev/mem while galcore has the GPU power-gated hangs the whole SoC.
+#[cfg(target_os = "linux")]
+const VIVANTE_MONITORING_ENABLED: bool = false;
 
 /// Only the 3D core is tracked: on i.MX6 the 2D (GC320) and VG (GC355) cores sit idle under Qt Quick.
 #[cfg(target_os = "linux")]
