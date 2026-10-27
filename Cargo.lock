@@ -2013,12 +2013,11 @@ dependencies = [
  "log",
  "open",
  "os_info",
- "plotly",
- "regex",
  "serde",
  "serde_json",
  "sysinfo",
  "system_info_collector_core",
+ "system_info_report",
  "time",
  "tokio",
  "zip",
@@ -2063,6 +2062,7 @@ dependencies = [
 name = "system_info_report"
 version = "0.8.0"
 dependencies = [
+ "plotly",
  "serde",
  "serde_json",
  "system_info_probe",

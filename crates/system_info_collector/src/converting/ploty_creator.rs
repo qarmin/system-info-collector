@@ -3,16 +3,12 @@ use std::fs;
 use std::time::Instant;
 
 use anyhow::{Context, Error};
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, Utc};
 use log::info;
-use plotly::common::Title;
-use plotly::layout::themes::PLOTLY_DARK;
-use plotly::layout::{Axis, AxisRange, GridPattern, Layout, LayoutGrid};
-use plotly::{Plot, Scatter};
-use regex::Regex;
 use system_info_collector_core::enums::{DataType, GeneralInfoGroup};
 use system_info_collector_core::model::CollectedItemModels;
 use system_info_collector_core::settings::{ConvertSettings, SplitMode};
+use system_info_report::html::{self, HtmlChart, HtmlReport, HtmlTheme, HtmlTrace};
 use time::UtcOffset;
 
 use crate::converting::csv_file_loader::load_csv_results;
@@ -175,84 +171,7 @@ fn local_timezone_ms() -> i64 {
     }
 }
 
-fn minify_html(html: &str) -> String {
-    let regex = Regex::new(r"\n[ ]+").expect("Regex is invalid");
-    regex.replace_all(html, "").into_owned()
-}
-
-fn apply_style(html: String, settings: &ConvertSettings) -> String {
-    if settings.white_plot_mode {
-        html
-    } else {
-        html.replace("<head>", "<head><style>body {background-color: #111111;color: white;}</style>")
-    }
-}
-
-// ── per-chart legend injection ────────────────────────────────────────────────
-
-/// Returns a `<script type="module">` block that redistributes the single
-/// Plotly legend into one legend per subplot, each positioned at the vertical
-/// mid-point of its subplot.
-///
-/// Plotly.js ≥ 2.16 supports multiple legends (`legend`, `legend2`, …) in the
-/// layout and the `legend` property on each trace.  plotly-rs 0.14 does not
-/// expose this API directly, so we inject the post-processing via JavaScript.
-fn per_chart_legends_script() -> &'static str {
-    r#"<script type="module">
-    (async () => {
-        const plotDiv = document.getElementById('plotly-html-element');
-        while (!plotDiv._fullLayout) await new Promise(r => setTimeout(r, 50));
-        const fl = plotDiv._fullLayout;
-        const data = plotDiv.data;
-        const yaxisOrder = [];
-        const yaxisSeen = new Set();
-        data.forEach(t => {
-            const y = t.yaxis || 'y';
-            if (!yaxisSeen.has(y)) { yaxisSeen.add(y); yaxisOrder.push(y); }
-        });
-        if (yaxisOrder.length <= 1) return;
-        const legendMap = {};
-        yaxisOrder.forEach((y, i) => { legendMap[y] = i === 0 ? 'legend' : 'legend' + (i + 1); });
-        const layoutUpdate = {};
-        yaxisOrder.forEach(y => {
-            const axisKey = y === 'y' ? 'yaxis' : 'yaxis' + y.slice(1);
-            const domain = fl[axisKey]?.domain ?? [0, 1];
-            const yMid = (domain[0] + domain[1]) / 2;
-            layoutUpdate[legendMap[y]] = { y: yMid, yanchor: 'middle', x: 1.02, xanchor: 'left', tracegroupgap: 0 };
-        });
-        const legendRefs = data.map(t => legendMap[t.yaxis || 'y']);
-        await Plotly.relayout(plotDiv, layoutUpdate);
-        await Plotly.restyle(plotDiv, { legend: legendRefs });
-    })();
-</script>"#
-}
-
 // ── main plot ─────────────────────────────────────────────────────────────────
-
-/// vendor/plotly patches the upstream `Layout` struct (capped at axis 8) up to
-/// axis 14 - see vendor/plotly/src/layout/mod.rs and `set_axes` below.
-const MAX_CHART_ROWS: usize = 14;
-
-/// Fine-grained chart groups.  GPU is split into three separate charts so that
-/// utilisation (%), VRAM (MB), and temperature (°C) each get their own axis.
-/// Top-N process data is rendered as separate standalone HTML files.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum ChartGroup {
-    Memory,
-    Cpu,
-    Swap,
-    Network,
-    NetworkTotal,
-    GpuUtil,
-    GpuVram,
-    GpuTemp,
-    DiskUsed,
-    DiskAvailable,
-    DiskBusy,
-    DiskIo,
-    PingLatency,
-    PingLoss,
-}
 
 pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<(), Error> {
     info!("Trying to create html file...");
@@ -265,82 +184,30 @@ pub fn save_plot_into_file(loaded_results: &CollectedItemModels, settings: &Conv
 
 /// A single self-contained report holding the whole multi-chart plot.
 pub fn build_report_html(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<String, Error> {
-    let plot = build_main_plot(loaded_results, settings, timezone_ms)?;
-
-    let html = apply_style(plot.to_html(), settings);
-    let body_suffix = format!("{}\n{}", notes_html(loaded_results), per_chart_legends_script());
-    let html = html.replace("</body>", &format!("{body_suffix}\n</body>"));
-
-    Ok(minify_html(&html))
-}
-
-fn build_main_plot(loaded_results: &CollectedItemModels, settings: &ConvertSettings, timezone_ms: i64) -> Result<Plot, Error> {
-    let dates = loaded_results
+    let times = loaded_results
         .collected_data
         .get(&DataType::SECONDS_SINCE_START)
         .context("Missing SECONDS_SINCE_START column")?
         .iter()
         .map(|s| {
-            if let Ok(t) = s.parse::<f64>() {
-                DateTime::from_timestamp_millis(((t + loaded_results.start_time) * 1000.0) as i64 + timezone_ms)
-            } else {
-                None
-            }
+            let t = s.parse::<f64>().ok()?;
+            let date = DateTime::from_timestamp_millis(((t + loaded_results.start_time) * 1000.0) as i64 + timezone_ms)?;
+            Some(date.to_rfc3339_opts(SecondsFormat::AutoSi, true))
         })
-        .collect::<Option<Vec<DateTime<Utc>>>>()
+        .collect::<Option<Vec<String>>>()
         .context("Failed to parse unix timestamp")?;
 
-    let mut plot = Plot::new();
-    let (layout, layout_info) = create_plot_layout(loaded_results, settings);
-    plot.set_layout(layout);
-
-    if let Some(&i) = layout_info.get(&ChartGroup::Memory) {
-        create_memory_plot(&mut plot, &dates, loaded_results, i);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::Cpu) {
-        create_cpu_plot(&mut plot, &dates, loaded_results, i);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::Swap) {
-        create_swap_plot(&mut plot, &dates, loaded_results, i);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::Network) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_network, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::NetworkTotal) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_network_total, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::GpuUtil) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_gpu_util, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::GpuVram) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_gpu_vram, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::GpuTemp) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_gpu_temp, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::DiskUsed) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_used, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::DiskAvailable) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_available, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::DiskBusy) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_busy, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::DiskIo) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_disk_io, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::PingLatency) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_ping_latency, settings);
-    }
-    if let Some(&i) = layout_info.get(&ChartGroup::PingLoss) {
-        create_traces(&mut plot, &dates, loaded_results, i, DataType::is_ping_loss, settings);
-    }
-
-    Ok(plot)
+    Ok(html::render(&HtmlReport {
+        times,
+        charts: charts(loaded_results, settings.white_plot_mode),
+        notes: notes(loaded_results),
+        width: settings.plot_width,
+        min_height: settings.plot_height,
+        theme: if settings.white_plot_mode { HtmlTheme::White } else { HtmlTheme::Dark },
+    }))
 }
 
-fn notes_html(loaded_results: &CollectedItemModels) -> String {
+fn notes(loaded_results: &CollectedItemModels) -> Vec<String> {
     let cpu_label = if loaded_results.cpu_model.is_empty() {
         format!("CPU: {} cores", loaded_results.cpu_core_count)
     } else {
@@ -379,204 +246,124 @@ fn notes_html(loaded_results: &CollectedItemModels) -> String {
     for (idx, label) in loaded_results.net_labels.iter().enumerate() {
         notes_vec.push(format!("Network {idx}: {label}"));
     }
-
-    #[expect(clippy::format_collect)]
-    let notes = notes_vec
-        .iter()
-        .map(|e| format!("<div style=\"text-align: center;\">{e}</div>"))
-        .collect::<String>();
-    notes
+    notes_vec
 }
 
-fn create_plot_layout(loaded_results: &CollectedItemModels, settings: &ConvertSettings) -> (Layout, HashMap<ChartGroup, u32>) {
-    let groups = &loaded_results.collected_groups;
-    let has_memory = groups.contains(&GeneralInfoGroup::MEMORY);
-    let has_cpu = groups.contains(&GeneralInfoGroup::CPU);
-    let has_swap = groups.contains(&GeneralInfoGroup::SWAP);
-    let has_network = groups.contains(&GeneralInfoGroup::NETWORK);
-    let has_network_total = groups.contains(&GeneralInfoGroup::NETWORK_TOTAL);
-
-    // GPU split into three independent sub-charts based on what data is present.
-    let has_gpu_util = loaded_results.collected_data.keys().any(DataType::is_gpu_util);
-    let has_gpu_vram = loaded_results.collected_data.keys().any(DataType::is_gpu_vram);
-    let has_gpu_temp = loaded_results.collected_data.keys().any(DataType::is_gpu_temp);
-    let has_disk = groups.contains(&GeneralInfoGroup::DISK);
-    let has_disk_used = has_disk && loaded_results.collected_data.keys().any(DataType::is_disk_used);
-    let has_disk_available = has_disk && loaded_results.collected_data.keys().any(DataType::is_disk_available);
-    let has_disk_busy = groups.contains(&GeneralInfoGroup::DISK_BUSY);
-    let has_disk_io = groups.contains(&GeneralInfoGroup::DISK_IO);
-    let has_ping_latency = groups.contains(&GeneralInfoGroup::PING_LATENCY);
-    let has_ping_loss = groups.contains(&GeneralInfoGroup::PING_LOSS);
-
-    let rows = has_memory as usize
-        + has_cpu as usize
-        + has_swap as usize
-        + has_network as usize
-        + has_network_total as usize
-        + has_gpu_util as usize
-        + has_gpu_vram as usize
-        + has_gpu_temp as usize
-        + has_disk_used as usize
-        + has_disk_available as usize
-        + has_disk_busy as usize
-        + has_disk_io as usize
-        + has_ping_latency as usize
-        + has_ping_loss as usize;
-
-    // Upstream plotly caps out at 8 named axes; vendor/plotly patches in xaxis9-14
-    // (see set_axes below), so the grid can go up to MAX_CHART_ROWS.
-    let capped_rows = rows.min(MAX_CHART_ROWS);
-    let dynamic_height = settings.plot_height.max(capped_rows as u32 * 380);
-
-    let mut layout = Layout::new()
-        .width(settings.plot_width as usize)
-        .height(dynamic_height as usize)
-        .grid(LayoutGrid::new().rows(capped_rows).columns(1).pattern(GridPattern::Independent));
-
-    if !settings.white_plot_mode {
-        layout = layout.template(&*PLOTLY_DARK);
-    }
-
-    let mut idx_info: HashMap<ChartGroup, u32> = HashMap::default();
-    let x_axis = Axis::new().title(Title::with_text("Time"));
-    let mut current = 1u32;
-
-    macro_rules! add_chart {
-        ($group:expr, $y:expr) => {
-            if current <= MAX_CHART_ROWS as u32 {
-                idx_info.insert($group, current);
-                layout = set_axes(current, layout, x_axis.clone(), $y);
-                current += 1;
-            }
-        };
-    }
-
-    if has_memory {
-        add_chart!(
-            ChartGroup::Memory,
-            Axis::new()
-                .range(AxisRange::new(0, loaded_results.memory_total.ceil() as usize))
-                .title(Title::with_text("Memory Usage [MB]"))
-        );
-    }
-    if has_cpu {
-        add_chart!(ChartGroup::Cpu, Axis::new().range(vec![-1, 100]).title(Title::with_text("CPU Usage [%]")));
-    }
-    if has_swap {
-        add_chart!(
-            ChartGroup::Swap,
-            Axis::new()
-                .range(AxisRange::new(0, loaded_results.swap_total.ceil() as usize))
-                .title(Title::with_text("Swap Usage [MB]"))
-        );
-    }
-    if has_network {
-        add_chart!(ChartGroup::Network, Axis::new().title(Title::with_text("Network [MB/s]")));
-    }
-    if has_network_total {
-        add_chart!(ChartGroup::NetworkTotal, Axis::new().title(Title::with_text("Network Total [MB]")));
-    }
-    if has_gpu_util {
-        add_chart!(
-            ChartGroup::GpuUtil,
-            Axis::new().range(vec![-1, 100]).title(Title::with_text("GPU Utilization [%]"))
-        );
-    }
-    if has_gpu_vram {
-        // Largest VRAM among GPUs, used as the chart ceiling - individual GPUs with less
-        // VRAM just won't reach the top of the shared axis.
-        let mut axis = Axis::new().title(Title::with_text("GPU VRAM [MB]"));
-        if let Some(max_mb) = loaded_results.gpu_vram_mb.iter().copied().max().filter(|&m| m > 0) {
-            axis = axis.range(AxisRange::new(0, max_mb as usize));
-        }
-        add_chart!(ChartGroup::GpuVram, axis);
-    }
-    if has_gpu_temp {
-        add_chart!(ChartGroup::GpuTemp, Axis::new().title(Title::with_text("GPU Temperature [°C]")));
-    }
-    if has_disk_used {
-        add_chart!(ChartGroup::DiskUsed, Axis::new().title(Title::with_text("Disk Space Used [GB]")));
-    }
-    if has_disk_available {
-        add_chart!(
-            ChartGroup::DiskAvailable,
-            Axis::new().title(Title::with_text("Disk Space Available [GB]"))
-        );
-    }
-    if has_disk_busy {
-        add_chart!(
-            ChartGroup::DiskBusy,
-            Axis::new().range(vec![-1, 100]).title(Title::with_text("Disk Busy [%]"))
-        );
-    }
-    if has_disk_io {
-        add_chart!(ChartGroup::DiskIo, Axis::new().title(Title::with_text("Disk I/O [MB/s]")));
-    }
-    if has_ping_latency {
-        add_chart!(ChartGroup::PingLatency, Axis::new().title(Title::with_text("Ping RTT [ms]")));
-    }
-    if has_ping_loss {
-        add_chart!(
-            ChartGroup::PingLoss,
-            Axis::new().range(vec![-1, 100]).title(Title::with_text("Ping Loss [%]"))
-        );
-    }
-
-    let _ = current;
-    (layout, idx_info)
+/// Values of one CSV column; empty cells and the `-1` the collector writes for an unreadable value
+/// become gaps.
+fn values(data: &[String]) -> Vec<Option<f64>> {
+    data.iter().map(|v| if v == "-1" { None } else { v.parse().ok() }).collect()
 }
 
-// ── per-metric trace builders ─────────────────────────────────────────────────
-
-fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_memory()).collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
+/// One trace per column accepted by `belongs`, sorted by label, colored per device when `colored`.
+fn traces(loaded_results: &CollectedItemModels, belongs: impl Fn(&DataType) -> bool, colored: Option<bool>) -> Vec<HtmlTrace> {
+    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| belongs(dt)).collect();
+    entries.sort_by_key(|(dt, _)| dt.pretty_print());
+    entries
+        .into_iter()
+        .map(|(data_type, data)| HtmlTrace {
+            name: data_type.pretty_print(),
+            color: colored.and_then(|white| device_color(data_type, white)),
+            values: values(data),
+        })
+        .collect()
 }
 
-fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_swap()).collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-}
-
-fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &CollectedItemModels, i: u32) {
-    let mut entries: Vec<_> = loaded_results
-        .collected_data
-        .iter()
-        .filter(|(dt, _)| dt.is_cpu() && *dt != &DataType::CPU_USAGE_PER_CORE)
-        .collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        plot.add_trace(trace);
-    }
-
+fn cpu_traces(loaded_results: &CollectedItemModels) -> Vec<HtmlTrace> {
+    let mut out = traces(loaded_results, |dt| dt.is_cpu() && *dt != DataType::CPU_USAGE_PER_CORE, None);
     if let Some(per_core) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
-        for (idx, core_data) in per_core.iter().enumerate() {
-            let values: Vec<String> = core_data.split(';').map(ToString::to_string).collect();
-            let trace = Scatter::new(dates.to_owned(), missing_as_gaps(&values))
-                .name(format!("Core {idx}"))
-                .y_axis(format!("y{i}"))
-                .x_axis(format!("x{i}"));
-            plot.add_trace(trace);
-        }
+        out.extend(per_core.iter().enumerate().map(|(index, core)| HtmlTrace {
+            name: format!("Core {index}"),
+            color: None,
+            values: values(&core.split(';').map(ToString::to_string).collect::<Vec<_>>()),
+        }));
     }
+    out
+}
+
+/// Charts in a fixed order, each only when its data is present.
+fn charts(loaded_results: &CollectedItemModels, white: bool) -> Vec<HtmlChart> {
+    let groups = &loaded_results.collected_groups;
+    let has_column = |test: fn(&DataType) -> bool| loaded_results.collected_data.keys().any(test);
+    let has_disk = groups.contains(&GeneralInfoGroup::DISK);
+    let chart = |y_title: &str, y_range: Option<(i64, i64)>, traces: Vec<HtmlTrace>| HtmlChart {
+        y_title: y_title.to_string(),
+        y_range,
+        traces,
+    };
+    let device = Some(white);
+    let percent = Some((-1, 100));
+    let mut out = Vec::new();
+
+    if groups.contains(&GeneralInfoGroup::MEMORY) {
+        let range = Some((0, loaded_results.memory_total.ceil() as i64));
+        out.push(chart("Memory Usage [MB]", range, traces(loaded_results, DataType::is_memory, None)));
+    }
+    if groups.contains(&GeneralInfoGroup::CPU) {
+        out.push(chart("CPU Usage [%]", percent, cpu_traces(loaded_results)));
+    }
+    if groups.contains(&GeneralInfoGroup::SWAP) {
+        let range = Some((0, loaded_results.swap_total.ceil() as i64));
+        out.push(chart("Swap Usage [MB]", range, traces(loaded_results, DataType::is_swap, None)));
+    }
+    if groups.contains(&GeneralInfoGroup::NETWORK) {
+        out.push(chart("Network [MB/s]", None, traces(loaded_results, DataType::is_network, device)));
+    }
+    if groups.contains(&GeneralInfoGroup::NETWORK_TOTAL) {
+        out.push(chart(
+            "Network Total [MB]",
+            None,
+            traces(loaded_results, DataType::is_network_total, device),
+        ));
+    }
+    if has_column(DataType::is_gpu_util) {
+        out.push(chart(
+            "GPU Utilization [%]",
+            percent,
+            traces(loaded_results, DataType::is_gpu_util, device),
+        ));
+    }
+    if has_column(DataType::is_gpu_vram) {
+        // The largest GPU sets the ceiling; smaller ones just do not reach the top.
+        let range = loaded_results
+            .gpu_vram_mb
+            .iter()
+            .copied()
+            .max()
+            .filter(|&m| m > 0)
+            .map(|max| (0, max as i64));
+        out.push(chart("GPU VRAM [MB]", range, traces(loaded_results, DataType::is_gpu_vram, device)));
+    }
+    if has_column(DataType::is_gpu_temp) {
+        out.push(chart("GPU Temperature [°C]", None, traces(loaded_results, DataType::is_gpu_temp, device)));
+    }
+    if has_disk && has_column(DataType::is_disk_used) {
+        out.push(chart(
+            "Disk Space Used [GB]",
+            None,
+            traces(loaded_results, DataType::is_disk_used, device),
+        ));
+    }
+    if has_disk && has_column(DataType::is_disk_available) {
+        out.push(chart(
+            "Disk Space Available [GB]",
+            None,
+            traces(loaded_results, DataType::is_disk_available, device),
+        ));
+    }
+    if groups.contains(&GeneralInfoGroup::DISK_BUSY) {
+        out.push(chart("Disk Busy [%]", percent, traces(loaded_results, DataType::is_disk_busy, device)));
+    }
+    if groups.contains(&GeneralInfoGroup::DISK_IO) {
+        out.push(chart("Disk I/O [MB/s]", None, traces(loaded_results, DataType::is_disk_io, device)));
+    }
+    if groups.contains(&GeneralInfoGroup::PING_LATENCY) {
+        out.push(chart("Ping RTT [ms]", None, traces(loaded_results, DataType::is_ping_latency, device)));
+    }
+    if groups.contains(&GeneralInfoGroup::PING_LOSS) {
+        out.push(chart("Ping Loss [%]", percent, traces(loaded_results, DataType::is_ping_loss, device)));
+    }
+    out
 }
 
 /// Hue assigned per device index, so disk 0 / GPU 0 / interface 0 keep one colour
@@ -623,55 +410,6 @@ fn device_color(data_type: &DataType, white_mode: bool) -> Option<String> {
         (true, true) => format!("hsl({hue}, 95%, 38%)"),
         (false, true) => format!("hsl({hue}, 26%, 66%)"),
     })
-}
-
-/// One trace per column accepted by `belongs_to_chart`, sorted by label.
-fn create_traces(
-    plot: &mut Plot,
-    dates: &[DateTime<Utc>],
-    loaded_results: &CollectedItemModels,
-    i: u32,
-    belongs_to_chart: fn(&DataType) -> bool,
-    settings: &ConvertSettings,
-) {
-    let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| belongs_to_chart(dt)).collect();
-    entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
-    for (data_type, data) in entries {
-        let mut trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
-            .name(data_type.pretty_print())
-            .y_axis(format!("y{i}"))
-            .x_axis(format!("x{i}"));
-        if let Some(color) = device_color(data_type, settings.white_plot_mode) {
-            trace = trace.line(plotly::common::Line::new().color(color));
-        }
-        plot.add_trace(trace);
-    }
-}
-
-/// The collector writes -1 when a value could not be read (process not running, link down, no ping reply);
-/// an empty value makes plotly break the line there instead of drawing a dip to -1.
-fn missing_as_gaps(data: &[String]) -> Vec<String> {
-    data.iter().map(|v| if v == "-1" { String::new() } else { v.clone() }).collect()
-}
-
-fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {
-    match idx {
-        1 => layout.x_axis(x).y_axis(y),
-        2 => layout.x_axis2(x).y_axis2(y),
-        3 => layout.x_axis3(x).y_axis3(y),
-        4 => layout.x_axis4(x).y_axis4(y),
-        5 => layout.x_axis5(x).y_axis5(y),
-        6 => layout.x_axis6(x).y_axis6(y),
-        7 => layout.x_axis7(x).y_axis7(y),
-        8 => layout.x_axis8(x).y_axis8(y),
-        9 => layout.x_axis9(x).y_axis9(y),
-        10 => layout.x_axis10(x).y_axis10(y),
-        11 => layout.x_axis11(x).y_axis11(y),
-        12 => layout.x_axis12(x).y_axis12(y),
-        13 => layout.x_axis13(x).y_axis13(y),
-        14 => layout.x_axis14(x).y_axis14(y),
-        _ => layout,
-    }
 }
 
 #[cfg(test)]

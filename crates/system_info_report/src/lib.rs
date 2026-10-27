@@ -3,6 +3,8 @@
 
 pub mod benchmark;
 pub mod export;
+#[cfg(feature = "html")]
+pub mod html;
 pub mod series;
 pub mod stats;
 pub mod summary;

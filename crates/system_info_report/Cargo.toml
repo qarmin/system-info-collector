@@ -18,6 +18,7 @@ thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", features = ["float_roundtrip"], optional = true }
 tokio = { version = "1.53", features = ["rt"], optional = true }
+plotly = { version = "0.14", optional = true }
 
 [features]
 default = ["disk", "network"]
@@ -25,6 +26,7 @@ disk = ["system_info_probe/disk"]
 network = ["system_info_probe/network"]
 json = ["dep:serde", "dep:serde_json", "system_info_probe/serde"]
 tokio = ["dep:tokio", "system_info_probe/tokio"]
+html = ["dep:plotly"]
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
