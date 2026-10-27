@@ -1,3 +1,4 @@
+pub mod csv_compact;
 pub mod discovery;
 pub mod engine;
 pub mod enums;

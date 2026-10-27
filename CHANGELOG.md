@@ -19,6 +19,8 @@
   less from `/proc`
 - Fewer reads overall: watched processes are re-read only when they match, disk space is read only for tracked disks
   and network counters only for tracked interfaces
+- Smaller CSV files (about 12% on a busy machine, more on an idle one): per-core CPU is written in whole percent and
+  compacted per core, machine memory and swap in whole MB; older files still load
 
 ### Ping - new
 

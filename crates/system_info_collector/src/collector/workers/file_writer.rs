@@ -12,6 +12,12 @@ fn fmt_f64(v: f64) -> String {
     trim_decimals(format!("{v:.1}"))
 }
 
+/// Machine memory in whole megabytes - a tenth of one says nothing next to gigabytes, and the
+/// digit is in every row.
+fn fmt_mb(v: f64) -> String {
+    format!("{v:.0}")
+}
+
 /// Gateway round trips are often well below a millisecond, so RTT keeps a second decimal.
 fn fmt_rtt_ms(v: f64) -> String {
     trim_decimals(format!("{v:.2}"))
@@ -33,6 +39,7 @@ use log::{error, info};
 use system_info_probe::disk::{self, DiskSpace};
 use system_info_probe::system::MachineInfo;
 
+use crate::collector::csv_compact;
 use crate::collector::discovery::RuntimeDiscovery;
 use crate::collector::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
 use crate::collector::settings::CollectSettings;
@@ -127,23 +134,23 @@ pub async fn run<F>(
                 }
                 SimpleDataCollectionMode::CPU_USAGE_PER_CORE => {
                     row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| {
-                        s.cpu_usage_per_core.iter().map(|v| fmt_f64(*v)).collect::<Vec<_>>().join(";")
+                        s.cpu_usage_per_core.iter().map(|v| format!("{v:.0}")).collect::<Vec<_>>().join(";")
                     }));
                 }
                 SimpleDataCollectionMode::MEMORY_USED => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_used_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_mb(s.memory_used_mb)));
                 }
                 SimpleDataCollectionMode::MEMORY_FREE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_free_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_mb(s.memory_free_mb)));
                 }
                 SimpleDataCollectionMode::MEMORY_AVAILABLE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.memory_available_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_mb(s.memory_available_mb)));
                 }
                 SimpleDataCollectionMode::SWAP_USED => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.swap_used_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_mb(s.swap_used_mb)));
                 }
                 SimpleDataCollectionMode::SWAP_FREE => {
-                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_f64(s.swap_free_mb)));
+                    row.push(sysinfo_snap.as_ref().map_or("-1".to_string(), |s| fmt_mb(s.swap_free_mb)));
                 }
                 // Network rate modes expand to one column per discovered interface,
                 // interleaved rx/tx per interface (see `network_rate_columns`).
@@ -251,10 +258,13 @@ pub async fn run<F>(
         // The timestamp (index 0) is always written in full.
         // `on_row` always receives the full row so the HTTP server has complete data.
         let row_str = if settings.compact_csv && !prev_row.is_empty() {
-            let compact: Vec<&str> = row
+            let compact: Vec<String> = row
                 .iter()
                 .enumerate()
-                .map(|(i, v)| if i == 0 || (prev_row.get(i) != Some(v)) { v.as_str() } else { "" })
+                .map(|(i, v)| match prev_row.get(i) {
+                    Some(previous) if i > 0 => csv_compact::compact(v, previous),
+                    _ => v.clone(),
+                })
                 .collect();
             compact.join(",")
         } else {

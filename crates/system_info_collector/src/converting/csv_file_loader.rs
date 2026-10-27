@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, metadata};
 use std::io::{BufRead, BufReader, Lines};
 
+use crate::collector::csv_compact;
 use crate::collector::enums::{DataType, GeneralInfoGroup, HeaderValues};
 use crate::collector::model::CollectedItemModels;
 use crate::collector::settings::ConvertSettings;
@@ -124,8 +125,11 @@ fn parse_data(
         }
         for (i, col_data) in collected_vec_data.iter_mut().enumerate() {
             let raw = split.next().expect("Validated before");
-            // Compact CSV: empty cells at data columns carry the previous value.
-            let value = if i > 0 && raw.is_empty() { prev_row[i].clone() } else { raw.to_string() };
+            let value = if i > 0 {
+                csv_compact::expand(raw, &prev_row[i])
+            } else {
+                raw.to_string()
+            };
             prev_row[i] = value.clone();
             col_data.push(value);
         }

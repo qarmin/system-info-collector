@@ -249,6 +249,7 @@ SECONDS_SINCE_START,CPU_USAGE_TOTAL,MEMORY_USED,NET_0_RX_BPS,NET_0_TX_BPS,DISK_0
 ```
 
 Empty means "same as the row above" - that is compact mode, on by default, and the reader fills the values back in.
+Per-core CPU is compacted per core too: `4;;;2` repeats cores 2 and 3 from the row above.
 Turn it off with `--no-compact` if you want to process the file with something else. A `-1` means the value could not
 be measured - a tracked process that was not running, a GPU figure the driver does not expose - and charts leave a gap
 there.
