@@ -12,14 +12,14 @@ use std::sync::atomic::Ordering;
 use std::thread::available_parallelism;
 use std::{env, process};
 
+use crate::collector::discovery::{DiscoveredGpu, DiscoveredInterface, list_real_disks, list_real_interfaces, mounted_filesystems};
+use crate::collector::engine::CollectorEngine;
+use crate::collector::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
+use crate::collector::session_recorder::{SessionConfig, SessionProgress};
+use crate::collector::settings::MAX_BUFFER_SAMPLES;
+use crate::collector::workers::system_worker::bytes_to_mb;
 use handsome_logger::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 use log::{error, info, warn};
-use system_info_collector_core::discovery::{DiscoveredGpu, DiscoveredInterface, list_real_disks, list_real_interfaces, mounted_filesystems};
-use system_info_collector_core::engine::CollectorEngine;
-use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
-use system_info_collector_core::session_recorder::{SessionConfig, SessionProgress};
-use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
-use system_info_collector_core::workers::system_worker::bytes_to_mb;
 use system_info_probe::system::MachineInfo;
 
 use crate::cli::{Commands, parse_cli};
@@ -31,6 +31,7 @@ use crate::session_store::{SessionStore, build_standalone_html, write_session};
 use crate::settings::{build_collect_settings, build_convert_settings};
 
 mod cli;
+mod collector;
 mod converting;
 mod serving;
 mod session_store;
@@ -361,8 +362,7 @@ async fn run_session_command(args: cli::SessionArgs) -> Result<(), anyhow::Error
     let data = {
         let progress = std::sync::Arc::clone(&progress);
         let stop = std::sync::Arc::clone(&stop);
-        tokio::task::spawn_blocking(move || system_info_collector_core::session_recorder::record(config, &stop, &progress, env!("CARGO_PKG_VERSION")))
-            .await?
+        tokio::task::spawn_blocking(move || crate::collector::session_recorder::record(config, &stop, &progress, env!("CARGO_PKG_VERSION"))).await?
     }?;
     reporter.abort();
 

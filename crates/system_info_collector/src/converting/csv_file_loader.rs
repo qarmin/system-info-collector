@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, metadata};
 use std::io::{BufRead, BufReader, Lines};
 
+use crate::collector::enums::{DataType, GeneralInfoGroup, HeaderValues};
+use crate::collector::model::CollectedItemModels;
+use crate::collector::settings::ConvertSettings;
 use anyhow::{Context, Error, Result};
 use log::info;
-use system_info_collector_core::enums::{DataType, GeneralInfoGroup, HeaderValues};
-use system_info_collector_core::model::CollectedItemModels;
-use system_info_collector_core::settings::ConvertSettings;
 
 pub fn load_csv_results(settings: &ConvertSettings) -> Result<CollectedItemModels, Error> {
     info!(

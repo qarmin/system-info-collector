@@ -1,4 +1,4 @@
-use crate::enums::{DataType, GeneralInfoGroup};
+use crate::collector::enums::{DataType, GeneralInfoGroup};
 use serde::Deserialize;
 use std::collections::HashMap;
 

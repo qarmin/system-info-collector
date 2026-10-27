@@ -33,11 +33,11 @@ use log::{error, info};
 use system_info_probe::disk::{self, DiskSpace};
 use system_info_probe::system::MachineInfo;
 
-use crate::discovery::RuntimeDiscovery;
-use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
-use crate::settings::CollectSettings;
-use crate::shared_state::SharedState;
-use crate::workers::system_worker::bytes_to_mb;
+use crate::collector::discovery::RuntimeDiscovery;
+use crate::collector::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::SharedState;
+use crate::collector::workers::system_worker::bytes_to_mb;
 
 /// Spawned as a tokio task.  Wakes every `check_interval` seconds, clones the
 /// latest snapshots out of `SharedState` (brief read-lock), formats a CSV row,

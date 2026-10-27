@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::collector::session_recorder::{self, SessionConfig, SessionProgress};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use system_info_collector_core::session_recorder::{self, SessionConfig, SessionProgress};
 
 use crate::session_store::SessionStore;
 

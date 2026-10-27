@@ -1,8 +1,8 @@
+use crate::collector::discovery::MountedFilesystem;
 use axum::extract::ws::Utf8Bytes;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
-use system_info_collector_core::discovery::MountedFilesystem;
 use tokio::sync::broadcast;
 
 /// How many frames a slow websocket client may fall behind before it is told to

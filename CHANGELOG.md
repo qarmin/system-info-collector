@@ -1,5 +1,25 @@
 ## Unreleased
 
+### Libraries and benchmarking - new
+
+- `system_info_probe`: sampling of processes, CPU, memory, disks, network, GPUs and ping as a library, blocking or on
+  tokio - process trees and patterns follow processes started later, and tree CPU includes reaped children
+- `system_info_report`: summaries, tables, CSV/JSON export, SVG and HTML charts, and benchmarks over repeated runs
+- `system_info_bench`: a small tool to measure a command, a running process, or a matrix of variants from a TOML file,
+  with numbers read from the program's output by regex
+
+### Collecting
+
+- Charts leave a gap where a value could not be read instead of dropping to -1
+- `-e` tracks every matching process, summed, instead of only the one with the shortest command line; the collector
+  and the processes that started it are no longer matched by their own arguments
+- GPU figures a driver does not expose (memory of Intel iGPUs, unreadable RC6) are written as -1 instead of 0
+- Pings record each reply as it arrives, so an unreachable target no longer delays the others
+- Process sessions attribute I/O in the first sample instead of folding it into the starting totals, and read 44%
+  less from `/proc`
+- Fewer reads overall: watched processes are re-read only when they match, disk space is read only for tracked disks
+  and network counters only for tracked interfaces
+
 ### Ping - new
 
 - New `ping-latency` (ms) and `ping-loss` (%) metrics, each with its own chart in the report and the live view

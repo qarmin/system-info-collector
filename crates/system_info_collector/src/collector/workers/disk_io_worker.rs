@@ -5,9 +5,9 @@ use std::time::Duration;
 use log::{info, warn};
 use system_info_probe::disk::{DiskMetrics, DiskSampler};
 
-use crate::discovery::RuntimeDiscovery;
-use crate::settings::CollectSettings;
-use crate::shared_state::{DiskIoSnapshot, SharedState};
+use crate::collector::discovery::RuntimeDiscovery;
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::{DiskIoSnapshot, SharedState};
 
 const MIB: f64 = 1_048_576.0;
 

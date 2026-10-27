@@ -1,5 +1,5 @@
+use crate::collector::enums::SimpleDataCollectionMode;
 use clap::{Parser, Subcommand};
-use system_info_collector_core::enums::SimpleDataCollectionMode;
 
 use crate::session_store::DEFAULT_SESSION_DIR;
 

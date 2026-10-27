@@ -5,9 +5,9 @@ use std::time::Duration;
 use log::info;
 use system_info_probe::network::NetworkSampler;
 
-use crate::discovery::RuntimeDiscovery;
-use crate::settings::CollectSettings;
-use crate::shared_state::{NetworkInterfaceSnapshot, SharedState};
+use crate::collector::discovery::RuntimeDiscovery;
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::{NetworkInterfaceSnapshot, SharedState};
 
 /// Traffic of each discovered interface, into `state.latest_networks[iface_index]`.
 pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>, shutdown: Arc<AtomicBool>, discovery: Arc<RuntimeDiscovery>) {

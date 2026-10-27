@@ -10,15 +10,13 @@ pub struct SysinfoSnapshot {
     pub swap_free_mb: f64,
 }
 
-/// Snapshot of a single GPU's metrics.  Produced by nvidia_worker or
-/// amd_intel_gpu_worker; indexed by `DiscoveredGpu::gpu_index`.
+/// Snapshot of a single GPU's metrics, indexed by `DiscoveredGpu::gpu_index`.
 #[derive(Debug, Clone, Default)]
 /// Fields are `None` where the vendor does not expose them, e.g. memory of an Intel iGPU.
 pub struct GpuSnapshot {
     /// GPU compute utilization in percent (0-100).
     pub utilization_gpu: Option<u32>,
     pub memory_used_mb: Option<u64>,
-    pub memory_total_mb: Option<u64>,
     pub temperature: Option<u32>,
 }
 
@@ -45,8 +43,6 @@ pub struct DiskIoSnapshot {
 /// Per-process metrics for a single tracked process.
 #[derive(Debug, Clone)]
 pub struct ProcessSnapshot {
-    pub pid: usize,
-    pub name: String,
     pub cpu_usage: f32,
     pub memory_mb: f64,
 }
@@ -61,13 +57,10 @@ pub struct SharedState {
     /// Latest CPU / memory snapshot (written by system_worker).
     pub latest_sysinfo: Option<SysinfoSnapshot>,
     /// Latest per-interface network snapshots, indexed by iface_index.
-    /// Sized to `RuntimeDiscovery::interface_count()` at engine startup.
     pub latest_networks: Vec<Option<NetworkInterfaceSnapshot>>,
     /// Latest per-GPU snapshots, indexed by gpu_index.
-    /// Sized to `RuntimeDiscovery::gpu_count()` at engine startup.
     pub latest_gpus: Vec<Option<GpuSnapshot>>,
     /// Latest per-disk I/O snapshots, indexed by disk_index.
-    /// Sized to `RuntimeDiscovery::disk_count()` at engine startup.
     pub latest_disk_io: Vec<Option<DiskIoSnapshot>>,
     /// Ping results accumulated since the last row, drained by file_writer.
     pub ping_windows: Vec<system_info_probe::ping::PingWindow>,

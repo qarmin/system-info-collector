@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
 use anyhow::Error;
@@ -6,12 +6,12 @@ use log::{info, warn};
 use system_info_probe::system::MachineInfo;
 use tokio::task::JoinSet;
 
-use crate::discovery::{RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
-use crate::settings::CollectSettings;
-use crate::shared_state::SharedState;
+use crate::collector::discovery::{RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::SharedState;
 #[cfg(target_os = "linux")]
-use crate::workers::ping_worker;
-use crate::workers::{disk_io_worker, file_writer, gpu_worker, network_worker, system_worker};
+use crate::collector::workers::ping_worker;
+use crate::collector::workers::{disk_io_worker, file_writer, gpu_worker, network_worker, system_worker};
 
 /// The central collection engine.
 ///
@@ -51,7 +51,7 @@ impl CollectorEngine {
                         .ping_targets
                         .iter()
                         .enumerate()
-                        .map(|(ping_index, host)| crate::discovery::DiscoveredPingTarget {
+                        .map(|(ping_index, host)| crate::collector::discovery::DiscoveredPingTarget {
                             ping_index,
                             host: host.clone(),
                         })
@@ -192,10 +192,5 @@ impl CollectorEngine {
 
         info!("CollectorEngine stopped");
         Ok(())
-    }
-
-    /// Poll the shutdown flag.  Useful in tests or embedding scenarios.
-    pub fn is_shutdown(&self) -> bool {
-        self.shutdown.load(Ordering::Relaxed)
     }
 }

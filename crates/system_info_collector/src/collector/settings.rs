@@ -1,4 +1,4 @@
-use crate::enums::SimpleDataCollectionMode;
+use crate::collector::enums::SimpleDataCollectionMode;
 
 #[derive(Default, Clone, Debug)]
 pub struct FindingStruct {
@@ -42,17 +42,20 @@ pub struct CollectSettings {
     pub sysinfo_interval_secs: f32,
     /// Interval at which network_worker refreshes network counters.
     pub network_interval_secs: f32,
-    /// Interval at which nvidia_worker polls the GPU.
+    /// Interval at which gpu_worker polls the GPUs.
     pub gpu_interval_secs: f32,
     /// Interval at which disk stats are refreshed inside file_writer.
     pub disk_interval_secs: f32,
     /// Interval at which disk_io_worker samples the cumulative I/O counters.
     pub disk_io_interval_secs: f32,
     /// Interval at which ping_worker sends an echo request to every target.
+    #[cfg_attr(not(target_os = "linux"), expect(dead_code, reason = "ping is Linux only"))]
     pub ping_interval_secs: f32,
     /// How long ping_worker waits for a reply before counting the request as lost.
+    #[cfg_attr(not(target_os = "linux"), expect(dead_code, reason = "ping is Linux only"))]
     pub ping_timeout_secs: f32,
     /// Hosts or IPs to ping; `gateway` stands for the current default gateway.
+    #[cfg_attr(not(target_os = "linux"), expect(dead_code, reason = "ping is Linux only"))]
     pub ping_targets: Vec<String>,
 
     pub convert: ConvertSettings,
@@ -61,7 +64,6 @@ pub struct CollectSettings {
     pub backup_number: u32,
     pub maximum_data_file_size_bytes: usize,
     pub process_cmd_to_search: Vec<FindingStruct>,
-    pub need_to_refresh_processes: bool,
     pub start_time: f64,
     pub convert_after: bool,
     // Server options

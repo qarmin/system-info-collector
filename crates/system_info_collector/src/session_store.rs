@@ -3,11 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::collector::session_recorder::{PREFIX_READ_BYTES, SessionData, SessionMeta, parse_meta_prefix};
 use anyhow::{Context, Error};
 use chrono::Local;
 use log::info;
 use serde::Serialize;
-use system_info_collector_core::session_recorder::{PREFIX_READ_BYTES, SessionData, SessionMeta, parse_meta_prefix};
 
 pub const DEFAULT_SESSION_DIR: &str = "sessions";
 

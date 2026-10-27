@@ -185,13 +185,10 @@ check_embedded:
 install:
     cargo install --path crates/system_info_collector
 
-[doc('Publishes both crates to crates.io (core first)')]
+[doc('Publishes every crate to crates.io, dependencies first')]
 [group('release')]
 publish:
-    cd crates/system_info_collector_core && cargo publish --dry-run
-    cd crates/system_info_collector_core && cargo publish
-    cd crates/system_info_collector && cargo publish --dry-run
-    cd crates/system_info_collector && cargo publish
+    for crate in system_info_probe system_info_report system_info_bench system_info_collector; do (cd crates/$crate && cargo publish --dry-run && cargo publish) || exit 1; done
 
 # ─── run: collecting on this machine ─────────────────────────────────────────
 
@@ -278,7 +275,7 @@ samplyrd:
 [doc('Prints the CPU, memory, disks, interfaces and GPUs the collector detects')]
 [group('run')]
 system-check:
-    cargo run -p system_info_collector_core --example system_check
+    cargo run -p system_info_collector --example system_check
 
 # ─── session: recording every process for a short period ─────────────────────
 

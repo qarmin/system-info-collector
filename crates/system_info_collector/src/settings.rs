@@ -1,7 +1,7 @@
 use std::process;
 use std::time::SystemTime;
 
-use system_info_collector_core::settings::{CollectSettings, ConvertSettings, FindingStruct, SplitMode};
+use crate::collector::settings::{CollectSettings, ConvertSettings, FindingStruct, SplitMode};
 
 use crate::cli::{CollectArgs, ConvertArgs};
 
@@ -80,7 +80,6 @@ pub fn build_collect_settings(args: CollectArgs) -> CollectSettings {
         disable_instant_flushing: args.disable_instant_flushing,
         backup_number: args.backup_number,
         maximum_data_file_size_bytes: (args.maximum_data_file_size_mb * 1024.0 * 1024.0) as usize,
-        need_to_refresh_processes: !process_to_search.is_empty(),
         process_cmd_to_search: process_to_search,
         start_time: SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)

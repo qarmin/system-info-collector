@@ -4,8 +4,7 @@
 use serde::Deserialize;
 use strum::{Display, EnumIter, EnumString};
 
-#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy, clap::ValueEnum)]
 pub enum SimpleDataCollectionMode {
     #[default]
     CPU_USAGE_TOTAL,
@@ -15,38 +14,38 @@ pub enum SimpleDataCollectionMode {
     MEMORY_USED,
     MEMORY_FREE,
     MEMORY_AVAILABLE,
-    #[cfg_attr(feature = "clap", clap(name = "network-rx"))]
+    #[clap(name = "network-rx")]
     NETWORK_RX_BYTES_PER_SEC,
-    #[cfg_attr(feature = "clap", clap(name = "network-tx"))]
+    #[clap(name = "network-tx")]
     NETWORK_TX_BYTES_PER_SEC,
     /// Cumulative RX/TX bytes since interface up, per interface (requires --network or --all-networks).
     /// Rendered as its own chart, separate from the RX/TX rate above.
-    #[cfg_attr(feature = "clap", clap(name = "network-total"))]
+    #[clap(name = "network-total")]
     NETWORK_TOTAL,
     GPU_UTILIZATION,
     GPU_MEMORY_USED,
     GPU_TEMPERATURE,
     /// Write used-space column for each tracked disk (requires --disk or --all-disks).
-    #[cfg_attr(feature = "clap", clap(name = "disk-used"))]
+    #[clap(name = "disk-used")]
     DISK_USED,
     /// Write available-space column for each tracked disk (requires --disk or --all-disks).
-    #[cfg_attr(feature = "clap", clap(name = "disk-available"))]
+    #[clap(name = "disk-available")]
     DISK_AVAILABLE,
     /// Write iostat-style %util for each tracked disk - the share of wall time the
     /// device had I/O in flight (requires --disk or --all-disks, Linux only).
-    #[cfg_attr(feature = "clap", clap(name = "disk-busy"))]
+    #[clap(name = "disk-busy")]
     DISK_BUSY,
     /// Write read throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
-    #[cfg_attr(feature = "clap", clap(name = "disk-read"))]
+    #[clap(name = "disk-read")]
     DISK_READ,
     /// Write write throughput in MB/s for each tracked disk (requires --disk or --all-disks, Linux only).
-    #[cfg_attr(feature = "clap", clap(name = "disk-write"))]
+    #[clap(name = "disk-write")]
     DISK_WRITE,
     /// Write the average ICMP round-trip time in ms for each --ping-target (Linux only).
-    #[cfg_attr(feature = "clap", clap(name = "ping-latency"))]
+    #[clap(name = "ping-latency")]
     PING_LATENCY,
     /// Write the share of lost ICMP echo requests in % for each --ping-target (Linux only).
-    #[cfg_attr(feature = "clap", clap(name = "ping-loss"))]
+    #[clap(name = "ping-loss")]
     PING_LOSS,
 }
 
@@ -446,8 +445,7 @@ pub fn network_rate_columns(has_rx: bool, has_tx: bool, interfaces: impl IntoIte
     columns
 }
 
-#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy, clap::ValueEnum)]
 pub enum HeaderValues {
     #[default]
     MEMORY_TOTAL,
@@ -458,8 +456,7 @@ pub enum HeaderValues {
     UNIX_TIMESTAMP_START_TIME,
 }
 
-#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[derive(Clone, EnumString, EnumIter, Debug, Eq, PartialEq, Default, Display, Deserialize, Hash, Copy, clap::ValueEnum)]
 pub enum GeneralInfoGroup {
     #[default]
     CPU,

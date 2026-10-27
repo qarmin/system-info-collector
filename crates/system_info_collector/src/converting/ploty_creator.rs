@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::time::Instant;
 
+use crate::collector::enums::{DataType, GeneralInfoGroup};
+use crate::collector::model::CollectedItemModels;
+use crate::collector::settings::{ConvertSettings, SplitMode};
 use anyhow::{Context, Error};
 use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, Utc};
 use log::info;
-use system_info_collector_core::enums::{DataType, GeneralInfoGroup};
-use system_info_collector_core::model::CollectedItemModels;
-use system_info_collector_core::settings::{ConvertSettings, SplitMode};
 use system_info_report::html::{self, HtmlChart, HtmlReport, HtmlTheme, HtmlTrace};
 use time::UtcOffset;
 
@@ -416,8 +416,8 @@ fn device_color(data_type: &DataType, white_mode: bool) -> Option<String> {
 mod tests {
     use std::path::PathBuf;
 
+    use crate::collector::settings::ConvertSettings;
     use serde_json::{Map, Value};
-    use system_info_collector_core::settings::ConvertSettings;
 
     use super::build_report_html;
     use crate::converting::csv_file_loader::load_csv_results;

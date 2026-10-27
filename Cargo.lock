@@ -1867,28 +1867,12 @@ dependencies = [
  "os_info",
  "serde",
  "serde_json",
- "system_info_collector_core",
+ "strum",
  "system_info_probe",
  "system_info_report",
  "time",
  "tokio",
  "zip",
-]
-
-[[package]]
-name = "system_info_collector_core"
-version = "0.8.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "humansize",
- "log",
- "serde",
- "serde_json",
- "strum",
- "system_info_probe",
- "tokio",
 ]
 
 [[package]]

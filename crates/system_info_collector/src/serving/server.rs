@@ -1,3 +1,6 @@
+use crate::collector::enums::DataType;
+use crate::collector::model::CollectedItemModels;
+use crate::collector::settings::{ConvertSettings, SplitMode};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, Path, Query, State};
@@ -10,9 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io::{Cursor, Write};
 use std::sync::Arc;
-use system_info_collector_core::enums::DataType;
-use system_info_collector_core::model::CollectedItemModels;
-use system_info_collector_core::settings::{ConvertSettings, SplitMode};
 use tokio::sync::broadcast::error::RecvError;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};

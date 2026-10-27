@@ -153,7 +153,7 @@ mod tests {
         let addresses = ["192.0.2.1".parse().expect("valid"), "127.0.0.1".parse().expect("valid")];
         pinger
             .ping_each(&addresses, Duration::from_millis(800), |index, rtt| {
-                arrivals.push((index, rtt.is_some(), started.elapsed()))
+                arrivals.push((index, rtt.is_some(), started.elapsed()));
             })
             .await;
         assert_eq!(arrivals.len(), 2, "{arrivals:?}");

@@ -116,18 +116,6 @@ pub struct RuntimeDiscovery {
     pub warnings: Vec<String>,
 }
 
-impl RuntimeDiscovery {
-    pub fn gpu_count(&self) -> usize {
-        self.gpus.len()
-    }
-    pub fn interface_count(&self) -> usize {
-        self.interfaces.len()
-    }
-    pub fn disk_count(&self) -> usize {
-        self.disks.len()
-    }
-}
-
 /// Reading the Vivante idle register through /dev/mem while galcore has the GPU power-gated hangs
 /// the whole SoC, so Vivante GPUs are not looked for.
 pub fn discover_gpus() -> Vec<DiscoveredGpu> {

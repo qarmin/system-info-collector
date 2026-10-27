@@ -10,8 +10,8 @@ use system_info_probe::process::{
 };
 use system_info_probe::system::{SystemSample, SystemSampler};
 
-use crate::settings::CollectSettings;
-use crate::shared_state::{ProcessSnapshot as TrackedProcess, SharedState, SysinfoSnapshot};
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::{ProcessSnapshot as TrackedProcess, SharedState, SysinfoSnapshot};
 
 /// Machine CPU and memory, and the processes matching each `--process-cmd-to-search` pattern -
 /// every matching process, summed, including ones started later.
@@ -135,7 +135,6 @@ impl ProcessTracker {
             }
             let mut keys: Vec<&ProcessKey> = matched.iter().collect();
             keys.sort_unstable_by_key(|key| (key.start, key.pid));
-            let first = &current.processes[keys[0]];
             let cpu = changes.as_ref().map_or(0.0, |c| {
                 keys.iter()
                     .filter_map(|key| c.get(key))
@@ -143,8 +142,6 @@ impl ProcessTracker {
                     .sum::<f64>()
             });
             out.push(Some(TrackedProcess {
-                pid: first.pid() as usize,
-                name: first.info.name.clone(),
                 cpu_usage: cpu as f32,
                 memory_mb: keys.iter().map(|key| bytes_to_mb(current.processes[*key].rss_bytes)).sum(),
             }));

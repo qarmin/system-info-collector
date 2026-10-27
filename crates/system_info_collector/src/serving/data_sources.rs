@@ -4,10 +4,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+use crate::collector::workers::file_writer::is_rotated_filename;
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use log::warn;
 use serde::Serialize;
-use system_info_collector_core::workers::file_writer::is_rotated_filename;
 
 use crate::converting::csv_file_loader::scan_timestamps;
 

@@ -8,9 +8,9 @@ use system_info_probe::ping::PingTarget;
 use system_info_probe::tokio::{AsyncPinger, resolve};
 use tokio::time::MissedTickBehavior;
 
-use crate::discovery::RuntimeDiscovery;
-use crate::settings::CollectSettings;
-use crate::shared_state::SharedState;
+use crate::collector::discovery::RuntimeDiscovery;
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::SharedState;
 
 const ADDRESS_REFRESH: Duration = Duration::from_secs(10);
 

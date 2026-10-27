@@ -118,14 +118,15 @@ Pick metrics with `-m`. The default is `cpu-usage-total memory-used`.
 | `ping-latency` | ms | Average ICMP round trip per `--ping-target` within one row. Linux only. Empty when nothing came back |
 | `ping-loss` | % | Share of echo requests with no reply within `--ping-timeout`. Linux only |
 
-A named process can be tracked too - its CPU and memory land in their own columns:
+Named processes can be tracked too - their CPU and memory land in their own columns:
 
 ```
 ./system_info_collector collect -e "FIREFOX|firefox" -e "Event Handler|/usr/bin/event_handler"
 ```
 
-The part before `|` is the label used in charts, the part after is matched against the command line. Only the first
-matching process is tracked; `-1` in the chart means it was not running at that moment.
+The part before `|` is the label used in charts, the part after is matched against the command line. Every matching
+process counts, summed, including ones started later; the collector itself and whatever started it (`sudo`, a shell,
+systemd) are left out, as their command lines contain the pattern. A gap in the chart means nothing matched then.
 
 ### Choosing disks and interfaces
 
@@ -249,7 +250,8 @@ SECONDS_SINCE_START,CPU_USAGE_TOTAL,MEMORY_USED,NET_0_RX_BPS,NET_0_TX_BPS,DISK_0
 
 Empty means "same as the row above" - that is compact mode, on by default, and the reader fills the values back in.
 Turn it off with `--no-compact` if you want to process the file with something else. A `-1` means the value could not
-be measured, which for a tracked process means it was not running.
+be measured - a tracked process that was not running, a GPU figure the driver does not expose - and charts leave a gap
+there.
 
 Nothing is ever overwritten. When a run starts, an existing data file is kept as a backup (`--backup-number`, 5 by
 default), and when a file grows past `--maximum-data-file-size-mb` (200 MB) it is rotated aside and a new one started.
@@ -361,6 +363,23 @@ a custom Yocto Linux build. Grafana and friends were either too heavy or wanted 
 avoid.
 
 </details>
+
+## Libraries and benchmarking
+
+The measuring and reporting code is split into crates that can be used on their own:
+
+| Crate | What it is for |
+| --- | --- |
+| [`system_info_probe`](crates/system_info_probe) | Sampling processes, CPU, memory, disks, network, GPUs and ping - from a plain thread or on tokio. Follows a process tree or every process matching a pattern, including ones started later, and counts the CPU of children too short-lived to sample |
+| [`system_info_report`](crates/system_info_report) | Summaries, tables (terminal, Markdown, TSV, CSV), CSV and JSON export, SVG and interactive HTML charts, and benchmarks over repeated runs |
+| [`system_info_bench`](crates/system_info_bench) | A small command-line tool on top of both: measure a command or a running process, or a matrix of variants from a TOML file, with numbers read from the program's own output |
+
+They are not on crates.io; depend on them from git, pinned to a commit or a tag:
+
+```toml
+[dependencies]
+system_info_probe = { git = "https://github.com/qarmin/system-info-collector", rev = "<commit>" }
+```
 
 ## Contributing and development
 

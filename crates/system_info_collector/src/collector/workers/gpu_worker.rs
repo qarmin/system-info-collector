@@ -5,9 +5,9 @@ use std::time::Duration;
 use log::info;
 use system_info_probe::gpu::GpuSampler;
 
-use crate::discovery::RuntimeDiscovery;
-use crate::settings::CollectSettings;
-use crate::shared_state::{GpuSnapshot, SharedState};
+use crate::collector::discovery::RuntimeDiscovery;
+use crate::collector::settings::CollectSettings;
+use crate::collector::shared_state::{GpuSnapshot, SharedState};
 
 /// Every discovered GPU, whatever the vendor, into `state.latest_gpus[gpu_index]`.
 pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>, shutdown: Arc<AtomicBool>, discovery: Arc<RuntimeDiscovery>) {
@@ -32,7 +32,6 @@ pub async fn run(settings: Arc<CollectSettings>, state: Arc<RwLock<SharedState>>
                 reading.map(|r| GpuSnapshot {
                     utilization_gpu: r.utilization_percent,
                     memory_used_mb: r.memory_used_bytes.map(|b| b / 1024 / 1024),
-                    memory_total_mb: r.memory_total_bytes.map(|b| b / 1024 / 1024),
                     temperature: r.temperature_celsius,
                 })
             })
