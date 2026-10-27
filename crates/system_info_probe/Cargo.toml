@@ -24,7 +24,7 @@ nvml-wrapper = { version = "0.13", optional = true }
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-amdgpu-sysfs = { version = "0.21", optional = true }
+amdgpu-sysfs = { version = "0.22", optional = true }
 socket2 = { version = "0.6", features = ["all"], optional = true }
 
 [features]
@@ -41,4 +41,4 @@ serde = ["dep:serde"]
 full = ["disk", "network", "gpu-nvidia", "gpu-amd", "gpu-intel", "gpu-vivante", "ping", "tokio", "serde"]
 
 [dev-dependencies]
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "process", "sync"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "process", "sync"] }

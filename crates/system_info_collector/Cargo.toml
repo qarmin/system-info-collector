@@ -18,8 +18,8 @@ system_info_report = { path = "../system_info_report", version = "0.8.0", defaul
 time = "0.3"
 ctrlc = { version = "3.5", features = ["termination"] }
 system_info_probe = { path = "../system_info_probe", version = "0.8.0", features = ["gpu-nvidia", "gpu-amd", "gpu-intel", "gpu-vivante", "ping", "tokio"] }
-tokio = { version = "1.53", features = ["full"] }
-handsome_logger = "0.9"
+tokio = { version = "1.54", features = ["full"] }
+handsome_logger = "0.10"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 open = "5.4"
@@ -31,4 +31,4 @@ os_info = "3.15.0"
 axum = { version = "0.8", features = ["ws"] }
 serde_json = "1.0"
 strum = { version = "0.28", features = ["derive"] }
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.1.2", default-features = false, features = ["deflate"] }
