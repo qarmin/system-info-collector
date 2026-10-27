@@ -532,7 +532,7 @@ fn create_memory_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: 
     let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_memory()).collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
+        let trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
             .x_axis(format!("x{i}"));
@@ -544,7 +544,7 @@ fn create_swap_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &C
     let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| dt.is_swap()).collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
+        let trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
             .x_axis(format!("x{i}"));
@@ -560,7 +560,7 @@ fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &Co
         .collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
-        let trace = Scatter::new(dates.to_owned(), data.clone())
+        let trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
             .x_axis(format!("x{i}"));
@@ -570,7 +570,7 @@ fn create_cpu_plot(plot: &mut Plot, dates: &[DateTime<Utc>], loaded_results: &Co
     if let Some(per_core) = loaded_results.collected_data.get(&DataType::CPU_USAGE_PER_CORE) {
         for (idx, core_data) in per_core.iter().enumerate() {
             let values: Vec<String> = core_data.split(';').map(ToString::to_string).collect();
-            let trace = Scatter::new(dates.to_owned(), values)
+            let trace = Scatter::new(dates.to_owned(), missing_as_gaps(&values))
                 .name(format!("Core {idx}"))
                 .y_axis(format!("y{i}"))
                 .x_axis(format!("x{i}"));
@@ -637,13 +637,7 @@ fn create_traces(
     let mut entries: Vec<_> = loaded_results.collected_data.iter().filter(|(dt, _)| belongs_to_chart(dt)).collect();
     entries.sort_by(|(a, _), (b, _)| a.pretty_print().cmp(&b.pretty_print()));
     for (data_type, data) in entries {
-        // A window with no reply has no RTT; an empty value leaves a gap instead of a dip to -1.
-        let values = if data_type.is_ping_latency() {
-            data.iter().map(|v| if v == "-1" { String::new() } else { v.clone() }).collect()
-        } else {
-            data.clone()
-        };
-        let mut trace = Scatter::new(dates.to_owned(), values)
+        let mut trace = Scatter::new(dates.to_owned(), missing_as_gaps(data))
             .name(data_type.pretty_print())
             .y_axis(format!("y{i}"))
             .x_axis(format!("x{i}"));
@@ -652,6 +646,12 @@ fn create_traces(
         }
         plot.add_trace(trace);
     }
+}
+
+/// The collector writes -1 when a value could not be read (process not running, link down, no ping reply);
+/// an empty value makes plotly break the line there instead of drawing a dip to -1.
+fn missing_as_gaps(data: &[String]) -> Vec<String> {
+    data.iter().map(|v| if v == "-1" { String::new() } else { v.clone() }).collect()
 }
 
 fn set_axes(idx: u32, layout: Layout, x: Axis, y: Axis) -> Layout {

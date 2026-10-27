@@ -142,6 +142,12 @@ fn parse_data(
         let mut per_core: Vec<Vec<String>> = (0..cpu_core_count).map(|_| Vec::new()).collect();
 
         for row in cpu_per_core_data {
+            if row == "-1" {
+                for core_vec in &mut per_core {
+                    core_vec.push(row.clone());
+                }
+                continue;
+            }
             let mut split = row.split(';');
             let count = split.clone().count();
             if count != cpu_core_count {
