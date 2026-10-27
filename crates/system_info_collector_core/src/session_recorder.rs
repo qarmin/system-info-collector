@@ -19,7 +19,9 @@ use anyhow::Error;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use system_info_probe::disk::{self, DiskCounters};
-use system_info_probe::process::{DetailRefresh, IoCounters, ProcessDetail, ProcessInterval, ProcessKey, ProcessSampler, ProcessSamplerConfig};
+use system_info_probe::process::{
+    Coverage, DetailRefresh, IoCounters, ProcessDetail, ProcessInterval, ProcessKey, ProcessSampler, ProcessSamplerConfig,
+};
 use system_info_probe::system::{MachineInfo, SystemSampler};
 
 pub const SESSION_FORMAT_VERSION: u32 = 1;
@@ -400,6 +402,7 @@ pub fn record(config: SessionConfig, stop: &AtomicBool, progress: &SessionProgre
             idle_io_every: Duration::ZERO,
             idle_status_every: None,
         },
+        coverage: Coverage::All,
     })?;
     let mut system_sampler = SystemSampler::new()?;
     let machine = MachineInfo::read();

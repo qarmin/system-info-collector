@@ -58,6 +58,20 @@ pub struct ProcessSamplerConfig {
     /// them, which on a busy machine multiplies the files read per sample.
     pub detail_scope: Option<Selection>,
     pub refresh: DetailRefresh,
+    pub coverage: Coverage,
+}
+
+/// Which processes are read in every sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Coverage {
+    /// Every process - CPU and memory of anything can be compared.
+    #[default]
+    All,
+    /// Only processes in `detail_scope` and ones not seen before; the rest keep the values from
+    /// when they were first seen and only their presence is checked, by listing `/proc`.  A
+    /// process that leaves the scope's notice - e.g. one that `exec`s into a matching command
+    /// line later - is not picked up.
+    Scope,
 }
 
 /// Every process alive at one instant.
@@ -129,6 +143,9 @@ struct Known {
     last_cpu_time: Duration,
     last_rss_bytes: u64,
     detail: DetailCache,
+    /// Set under [`Coverage::Scope`] for a process outside the scope: it is not read again and
+    /// this stands in for it.
+    frozen: Option<ProcessSample>,
 }
 
 #[derive(Default)]
@@ -182,6 +199,7 @@ impl ProcessSampler {
         let taken_at = Instant::now();
         let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
         let processes = self.backend.read_basic(&mut self.known, self.config.detail.io())?;
+        let focus = self.config.coverage == Coverage::Scope && self.config.detail_scope.is_some();
         let mut snapshot = ProcessSnapshot {
             taken_at,
             unix_time,
@@ -190,8 +208,19 @@ impl ProcessSampler {
         };
 
         let detail = self.config.detail;
+        let scope: Option<HashSet<ProcessKey>> = if detail != ProcessDetail::Basic || focus {
+            self.config.detail_scope.as_mut().map(|s| s.update(&snapshot))
+        } else {
+            None
+        };
+        if focus && let Some(scope) = &scope {
+            for (key, process) in &snapshot.processes {
+                if let Some(known) = self.known.get_mut(key) {
+                    known.frozen = (!scope.contains(key)).then(|| process.clone());
+                }
+            }
+        }
         if detail != ProcessDetail::Basic {
-            let scope: Option<HashSet<ProcessKey>> = self.config.detail_scope.as_mut().map(|s| s.update(&snapshot));
             let refresh = self.config.refresh;
             for (key, process) in &mut snapshot.processes {
                 if scope.as_ref().is_some_and(|s| !s.contains(key)) {
@@ -238,6 +267,7 @@ fn new_known(info: Arc<ProcessInfo>, comm: String) -> Known {
         last_cpu_time: Duration::ZERO,
         last_rss_bytes: 0,
         detail: DetailCache::default(),
+        frozen: None,
     }
 }
 
@@ -280,8 +310,14 @@ impl Backend {
     fn read_basic(&mut self, known: &mut HashMap<ProcessKey, Known>, _io: bool) -> ProbeResult<BTreeMap<ProcessKey, ProcessSample>> {
         let fs = &self.proc_fs;
         fs.pids_into(&mut self.pids)?;
+        let frozen: HashMap<u32, ProcessKey> = known.iter().filter(|(_, k)| k.frozen.is_some()).map(|(key, _)| (key.pid, *key)).collect();
         let mut processes = BTreeMap::new();
         for &pid in &self.pids {
+            // Listed and known to be outside the scope: present, not read.
+            if let Some(sample) = frozen.get(&pid).and_then(|key| known[key].frozen.clone()) {
+                processes.insert(sample.key(), sample);
+                continue;
+            }
             // A process can exit between listing /proc and reading it; it is then simply absent.
             let Some((key, fields, cached, fresh)) = fs.with_stat(pid, |stat| {
                 let key = ProcessKey {
@@ -584,6 +620,7 @@ mod tests {
                 idle_io_every: Duration::from_secs(3600),
                 idle_status_every: None,
             },
+            coverage: Coverage::All,
         });
         let first = sampler.sample().expect("sample");
         assert_eq!(only(&first).io.map(|io| io.wchar), Some(2));
@@ -603,6 +640,44 @@ mod tests {
     }
 
     #[test]
+    fn scope_coverage_reads_only_the_scope_and_newcomers() {
+        let fixture = Fixture::new("coverage");
+        fixture.process(10, "other", 100, "other");
+        fixture.process(20, "target", 100, "target");
+        let mut sampler = fixture.sampler(ProcessSamplerConfig {
+            detail: ProcessDetail::Basic,
+            detail_scope: Some(Selection::new(crate::process::Selector::Pattern(crate::process::Pattern::name_is(
+                "target",
+            )))),
+            refresh: DetailRefresh::default(),
+            coverage: Coverage::Scope,
+        });
+        sampler.sample().expect("sample");
+
+        // Both used CPU, a newcomer appeared, and nothing outside the scope is re-read.
+        fixture.process(10, "other", 900, "other");
+        fixture.process(20, "target", 300, "target");
+        fixture.process(30, "target", 50, "target --second");
+        let snapshot = sampler.sample().expect("sample");
+        let cpu: Vec<(u32, Duration)> = snapshot.iter().map(|p| (p.pid(), p.cpu_time)).collect();
+        assert_eq!(
+            cpu,
+            vec![
+                (10, Duration::from_secs(1)),
+                (20, Duration::from_secs(3)),
+                (30, Duration::from_millis(500))
+            ]
+        );
+
+        // Presence is still tracked through the listing.
+        fixture.remove(10);
+        assert_eq!(
+            sampler.sample().expect("sample").iter().map(ProcessSample::pid).collect::<Vec<_>>(),
+            vec![20, 30]
+        );
+    }
+
+    #[test]
     fn reads_detail_only_within_the_scope() {
         let fixture = Fixture::new("scope");
         fixture.process(10, "a", 0, "a");
@@ -614,6 +689,7 @@ mod tests {
             detail: ProcessDetail::Io,
             detail_scope: Some(Selection::new(crate::process::Selector::Pid(20))),
             refresh: DetailRefresh::default(),
+            coverage: Coverage::All,
         });
         let snapshot = sampler.sample().expect("sample");
         let io: Vec<(u32, bool)> = snapshot.iter().map(|p| (p.pid(), p.io.is_some())).collect();

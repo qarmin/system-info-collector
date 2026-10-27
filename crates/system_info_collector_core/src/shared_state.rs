@@ -1,4 +1,4 @@
-/// Snapshot of CPU and memory metrics collected by sysinfo_worker.
+/// Snapshot of CPU and memory metrics collected by system_worker.
 #[derive(Debug, Clone, Default)]
 pub struct SysinfoSnapshot {
     pub cpu_usage_total: f64,
@@ -80,7 +80,7 @@ pub struct ProcessSnapshot {
 /// holds the read lock only long enough to clone the latest snapshots out.
 #[derive(Debug, Default)]
 pub struct SharedState {
-    /// Latest CPU / memory snapshot (written by sysinfo_worker).
+    /// Latest CPU / memory snapshot (written by system_worker).
     pub latest_sysinfo: Option<SysinfoSnapshot>,
     /// Latest per-interface network snapshots, indexed by iface_index.
     /// Sized to `RuntimeDiscovery::interface_count()` at engine startup.
@@ -94,6 +94,6 @@ pub struct SharedState {
     /// Ping results accumulated since the last row, drained by file_writer.
     pub ping_windows: Vec<PingWindow>,
     /// Latest per-process snapshots, indexed by search-pattern slot.
-    /// Written by sysinfo_worker alongside sysinfo data.
+    /// Written by system_worker alongside sysinfo data.
     pub latest_processes: Vec<Option<ProcessSnapshot>>,
 }

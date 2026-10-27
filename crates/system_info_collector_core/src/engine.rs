@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use crate::discovery::{GpuVendor, RuntimeDiscovery, discover_disks, discover_gpus, discover_interfaces};
 use crate::settings::CollectSettings;
 use crate::shared_state::SharedState;
-use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker, sysinfo_worker};
+use crate::workers::{disk_io_worker, file_writer, network_worker, nvidia_worker, system_worker};
 
 #[cfg(target_os = "linux")]
 use crate::workers::amd_intel_gpu_worker;
@@ -149,8 +149,8 @@ impl CollectorEngine {
 
         let mut join_set: JoinSet<()> = JoinSet::new();
 
-        // sysinfo worker — always runs (CPU / memory / processes)
-        join_set.spawn(sysinfo_worker::run(
+        // system worker - always runs (CPU / memory / processes)
+        join_set.spawn(system_worker::run(
             Arc::clone(&self.settings),
             Arc::clone(&self.state),
             Arc::clone(&self.shutdown),

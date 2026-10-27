@@ -36,7 +36,7 @@ use crate::discovery::RuntimeDiscovery;
 use crate::enums::{DataType, HeaderValues, SimpleDataCollectionMode, network_rate_columns};
 use crate::settings::CollectSettings;
 use crate::shared_state::{PingWindow, SharedState};
-use crate::workers::sysinfo_worker::bytes_to_mb;
+use crate::workers::system_worker::bytes_to_mb;
 
 /// Spawned as a tokio task.  Wakes every `check_interval` seconds, clones the
 /// latest snapshots out of `SharedState` (brief read-lock), formats a CSV row,

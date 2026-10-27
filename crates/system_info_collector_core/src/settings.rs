@@ -38,7 +38,7 @@ pub const MAX_BUFFER_SAMPLES: usize = 1_000_000;
 pub struct CollectSettings {
     /// Main check interval (seconds) — how often file_writer writes a CSV row.
     pub check_interval: f32,
-    /// Interval at which sysinfo_worker refreshes CPU / memory / processes.
+    /// Interval at which system_worker refreshes CPU / memory / processes.
     pub sysinfo_interval_secs: f32,
     /// Interval at which network_worker refreshes network counters.
     pub network_interval_secs: f32,

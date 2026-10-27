@@ -20,7 +20,7 @@ use system_info_collector_core::engine::CollectorEngine;
 use system_info_collector_core::enums::{DataType, SimpleDataCollectionMode, network_rate_columns};
 use system_info_collector_core::session_recorder::{SessionConfig, SessionProgress};
 use system_info_collector_core::settings::MAX_BUFFER_SAMPLES;
-use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
+use system_info_collector_core::workers::system_worker::bytes_to_mb;
 
 use crate::cli::{Commands, parse_cli};
 use crate::converting::ploty_creator::load_results_and_save_plot;

@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use system_info_probe::process::{DetailRefresh, ProcessDetail, ProcessSampler, ProcessSamplerConfig};
+use system_info_probe::process::{Coverage, DetailRefresh, ProcessDetail, ProcessSampler, ProcessSamplerConfig};
 
 const ROUNDS: u32 = 40;
 
@@ -21,6 +21,7 @@ fn probe(detail: ProcessDetail) -> Duration {
         detail,
         detail_scope: None,
         refresh: DetailRefresh::default(),
+        coverage: Coverage::All,
     })
     .expect("sampler");
     time(|| {

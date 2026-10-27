@@ -9,7 +9,7 @@ use std::time::Duration;
 
 pub use delta::{ProcessDelta, ProcessInterval};
 pub use group::{GroupAccumulator, GroupUsage};
-pub use sampler::{DetailRefresh, ProcessDetail, ProcessSampler, ProcessSamplerConfig, ProcessSnapshot};
+pub use sampler::{Coverage, DetailRefresh, ProcessDetail, ProcessSampler, ProcessSamplerConfig, ProcessSnapshot};
 pub use selector::{MatchField, MatchMode, Pattern, Selection, Selector};
 
 /// Identity that survives PID reuse: a reused PID comes with a different start stamp.

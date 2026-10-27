@@ -1,9 +1,6 @@
 use crate::enums::{DataType, GeneralInfoGroup};
 use serde::Deserialize;
-use std::collections::hash_set::Iter;
-use std::collections::{HashMap, HashSet};
-use std::process;
-use sysinfo::{Process, System};
+use std::collections::HashMap;
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct CollectedItemModels {
@@ -26,73 +23,4 @@ pub struct CollectedItemModels {
     pub disk_labels: Vec<String>,
     /// Network interface labels parsed from CSV metadata (NET_LABEL_N, name on older files).
     pub net_labels: Vec<String>,
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct CustomProcessData {
-    pub pid: usize,
-    pub name: String,
-    pub cmd_string: String,
-    pub memory_usage: u64,
-    pub cpu_usage: f32,
-}
-
-impl CustomProcessData {
-    pub fn from_process(process: &Process) -> Self {
-        Self {
-            pid: process.pid().into(),
-            name: process.name().to_string_lossy().to_string(),
-            cmd_string: process
-                .cmd()
-                .iter()
-                .map(|e| e.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join(" "),
-            memory_usage: process.memory(),
-            cpu_usage: process.cpu_usage(),
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct ProcessCache {
-    pub processes_usage_updated: HashSet<usize>,
-    pub processes_checked_to_be_used: HashSet<usize>,
-    pub process_used: Vec<Option<CustomProcessData>>,
-}
-
-impl ProcessCache {
-    pub fn new_with_size(size: usize, sys: &System) -> Self {
-        let mut processes_checked_to_be_used = HashSet::default();
-        processes_checked_to_be_used.insert(process::id() as usize);
-
-        let mut processes_usage_updated = sys.processes().keys().map(|pid| (*pid).into()).collect::<HashSet<usize>>();
-        processes_usage_updated.insert(process::id() as usize);
-
-        Self {
-            processes_usage_updated,
-            processes_checked_to_be_used,
-            process_used: vec![None; size],
-        }
-    }
-
-    pub fn get_differences_in_usage_processes(&self, elements: Iter<usize>) -> Vec<usize> {
-        let mut result = vec![];
-        for element in elements {
-            if !self.processes_usage_updated.contains(element) {
-                result.push(*element);
-            }
-        }
-        result
-    }
-
-    pub fn replace_checked_usage_processes(&mut self, elements: Iter<usize>) {
-        self.processes_usage_updated = elements.copied().collect::<HashSet<usize>>();
-        self.processes_usage_updated.insert(process::id() as usize);
-    }
-
-    pub fn replace_checked_to_be_used_processes(&mut self, elements: Iter<usize>) {
-        self.processes_checked_to_be_used = elements.copied().collect::<HashSet<usize>>();
-        self.processes_checked_to_be_used.insert(process::id() as usize);
-    }
 }

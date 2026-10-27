@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 pub use crate::child::ChildExit;
-use crate::process::{DetailRefresh, ProcessDetail, ProcessSamplerConfig, Selection, Selector};
+use crate::process::{Coverage, DetailRefresh, ProcessDetail, ProcessSamplerConfig, Selection, Selector};
 use crate::recording::{ProcessSeries, Recording, RecordingBuilder, RecordingConfig};
 use crate::schedule::next_deadline;
 use crate::snapshot::SamplerConfig;
@@ -91,6 +91,7 @@ impl MeasureOptions {
                 detail: self.detail,
                 detail_scope: Some(Selection::new(self.selector(pid))),
                 refresh: self.refresh,
+                coverage: Coverage::Scope,
             }),
             system: self.system,
             ..SamplerConfig::default()

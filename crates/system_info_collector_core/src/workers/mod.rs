@@ -5,6 +5,6 @@ pub mod network_worker;
 pub mod nvidia_worker;
 #[cfg(target_os = "linux")]
 pub mod ping_worker;
-pub mod sysinfo_worker;
+pub mod system_worker;
 #[cfg(target_os = "linux")]
 pub mod vivante_gpu_worker;

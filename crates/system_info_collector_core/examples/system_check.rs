@@ -6,7 +6,7 @@ use std::time::Duration;
 use sysinfo::{CpuRefreshKind, Disks, Networks, System};
 use system_info_collector_core::discovery::{GpuVendor, discover_disks, discover_gpus};
 use system_info_collector_core::disk_stats::{rates, read_counters};
-use system_info_collector_core::workers::sysinfo_worker::bytes_to_mb;
+use system_info_collector_core::workers::system_worker::bytes_to_mb;
 
 fn main() {
     print_cpu();
